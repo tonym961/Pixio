@@ -6,7 +6,7 @@
       "id": "win-postazione-aziendale",
       "kind": "windows",
       "name": "Postazione aziendale",
-      "description": "PC da ufficio che entra nel dominio Active Directory: OOBE saltato, app di intrattenimento rimosse, nessun accesso automatico. Compila dominio, utente di join e password prima di salvare.",
+      "description": "PC da ufficio che entra nel dominio Active Directory: OOBE saltato, app di intrattenimento rimosse, nessun accesso automatico. Compila dominio, utente di join e password prima di salvare. Per aggiungere al dominio attiva l'opzione e inserisci utente e password autorizzati.",
       "settings": {
         "language": "it-IT",
         "input_locale": "it-IT",
@@ -21,9 +21,25 @@
         "admin_password": "",
         "autologon": false,
         "autologon_count": 0,
-        "extra_user": {"name": "", "password": "", "group": "Users"},
-        "join_domain": {"enabled": true, "domain": "azienda.local", "ou": "", "user": "", "password": ""},
-        "disk": {"mode": "auto-uefi", "wipe": true, "efi_mb": 300, "msr_mb": 16, "recovery_mb": 750},
+        "extra_user": {
+          "name": "",
+          "password": "",
+          "group": "Users"
+        },
+        "join_domain": {
+          "enabled": false,
+          "domain": "azienda.local",
+          "ou": "",
+          "user": "",
+          "password": ""
+        },
+        "disk": {
+          "mode": "auto-uefi",
+          "wipe": true,
+          "efi_mb": 300,
+          "msr_mb": 16,
+          "recovery_mb": 750
+        },
         "skip_oobe": true,
         "bypass_requirements": false,
         "disable_defender_prompt": false,
@@ -70,9 +86,25 @@
         "admin_password": "",
         "autologon": true,
         "autologon_count": 9999,
-        "extra_user": {"name": "", "password": "", "group": "Users"},
-        "join_domain": {"enabled": false, "domain": "", "ou": "", "user": "", "password": ""},
-        "disk": {"mode": "auto-uefi", "wipe": true, "efi_mb": 300, "msr_mb": 16, "recovery_mb": 750},
+        "extra_user": {
+          "name": "",
+          "password": "",
+          "group": "Users"
+        },
+        "join_domain": {
+          "enabled": false,
+          "domain": "",
+          "ou": "",
+          "user": "",
+          "password": ""
+        },
+        "disk": {
+          "mode": "auto-uefi",
+          "wipe": true,
+          "efi_mb": 300,
+          "msr_mb": 16,
+          "recovery_mb": 750
+        },
         "skip_oobe": true,
         "bypass_requirements": false,
         "disable_defender_prompt": false,
@@ -110,9 +142,25 @@
         "admin_password": "",
         "autologon": false,
         "autologon_count": 0,
-        "extra_user": {"name": "", "password": "", "group": "Administrators"},
-        "join_domain": {"enabled": false, "domain": "", "ou": "", "user": "", "password": ""},
-        "disk": {"mode": "auto-uefi", "wipe": true, "efi_mb": 500, "msr_mb": 16, "recovery_mb": 0},
+        "extra_user": {
+          "name": "",
+          "password": "",
+          "group": "Administrators"
+        },
+        "join_domain": {
+          "enabled": false,
+          "domain": "",
+          "ou": "",
+          "user": "",
+          "password": ""
+        },
+        "disk": {
+          "mode": "auto-uefi",
+          "wipe": true,
+          "efi_mb": 500,
+          "msr_mb": 16,
+          "recovery_mb": 0
+        },
         "skip_oobe": true,
         "bypass_requirements": false,
         "disable_defender_prompt": false,
@@ -148,9 +196,25 @@
         "admin_password": "",
         "autologon": true,
         "autologon_count": 9999,
-        "extra_user": {"name": "", "password": "", "group": "Users"},
-        "join_domain": {"enabled": false, "domain": "", "ou": "", "user": "", "password": ""},
-        "disk": {"mode": "auto-uefi", "wipe": true, "efi_mb": 300, "msr_mb": 16, "recovery_mb": 0},
+        "extra_user": {
+          "name": "",
+          "password": "",
+          "group": "Users"
+        },
+        "join_domain": {
+          "enabled": false,
+          "domain": "",
+          "ou": "",
+          "user": "",
+          "password": ""
+        },
+        "disk": {
+          "mode": "auto-uefi",
+          "wipe": true,
+          "efi_mb": 300,
+          "msr_mb": 16,
+          "recovery_mb": 0
+        },
         "skip_oobe": true,
         "bypass_requirements": true,
         "disable_defender_prompt": true,
@@ -173,7 +237,6 @@
         "drivers_from_pixio": true
       }
     },
-
     {
       "id": "deb-server-minimo",
       "kind": "debian",
@@ -186,13 +249,49 @@
         "keyboard": "it",
         "timezone": "Europe/Rome",
         "suite": "stable",
-        "mirror": {"host": "deb.debian.org", "directory": "/debian", "proxy": ""},
-        "network": {"mode": "dhcp", "ip": "", "netmask": "", "gateway": "", "dns": ""},
-        "root": {"enabled": false, "password": ""},
-        "user": {"fullname": "Amministratore", "username": "admin", "password": "", "sudo": true},
-        "disk": {"device": "auto", "recipe": "lvm", "swap_mb": 4096, "filesystem": "ext4", "wipe": true, "crypto_password": ""},
-        "tasks": ["standard", "ssh-server"],
-        "packages": ["sudo", "vim", "curl", "htop", "chrony", "unattended-upgrades", "qemu-guest-agent"],
+        "mirror": {
+          "host": "deb.debian.org",
+          "directory": "/debian",
+          "proxy": ""
+        },
+        "network": {
+          "mode": "dhcp",
+          "ip": "",
+          "netmask": "",
+          "gateway": "",
+          "dns": ""
+        },
+        "root": {
+          "enabled": false,
+          "password": ""
+        },
+        "user": {
+          "fullname": "Amministratore",
+          "username": "admin",
+          "password": "",
+          "sudo": true
+        },
+        "disk": {
+          "device": "auto",
+          "recipe": "lvm",
+          "swap_mb": 4096,
+          "filesystem": "ext4",
+          "wipe": true,
+          "crypto_password": ""
+        },
+        "tasks": [
+          "standard",
+          "ssh-server"
+        ],
+        "packages": [
+          "sudo",
+          "vim",
+          "curl",
+          "htop",
+          "chrony",
+          "unattended-upgrades",
+          "qemu-guest-agent"
+        ],
         "popcon": false,
         "grub_device": "default",
         "late_command": "systemctl enable --now chrony",
@@ -212,13 +311,55 @@
         "keyboard": "it",
         "timezone": "Europe/Rome",
         "suite": "stable",
-        "mirror": {"host": "deb.debian.org", "directory": "/debian", "proxy": ""},
-        "network": {"mode": "dhcp", "ip": "", "netmask": "", "gateway": "", "dns": ""},
-        "root": {"enabled": false, "password": ""},
-        "user": {"fullname": "Utente", "username": "utente", "password": "", "sudo": true},
-        "disk": {"device": "auto", "recipe": "home", "swap_mb": 0, "filesystem": "ext4", "wipe": true, "crypto_password": ""},
-        "tasks": ["standard", "desktop", "gnome-desktop", "print-server", "italian", "italian-desktop", "laptop"],
-        "packages": ["sudo", "firefox-esr", "libreoffice", "libreoffice-l10n-it", "hunspell-it", "cups", "system-config-printer", "gnome-tweaks"],
+        "mirror": {
+          "host": "deb.debian.org",
+          "directory": "/debian",
+          "proxy": ""
+        },
+        "network": {
+          "mode": "dhcp",
+          "ip": "",
+          "netmask": "",
+          "gateway": "",
+          "dns": ""
+        },
+        "root": {
+          "enabled": false,
+          "password": ""
+        },
+        "user": {
+          "fullname": "Utente",
+          "username": "utente",
+          "password": "",
+          "sudo": true
+        },
+        "disk": {
+          "device": "auto",
+          "recipe": "home",
+          "swap_mb": 0,
+          "filesystem": "ext4",
+          "wipe": true,
+          "crypto_password": ""
+        },
+        "tasks": [
+          "standard",
+          "desktop",
+          "gnome-desktop",
+          "print-server",
+          "italian",
+          "italian-desktop",
+          "laptop"
+        ],
+        "packages": [
+          "sudo",
+          "firefox-esr",
+          "libreoffice",
+          "libreoffice-l10n-it",
+          "hunspell-it",
+          "cups",
+          "system-config-printer",
+          "gnome-tweaks"
+        ],
         "popcon": false,
         "grub_device": "default",
         "late_command": "",
@@ -238,13 +379,51 @@
         "keyboard": "it",
         "timezone": "Europe/Rome",
         "suite": "stable",
-        "mirror": {"host": "deb.debian.org", "directory": "/debian", "proxy": ""},
-        "network": {"mode": "dhcp", "ip": "", "netmask": "", "gateway": "", "dns": ""},
-        "root": {"enabled": false, "password": ""},
-        "user": {"fullname": "Amministratore", "username": "admin", "password": "", "sudo": true},
-        "disk": {"device": "auto", "recipe": "lvm", "swap_mb": 2048, "filesystem": "ext4", "wipe": true, "crypto_password": ""},
-        "tasks": ["standard", "ssh-server"],
-        "packages": ["sudo", "nginx", "certbot", "python3-certbot-nginx", "ufw", "fail2ban", "curl", "vim", "unattended-upgrades"],
+        "mirror": {
+          "host": "deb.debian.org",
+          "directory": "/debian",
+          "proxy": ""
+        },
+        "network": {
+          "mode": "dhcp",
+          "ip": "",
+          "netmask": "",
+          "gateway": "",
+          "dns": ""
+        },
+        "root": {
+          "enabled": false,
+          "password": ""
+        },
+        "user": {
+          "fullname": "Amministratore",
+          "username": "admin",
+          "password": "",
+          "sudo": true
+        },
+        "disk": {
+          "device": "auto",
+          "recipe": "lvm",
+          "swap_mb": 2048,
+          "filesystem": "ext4",
+          "wipe": true,
+          "crypto_password": ""
+        },
+        "tasks": [
+          "standard",
+          "ssh-server"
+        ],
+        "packages": [
+          "sudo",
+          "nginx",
+          "certbot",
+          "python3-certbot-nginx",
+          "ufw",
+          "fail2ban",
+          "curl",
+          "vim",
+          "unattended-upgrades"
+        ],
         "popcon": false,
         "grub_device": "default",
         "late_command": "ufw allow OpenSSH\nufw allow 'Nginx Full'\nufw --force enable\nsystemctl enable --now nginx fail2ban",
@@ -264,13 +443,52 @@
         "keyboard": "it",
         "timezone": "Europe/Rome",
         "suite": "stable",
-        "mirror": {"host": "deb.debian.org", "directory": "/debian", "proxy": ""},
-        "network": {"mode": "static", "ip": "192.168.1.10", "netmask": "255.255.255.0", "gateway": "192.168.1.1", "dns": "192.168.1.1"},
-        "root": {"enabled": true, "password": ""},
-        "user": {"fullname": "Amministratore", "username": "admin", "password": "", "sudo": true},
-        "disk": {"device": "auto", "recipe": "lvm", "swap_mb": 8192, "filesystem": "ext4", "wipe": true, "crypto_password": ""},
-        "tasks": ["standard", "ssh-server"],
-        "packages": ["sudo", "vim", "curl", "gnupg", "lvm2", "bridge-utils", "ifupdown2", "chrony", "smartmontools", "lm-sensors"],
+        "mirror": {
+          "host": "deb.debian.org",
+          "directory": "/debian",
+          "proxy": ""
+        },
+        "network": {
+          "mode": "static",
+          "ip": "192.168.1.10",
+          "netmask": "255.255.255.0",
+          "gateway": "192.168.1.1",
+          "dns": "192.168.1.1"
+        },
+        "root": {
+          "enabled": true,
+          "password": ""
+        },
+        "user": {
+          "fullname": "Amministratore",
+          "username": "admin",
+          "password": "",
+          "sudo": true
+        },
+        "disk": {
+          "device": "auto",
+          "recipe": "lvm",
+          "swap_mb": 8192,
+          "filesystem": "ext4",
+          "wipe": true,
+          "crypto_password": ""
+        },
+        "tasks": [
+          "standard",
+          "ssh-server"
+        ],
+        "packages": [
+          "sudo",
+          "vim",
+          "curl",
+          "gnupg",
+          "lvm2",
+          "bridge-utils",
+          "ifupdown2",
+          "chrony",
+          "smartmontools",
+          "lm-sensors"
+        ],
         "popcon": false,
         "grub_device": "default",
         "late_command": "systemctl enable --now chrony",
@@ -290,13 +508,63 @@
         "keyboard": "it",
         "timezone": "Europe/Rome",
         "suite": "stable",
-        "mirror": {"host": "deb.debian.org", "directory": "/debian", "proxy": ""},
-        "network": {"mode": "dhcp", "ip": "", "netmask": "", "gateway": "", "dns": ""},
-        "root": {"enabled": false, "password": ""},
-        "user": {"fullname": "Tecnico", "username": "tecnico", "password": "", "sudo": true},
-        "disk": {"device": "auto", "recipe": "atomic", "swap_mb": 0, "filesystem": "ext4", "wipe": true, "crypto_password": ""},
-        "tasks": ["standard", "desktop", "xfce-desktop", "ssh-server", "italian", "italian-desktop", "laptop"],
-        "packages": ["sudo", "nmap", "tcpdump", "wireshark", "iperf3", "mtr-tiny", "ethtool", "gparted", "smartmontools", "testdisk", "cifs-utils", "smbclient", "remmina", "gddrescue", "rsync", "firefox-esr"],
+        "mirror": {
+          "host": "deb.debian.org",
+          "directory": "/debian",
+          "proxy": ""
+        },
+        "network": {
+          "mode": "dhcp",
+          "ip": "",
+          "netmask": "",
+          "gateway": "",
+          "dns": ""
+        },
+        "root": {
+          "enabled": false,
+          "password": ""
+        },
+        "user": {
+          "fullname": "Tecnico",
+          "username": "tecnico",
+          "password": "",
+          "sudo": true
+        },
+        "disk": {
+          "device": "auto",
+          "recipe": "atomic",
+          "swap_mb": 0,
+          "filesystem": "ext4",
+          "wipe": true,
+          "crypto_password": ""
+        },
+        "tasks": [
+          "standard",
+          "desktop",
+          "xfce-desktop",
+          "ssh-server",
+          "italian",
+          "italian-desktop",
+          "laptop"
+        ],
+        "packages": [
+          "sudo",
+          "nmap",
+          "tcpdump",
+          "wireshark",
+          "iperf3",
+          "mtr-tiny",
+          "ethtool",
+          "gparted",
+          "smartmontools",
+          "testdisk",
+          "cifs-utils",
+          "smbclient",
+          "remmina",
+          "gddrescue",
+          "rsync",
+          "firefox-esr"
+        ],
         "popcon": false,
         "grub_device": "default",
         "late_command": "adduser tecnico wireshark",

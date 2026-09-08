@@ -2,7 +2,7 @@
 import importlib
 import logging
 
-MODULES = ["boot", "api_system", "api_sources", "api_catalog", "api_menu", "api_clients", "api_logs", "api_upload", "api_drivers", "api_answers", "answers_public", "api_settings"]
+MODULES = ["boot", "api_system", "api_sources", "api_catalog", "api_menu", "api_clients", "api_logs", "api_upload", "api_drivers", "api_answers", "answers_public", "api_settings", "api_winprofile", "api_debprofile", "api_presets", "api_cache", "api_backup", "api_update"]
 
 
 def register_all(app):

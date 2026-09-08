@@ -430,7 +430,7 @@
   }
 
   // ------------------------------------------------------------------ router
-  const ROUTES = ['dashboard', 'iso', 'menu', 'driver', 'risposte', 'impostazioni', 'client', 'log', 'benvenuto'];
+  const ROUTES = ['dashboard', 'iso', 'menu', 'driver', 'risposte', 'windows', 'debian', 'impostazioni', 'client', 'log', 'benvenuto'];
   const mainEl = document.getElementById('main');
 
   function stopCurrentPage() {

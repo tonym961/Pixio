@@ -1,12 +1,20 @@
-/* Pixio – pagina Impostazioni: sorgenti (share remote), libreria locale, rete e boot, Windows, sistema.
+/* Pixio – pagina Impostazioni: sorgenti (share remote), libreria locale, copia locale automatica,
+   rete e boot, Windows, accesso HTTPS, backup/ripristino, aggiornamento, sistema.
    Espone anche P.sourceFormHtml / P.readSourceForm, riusati dal wizard di primo avvio. */
 'use strict';
 (function () {
   const P = window.Pixio;
   const esc = P.esc; const $ = P.$; const $$ = P.$$;
 
-  const S = { settings: null, sources: null, root: null };
+  const S = {
+    settings: null, sources: null, root: null,
+    cache: null, cacheErr: '',      // GET /api/cache  {settings, stats, plan}
+    cert: null, certErr: '',        // GET /api/system/cert
+    upd: null, updErr: '',          // GET /api/update/check
+  };
   const SMB_VERS = [['', 'Automatica'], ['3.1.1', 'SMB 3.1.1'], ['3.0', 'SMB 3.0'], ['2.1', 'SMB 2.1'], ['2.0', 'SMB 2.0'], ['1.0', 'SMB 1.0 (NT1, sconsigliato)']];
+  const CACHE_DEFAULTS = { auto: false, min_size_gb: 2, only_enabled: true, keep_free_gb: 20 };
+  const MAX_BACKUP = 64 * 1024 * 1024;      // stesso limite del server (services/backup.py)
 
   // ---------------------------------------------------------------- form share (condiviso con il wizard)
   P.sourceFormHtml = function (src) {
@@ -39,6 +47,7 @@
     try {
       const [settings, sources] = await Promise.all([P.get('/api/settings'), P.get('/api/sources').catch((e) => { if (e.status === 401) throw e; return []; })]);
       S.settings = settings || {}; S.sources = Array.isArray(sources) ? sources : [];
+      await loadExtras();
       render();
     } catch (e) {
       if (e.status === 401) return;
@@ -49,9 +58,149 @@
     try { S.sources = await P.get('/api/sources'); renderSources(); P.refreshStatus().catch(() => {}); } catch (e) { P.fail(e); }
   }
 
+  // Stato di copia locale, certificato e aggiornamento: se una di queste API manca la pagina
+  // resta usabile e la card mostra il motivo.
+  async function loadExtras() {
+    const grab = async (path, key) => {
+      try { S[key] = await P.get(path); S[key + 'Err'] = ''; }
+      catch (e) {
+        if (e.status === 401) throw e;
+        S[key] = null;
+        S[key + 'Err'] = e.status === 404 ? 'funzione non disponibile su questa versione del server' : e.message;
+      }
+    };
+    await Promise.all([grab('/api/cache', 'cache'), grab('/api/system/cert', 'cert'), grab('/api/update/check', 'upd')]);
+  }
+
+  async function refreshCache() {
+    if (!S.root) return;
+    try { S.cache = await P.get('/api/cache'); S.cacheErr = ''; } catch (e) { if (e.status === 401) return; S.cache = null; S.cacheErr = e.message; }
+    renderCacheStats();
+  }
+
   // ---------------------------------------------------------------- rendering
   function toggleRow(title, desc, field, on, disabled) {
     return `<div class="toggle-row"><div><div class="tt">${title}</div><div class="td">${desc}</div></div>${P.switchHtml(!!on, `data-field="${field}" aria-label="${esc(title.replace(/<[^>]+>/g, ''))}" ${disabled ? 'disabled' : ''}`)}</div>`;
+  }
+
+  // ---------------------------------------------------------------- copia locale automatica (cache)
+  function cacheSettings() {
+    const c = (S.cache && S.cache.settings) || S.settings.cache || {};
+    const out = {};
+    Object.keys(CACHE_DEFAULTS).forEach((k) => { out[k] = c[k] != null ? c[k] : CACHE_DEFAULTS[k]; });
+    return out;
+  }
+
+  function cacheCardHtml() {
+    const c = cacheSettings();
+    return `
+      <div class="card" id="card-cache"><h3>Copia locale automatica</h3>
+        <div class="eyebrow">ISO copiate dalle share sul disco di Pixio</div>
+        <p class="hint">Una ISO copiata in locale si avvia più in fretta e continua a funzionare anche se il file server è spento o irraggiungibile. Le copie le esegue un job in background, visibile nel Log.</p>
+        ${toggleRow('Copia automatica', 'Dopo ogni scansione Pixio copia in locale le ISO che rispettano i criteri qui sotto ed elimina le copie che non servono più.', 'cache.auto', c.auto === true)}
+        <div class="row2" style="margin-top:8px">
+          <div class="field"><label for="s-cache-min">Copia solo sopra (GB)</label><input id="s-cache-min" type="number" min="0.1" max="100" step="0.1" value="${esc(c.min_size_gb)}"><div class="hint">Le ISO più piccole restano sulla share.</div></div>
+          <div class="field"><label for="s-cache-free">Spazio da lasciare libero (GB)</label><input id="s-cache-free" type="number" min="1" max="500" step="1" value="${esc(c.keep_free_gb)}"><div class="hint">Sotto questa soglia elimina le copie usate meno di recente.</div></div>
+        </div>
+        ${toggleRow('Solo le ISO nel menu', 'Disattivandolo copia anche le ISO non ancora abilitate nel menu di boot.', 'cache.only_enabled', c.only_enabled !== false)}
+        <div id="cache-stats"></div>
+        <div class="actions" style="margin-top:10px"><button class="btn" type="button" data-act="cache-run">Applica adesso</button><button class="btn danger" type="button" data-act="cache-clear">Libera tutto</button></div>
+      </div>`;
+  }
+
+  function renderCacheStats() {
+    const box = S.root && $('#cache-stats', S.root); if (!box) return;
+    if (!S.cache) {
+      box.innerHTML = `<div class="alert warn">Stato della copia locale non disponibile: ${esc(S.cacheErr || 'nessuna risposta dal server')}</div>`;
+      return;
+    }
+    const st = S.cache.stats || {}; const plan = S.cache.plan || {};
+    box.innerHTML = `
+      <div class="ministats">
+        <div class="ministat"><div class="k">Copie locali</div><div class="v">${st.cached != null ? esc(st.cached) : '—'}</div></div>
+        <div class="ministat"><div class="k">Spazio occupato</div><div class="v">${esc(P.fmtBytes(st.cached_bytes))}</div></div>
+        <div class="ministat"><div class="k">Spazio libero</div><div class="v">${esc(P.fmtBytes(st.free_bytes))}</div></div>
+        <div class="ministat"><div class="k">Candidate</div><div class="v">${st.candidates != null ? esc(st.candidates) : '—'}</div></div>
+      </div>
+      ${plan.reason ? `<div class="hint">${esc(plan.reason)}</div>` : ''}`;
+  }
+
+  // ---------------------------------------------------------------- backup e ripristino
+  function backupCardHtml() {
+    return `
+      <div class="card" id="card-backup"><h3>Backup e ripristino</h3>
+        <div class="eyebrow">Configurazione, catalogo, client, driver e risposte</div>
+        <p class="hint">L'archivio <span class="mono">.tar.gz</span> contiene le impostazioni, il catalogo delle ISO, i client PXE, i flag delle cartelle driver e le risposte automatiche. Non contiene le ISO, la password di amministratore né le credenziali delle share.</p>
+        <div class="toggle-row"><div><div class="tt">Scarica una copia</div><div class="td">Da conservare fuori da questo server: basta per rimettere in piedi Pixio su una macchina nuova.</div></div><button class="btn small" type="button" data-act="backup-download">Scarica backup</button></div>
+        <div class="toggle-row"><div><div class="tt">Ripristina da un archivio</div><div class="td">Sostituisce la configurazione attuale con quella del backup. Serve una conferma esplicita.</div></div><button class="btn small" type="button" data-act="backup-restore">Carica backup…</button></div>
+        <input id="bk-file" type="file" accept=".gz,.tgz,application/gzip" hidden>
+        <div id="bk-result"></div>
+      </div>`;
+  }
+
+  // ---------------------------------------------------------------- aggiornamento
+  function updateCardHtml() {
+    return `
+      <div class="card" id="card-update"><h3>Aggiornamento</h3>
+        <div class="eyebrow">Software Pixio (git + install.sh)</div>
+        <div id="upd-info"></div>
+        <p class="hint" id="upd-why"></p>
+        <div class="actions" style="margin-top:10px"><button class="btn" type="button" data-act="update-check">Controlla di nuovo</button><button class="btn primary" type="button" id="upd-apply" data-act="update-apply">Aggiorna adesso</button></div>
+      </div>`;
+  }
+
+  function renderUpdate() {
+    const box = S.root && $('#upd-info', S.root); if (!box) return;
+    const u = S.upd || {}; const ver = (P.state.status || {}).version;
+    let badge; const notes = [];
+    if (!S.upd) { badge = P.pill('stato sconosciuto', 'warn'); notes.push('Controllo non riuscito: ' + (S.updErr || 'nessuna risposta dal server') + '.'); }
+    else if (u.error) { badge = P.pill('non disponibile', 'warn'); notes.push(u.error.charAt(0).toUpperCase() + u.error.slice(1) + '.'); }
+    else if (u.behind > 0) { badge = P.pill(u.behind === 1 ? '1 aggiornamento' : u.behind + ' aggiornamenti', 'acc'); }
+    else { badge = P.pill('aggiornato', 'ok'); notes.push('Nessun aggiornamento disponibile.'); }
+    if (u.dirty) notes.push("Ci sono modifiche locali in /opt/pixio: l'aggiornamento automatico è bloccato finché non vengono annullate.");
+    box.innerHTML = `<dl class="kv" style="margin:10px 0 2px">
+      <dt>Versione</dt><dd>${ver ? 'v' + esc(ver) : '—'} ${badge}</dd>
+      <dt>Revisione</dt><dd><span class="mono">${esc(u.current || '—')}</span>${u.branch ? ' · ramo ' + esc(u.branch) : ''}</dd>
+      ${u.remote ? `<dt>Sul server git</dt><dd><span class="mono">${esc(u.remote)}</span></dd>` : ''}
+      ${u.checked ? `<dt>Controllato</dt><dd>${esc(P.fmtDate(u.checked))}</dd>` : ''}
+    </dl>`;
+    const can = !!u.can_update;
+    if (can) { notes.length = 0; notes.push("Pixio scarica il codice, rilancia install.sh e riavvia il servizio: l'interfaccia resta irraggiungibile per circa un minuto."); }
+    else if (!notes.length) notes.push("Aggiornamento automatico non disponibile: il pulsante resta disattivato.");
+    const why = $('#upd-why', S.root); if (why) why.textContent = notes.join(' ');
+    const btn = $('#upd-apply', S.root); if (btn) btn.disabled = !can;
+  }
+
+  // ---------------------------------------------------------------- accesso HTTPS
+  function httpsCardHtml() {
+    const web = S.settings.web || {}; const cert = S.cert || {};
+    // il certificato riporta lo stato effettivo di web.https_enabled / web.redirect_http
+    const on = cert.enabled != null ? !!cert.enabled : web.https_enabled === true;
+    const redirect = cert.redirect_http != null ? !!cert.redirect_http : web.redirect_http !== false;
+    return `
+      <div class="card" id="card-https"><h3>Accesso HTTPS</h3>
+        <div class="eyebrow">Solo per questa interfaccia di amministrazione</div>
+        ${toggleRow('HTTPS sulla porta 443', 'Il certificato è autofirmato: il browser mostrerà un avviso di sicurezza da accettare una volta (non è un errore di configurazione).', 'web.https_enabled', on)}
+        <div id="web-redirect-row" ${on ? '' : 'hidden'}>${toggleRow('Reindirizza HTTP a HTTPS', 'La porta 80 rimanda a HTTPS per la sola interfaccia web.', 'web.redirect_http', redirect)}</div>
+        <div class="alert">I client PXE continuano a usare HTTP: <span class="mono">/boot.ipxe</span>, <span class="mono">/boot/</span>, <span class="mono">/pxe/</span> e <span class="mono">/answers/</span> restano in chiaro anche con il reindirizzamento attivo, perché iPXE e WinPE non parlano HTTPS.</div>
+        <div id="cert-info"></div>
+        <div class="actions" style="margin-top:10px"><button class="btn" type="button" data-act="cert-regen">Rigenera certificato</button></div>
+      </div>`;
+  }
+
+  function renderCert() {
+    const box = S.root && $('#cert-info', S.root); if (!box) return;
+    const c = S.cert;
+    if (!c) { box.innerHTML = `<div class="alert warn">Stato del certificato non disponibile: ${esc(S.certErr || 'nessuna risposta dal server')}</div>`; return; }
+    if (c.error) { box.innerHTML = `<div class="alert warn">${esc(c.error)}</div>`; return; }
+    if (!c.exists) { box.innerHTML = '<div class="alert warn">Nessun certificato presente: viene creato quando attivi HTTPS, oppure subito con "Rigenera certificato".</div>'; return; }
+    const days = c.days_left;
+    box.innerHTML = `<dl class="kv" style="margin:10px 0 2px">
+      <dt>Soggetto</dt><dd><span class="mono">${esc(c.subject || '—')}</span></dd>
+      <dt>Scadenza</dt><dd>${esc(P.fmtDate(c.not_after))}${days != null ? ' · ' + esc(days) + ' giorni' : ''} ${days != null && days < 30 ? P.pill('in scadenza', 'warn') : ''}</dd>
+      <dt>Impronta</dt><dd><span class="mono fp">${esc(c.fingerprint || '—')}</span></dd>
+      ${c.path ? `<dt>File</dt><dd><span class="mono">${esc(c.path)}</span></dd>` : ''}
+    </dl>`;
   }
 
   function render() {
@@ -83,6 +232,8 @@
           <div class="field" style="margin-top:8px"><label for="s-scan-int">Intervallo di scansione (minuti)</label><input id="s-scan-int" type="number" min="1" max="1440" value="${esc(scan.interval_min || 10)}" style="max-width:160px"></div>
         </div>
 
+        ${cacheCardHtml()}
+
         <div class="card"><h3>Rete e boot</h3>
           <div class="row2">
             <div class="field"><label for="s-iface">Interfaccia</label><select id="s-iface">${ifaces.map((i) => `<option value="${esc(i.name)}" ${i.name === net.interface ? 'selected' : ''}>${esc(i.name)}${i.ip ? ' · ' + esc(i.ip) : ''}</option>`).join('')}</select></div>
@@ -108,8 +259,14 @@
         </div>
 
         <div class="card"><h3>Windows</h3>
-          ${toggleRow('Installazione Windows via rete (share SMB <span class="mono">pxe</span>)', 'Il setup di Windows (WinPE) deve leggere <span class="mono">install.wim</span> da un percorso SMB: con questa opzione Pixio ri-esporta in sola lettura le ISO Windows montate (utente Samba dedicato 'pxe', password generata automaticamente). Disattivato: WinPE parte ma il setup non trova i file.', 'win.smb_export_enabled', win.smb_export_enabled === true)}
+          ${toggleRow('Installazione Windows via rete (share SMB <span class="mono">pxe</span>)', 'Il setup di Windows (WinPE) deve leggere <span class="mono">install.wim</span> da un percorso SMB: con questa opzione Pixio ri-esporta in sola lettura le ISO Windows montate (utente Samba dedicato <span class="mono">pxe</span>, password generata automaticamente). Disattivato: WinPE parte ma il setup non trova i file.', 'win.smb_export_enabled', win.smb_export_enabled === true)}
         </div>
+
+        ${httpsCardHtml()}
+
+        ${backupCardHtml()}
+
+        ${updateCardHtml()}
 
         <div class="card"><h3>Sistema</h3>
           <div class="toggle-row" style="border-top:0"><div><div class="tt">iPXE</div><div class="td">Ricompila i binari di boot (undionly.kpxe, ipxe.efi) con l'IP del server incorporato.</div></div><button class="btn small" type="button" data-act="rebuild">Ricompila iPXE</button></div>
@@ -120,6 +277,9 @@
         </div>
       </div>`;
     renderSources();
+    renderCacheStats();
+    renderCert();
+    renderUpdate();
     $('#s-dhcp', S.root).addEventListener('change', (e) => { $('#dhcp-full', S.root).hidden = e.target.value !== 'full'; });
   }
 
@@ -202,6 +362,24 @@
   function fieldOn(name) { const el = $(`.switch[data-field="${name}"]`, S.root); return el ? P.switchOn(el) : false; }
   const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
+  // Le sezioni cache e web viaggiano dentro PUT /api/settings. Qui si controlla che il server
+  // le abbia davvero recepite: per la cache si ritenta con POST /api/cache, per web si avvisa.
+  async function syncExtraSections(cacheReq, webReq) {
+    const warnings = [];
+    const cur = S.cache && S.cache.settings;
+    const same = cur && !!cur.auto === cacheReq.auto && !!cur.only_enabled === cacheReq.only_enabled
+      && Number(cur.min_size_gb) === cacheReq.min_size_gb && Number(cur.keep_free_gb) === cacheReq.keep_free_gb;
+    if (cur && !same) {
+      try { await P.post('/api/cache', cacheReq); S.cache = await P.get('/api/cache'); }
+      catch (e) { warnings.push('Copia locale automatica non salvata: ' + e.message); }
+    }
+    const c = S.cert;
+    if (c && (!!c.enabled !== webReq.https_enabled || !!c.redirect_http !== webReq.redirect_http)) {
+      warnings.push("Accesso HTTPS: il server non ha applicato le nuove impostazioni web (https_enabled, redirect_http).");
+    }
+    return warnings;
+  }
+
   async function save() {
     const r = S.root; const btn = $('#set-save', r);
     const v = (id) => $('#' + id, r).value.trim();
@@ -228,32 +406,189 @@
     if (!/^[A-Za-z0-9._-]{1,32}$/.test(shareName)) { P.toast('Nome della share non valido (lettere, numeri, . _ -)', 'bad'); $('#s-share-name', r).focus(); return; }
     const interval = parseInt(v('s-scan-int'), 10);
     if (isNaN(interval) || interval < 1) { P.toast('Intervallo di scansione non valido', 'bad'); return; }
+    const gb = (id) => parseFloat(v(id).replace(',', '.'));
+    const minGb = gb('s-cache-min');
+    if (isNaN(minGb) || minGb < 0.1 || minGb > 100) { P.toast('Copia locale: la dimensione minima va da 0,1 a 100 GB', 'bad'); $('#s-cache-min', r).focus(); return; }
+    const keepGb = gb('s-cache-free');
+    if (isNaN(keepGb) || keepGb < 1 || keepGb > 500) { P.toast('Copia locale: lo spazio da lasciare libero va da 1 a 500 GB', 'bad'); $('#s-cache-free', r).focus(); return; }
+    const cacheReq = { auto: fieldOn('cache.auto'), min_size_gb: minGb, only_enabled: fieldOn('cache.only_enabled'), keep_free_gb: keepGb };
+    const webReq = { https_enabled: fieldOn('web.https_enabled'), redirect_http: fieldOn('web.redirect_http') };
+    if (webReq.https_enabled && !(S.cert && S.cert.enabled)) {
+      const ok = await P.confirm("Attivare l'accesso HTTPS a questa interfaccia?", { title: 'Accesso HTTPS', ok: 'Attiva HTTPS', detail: "Il certificato è autofirmato: il browser avviserà che il sito non è attendibile e andrà accettata l'eccezione. I client PXE continuano a usare HTTP." });
+      if (!ok) return;
+    }
     const payload = {
       network,
       library: { samba_share_enabled: fieldOn('lib.samba_share_enabled'), samba_share_name: shareName, web_upload_enabled: fieldOn('lib.web_upload_enabled') },
       windows: { smb_export_enabled: fieldOn('win.smb_export_enabled') },
       scan: { auto: fieldOn('scan.auto'), interval_min: interval },
+      cache: cacheReq,
+      web: webReq,
     };
     P.setBusy(btn, true, 'Applicazione…');
     const box = $('#set-result', r);
     try {
       const res = await P.api('PUT', '/api/settings', payload);
-      const applied = (res && res.applied) || {}; const warnings = (res && res.warnings) || [];
-      const bad = Object.keys(applied).filter((k) => applied[k] !== 'ok');
-      box.innerHTML = `<div class="alert ${bad.length ? 'warn' : 'ok'}"><b>${bad.length ? 'Impostazioni salvate, con avvisi' : 'Impostazioni salvate e applicate'}</b>
-        <div class="result-list" style="margin-top:6px">${Object.keys(applied).map((k) => `<div>${P.pill(applied[k] === 'ok' ? 'ok' : 'errore', applied[k] === 'ok' ? 'ok' : 'bad')} <span class="mono">${esc(k)}</span>${applied[k] !== 'ok' ? ` <span>${esc(applied[k])}</span>` : ''}</div>`).join('')}</div>
-        ${warnings.length ? `<ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}</div>`;
-      P.toast(bad.length ? 'Salvato con avvisi: vedi il riepilogo' : 'Impostazioni salvate e applicate', bad.length ? 'warn' : 'ok');
+      const applied = (res && res.applied) || {};
       await P.refreshStatus().catch(() => null);
       // ricarico i valori effettivi dal server mantenendo il riepilogo appena mostrato
       S.settings = await P.get('/api/settings');
+      await loadExtras().catch(() => null);
+      const warnings = ((res && res.warnings) || []).concat(await syncExtraSections(cacheReq, webReq));
+      const bad = Object.keys(applied).filter((k) => applied[k] !== 'ok');
+      box.innerHTML = `<div class="alert ${bad.length || warnings.length ? 'warn' : 'ok'}"><b>${bad.length || warnings.length ? 'Impostazioni salvate, con avvisi' : 'Impostazioni salvate e applicate'}</b>
+        <div class="result-list" style="margin-top:6px">${Object.keys(applied).map((k) => `<div>${P.pill(applied[k] === 'ok' ? 'ok' : 'errore', applied[k] === 'ok' ? 'ok' : 'bad')} <span class="mono">${esc(k)}</span>${applied[k] !== 'ok' ? ` <span>${esc(applied[k])}</span>` : ''}</div>`).join('')}</div>
+        ${warnings.length ? `<ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}</div>`;
+      P.toast(bad.length || warnings.length ? 'Salvato con avvisi: vedi il riepilogo' : 'Impostazioni salvate e applicate', bad.length || warnings.length ? 'warn' : 'ok');
       const keep = box.innerHTML; render(); $('#set-result', r).innerHTML = keep;
     } catch (e) { P.fail(e); }
     P.setBusy(btn, false);
   }
 
+  // ---------------------------------------------------------------- backup: scarico e ripristino
+  async function downloadBackup() {
+    const resp = await fetch('/api/backup', { credentials: 'same-origin', cache: 'no-store' });
+    if (resp.status === 401) { P.sessionLost(); throw new P.ApiError('Sessione scaduta: accedi di nuovo', 401); }
+    if (!resp.ok) {
+      let msg = '';
+      try { const d = await resp.json(); msg = d && d.error; } catch (e) { /* risposta non JSON */ }
+      throw new Error(msg || 'Backup non riuscito (errore ' + resp.status + ')');
+    }
+    // nome del file dall'header Content-Disposition, con ripiego se manca
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+    let name = 'pixio-backup.tar.gz';
+    if (m) { try { name = decodeURIComponent(m[1].trim()); } catch (e) { name = m[1].trim(); } }
+    name = name.replace(/[\\/]/g, '_');
+    const url = URL.createObjectURL(await resp.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    return name;
+  }
+
+  async function restoreBackup(file) {
+    if (!file) return;
+    if (file.size > MAX_BACKUP) { P.toast('Archivio troppo grande (massimo 64 MB)', 'bad'); return; }
+    const ok = await P.modal({
+      title: 'Ripristina la configurazione',
+      body: `<p>Stai per ripristinare <b>${esc(file.name)}</b> (${esc(P.fmtBytes(file.size))}).</p>
+        <p class="hint">Impostazioni, catalogo ISO, client PXE, flag delle cartelle driver e risposte automatiche vengono <b>sostituiti</b> con quelli dell'archivio. Restano invariate la password di amministratore e le credenziali delle share; le ISO sui dischi non vengono toccate.</p>
+        <div class="field check"><input id="bk-ack" type="checkbox"><label for="bk-ack">Ho capito: sostituisci la configurazione attuale</label></div>`,
+      buttons: [{ label: 'Annulla', value: false }, { label: 'Ripristina', cls: 'danger', onClick: (dlg) => {
+        if (!$('#bk-ack', dlg).checked) { P.toast('Spunta la conferma per procedere', 'warn'); return false; }
+        return true;
+      } }],
+    }).done;
+    if (ok !== true) return;
+    const box = $('#bk-result', S.root);
+    if (box) box.innerHTML = '<div class="alert">Ripristino in corso…</div>';
+    let html;
+    try {
+      const r = await P.api('POST', '/api/backup/restore', file);      // File = Blob: corpo binario
+      const restored = (r && r.restored) || []; const warns = (r && r.warnings) || [];
+      html = `<div class="alert ${warns.length ? 'warn' : 'ok'}"><b>Ripristino completato</b>
+        <div class="result-list" style="margin-top:6px">${restored.map((x) => `<div>${P.pill('ok', 'ok')} <span>${esc(x)}</span></div>`).join('') || '<div>Niente da ripristinare</div>'}</div>
+        ${warns.length ? `<ul>${warns.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}</div>`;
+      P.toast('Configurazione ripristinata', warns.length ? 'warn' : 'ok');
+    } catch (e) {
+      P.fail(e);
+      html = `<div class="alert bad"><b>Ripristino non riuscito</b><div>${esc(e.message)}</div></div>`;
+    }
+    await load();
+    P.refreshStatus().catch(() => {});
+    const nb = S.root && $('#bk-result', S.root); if (nb) nb.innerHTML = html;
+  }
+
+  // ---------------------------------------------------------------- copia locale, backup, aggiornamento, certificato
+  const EXTRA_ACTS = ['cache-run', 'cache-clear', 'backup-download', 'backup-restore', 'update-check', 'update-apply', 'cert-regen'];
+
+  async function extraAction(act, btn) {
+    if (act === 'cache-run') {
+      P.setBusy(btn, true, 'Avvio…');
+      try {
+        const r = await P.post('/api/cache/run');
+        P.toast('Copia locale avviata: le ISO grandi richiedono qualche minuto', 'info');
+        P.setBusy(btn, true, 'Copia in corso…');
+        const job = await P.watchJob(r && r.job_id, null, 3000);
+        if (job) P.toast(job.status === 'done' ? 'Copia locale completata' + (job.message ? ': ' + job.message : '') : 'Copia locale: ' + (job.message || job.status), job.status === 'done' ? 'ok' : 'bad');
+      } catch (e) { P.fail(e); }
+      P.setBusy(btn, false);
+      await refreshCache();
+      P.refreshStatus().catch(() => {});
+      return;
+    }
+    if (act === 'cache-clear') {
+      const st = (S.cache && S.cache.stats) || {};
+      if (!st.cached) { P.toast('Non ci sono copie locali da liberare', 'info'); return; }
+      const ok = await P.confirm('Eliminare tutte le copie locali delle ISO?', { title: 'Libera le copie locali', ok: 'Libera tutto', danger: true,
+        detail: `Vengono liberati ${P.fmtBytes(st.cached_bytes)} (${st.cached} ${st.cached === 1 ? 'copia' : 'copie'}). Le ISO restano sulle share di origine e il boot tornerà a leggerle da lì; con la copia automatica attiva verranno ricopiate alla prossima scansione.` });
+      if (!ok) return;
+      P.setBusy(btn, true, 'Pulizia…');
+      try { const r = await P.post('/api/cache/clear', {}); P.toast(`Copie liberate: ${r.freed || 0} (${P.fmtBytes(r.bytes)})`); } catch (e) { P.fail(e); }
+      P.setBusy(btn, false);
+      await refreshCache();
+      P.refreshStatus().catch(() => {});
+      return;
+    }
+    if (act === 'backup-download') {
+      P.setBusy(btn, true, 'Preparazione…');
+      try { const name = await downloadBackup(); P.toast('Backup scaricato: ' + name); } catch (e) { P.fail(e); }
+      P.setBusy(btn, false);
+      return;
+    }
+    if (act === 'backup-restore') {
+      const f = $('#bk-file', S.root);
+      if (f) { f.value = ''; f.click(); }
+      return;
+    }
+    if (act === 'update-check') {
+      P.setBusy(btn, true, 'Controllo…');
+      try { S.upd = await P.get('/api/update/check'); S.updErr = ''; } catch (e) { S.upd = null; S.updErr = e.message; P.fail(e); }
+      P.setBusy(btn, false);
+      renderUpdate();
+      return;
+    }
+    if (act === 'update-apply') {
+      const u = S.upd || {};
+      const ok = await P.confirm(`Aggiornare Pixio ${u.current ? 'da ' + u.current + ' ' : ''}alla revisione ${u.remote || 'più recente'}?`, {
+        title: 'Aggiorna Pixio', ok: 'Aggiorna adesso', danger: true,
+        detail: "Pixio scarica il codice dal repository git, rilancia install.sh e riavvia il servizio: l'interfaccia resta irraggiungibile per circa un minuto e i client che stanno avviandosi in questo momento possono fallire. Scarica prima un backup.",
+      });
+      if (!ok) return;
+      P.setBusy(btn, true, 'Avvio…');
+      try {
+        const r = await P.post('/api/update/apply');
+        P.toast('Aggiornamento avviato: il servizio si riavvierà da solo', 'warn', 9000);
+        P.setBusy(btn, true, 'Aggiornamento…');
+        const job = await P.watchJob(r && r.job_id, (j) => { const w = S.root && $('#upd-why', S.root); if (w && j && j.message) w.textContent = j.message; }, 4000);
+        if (job) P.toast(job.status === 'done' ? 'Aggiornamento completato: ricarica la pagina per usare la nuova versione' : 'Aggiornamento: ' + (job.message || job.status), job.status === 'done' ? 'ok' : 'bad', 9000);
+      } catch (e) { P.fail(e); }
+      P.setBusy(btn, false);
+      try { S.upd = await P.get('/api/update/check'); S.updErr = ''; } catch (e) { /* il servizio potrebbe essere ancora in riavvio */ }
+      P.refreshStatus().catch(() => {});
+      renderUpdate();
+      return;
+    }
+    if (act === 'cert-regen') {
+      const ok = await P.confirm('Rigenerare il certificato HTTPS?', { title: 'Rigenera certificato', ok: 'Rigenera', danger: true,
+        detail: "Il certificato attuale viene sostituito: i browser che lo avevano accettato mostreranno di nuovo l'avviso di sicurezza e andrà accettata la nuova impronta. Il certificato è autofirmato e vale 10 anni." });
+      if (!ok) return;
+      P.setBusy(btn, true, 'Generazione…');
+      try {
+        const r = await P.post('/api/system/cert/regenerate');
+        S.cert = Object.assign({}, S.cert || {}, r); S.certErr = '';
+        P.toast('Certificato rigenerato');
+      } catch (e) { P.fail(e); }
+      P.setBusy(btn, false);
+      renderCert();
+    }
+  }
+
   // ---------------------------------------------------------------- sistema
   async function systemAction(act, btn) {
+    if (EXTRA_ACTS.indexOf(act) !== -1) { extraAction(act, btn); return; }
     if (act === 'logout') { P.logout(); return; }
     if (act === 'password') {
       P.modal({ title: 'Cambia password amministratore',
@@ -336,6 +671,18 @@
           if (b.dataset.src === 'add') { sourceDialog(null); return; }
           const item = b.closest('.src-item'); if (item) sourceAction(item.dataset.id, b.dataset.src, b);
         } else systemAction(b.dataset.act, b);
+      });
+      root.addEventListener('change', (e) => {
+        if (e.target.id !== 'bk-file') return;
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        restoreBackup(f);
+      });
+      // il reindirizzamento da HTTP ha senso solo con HTTPS attivo
+      root.addEventListener('switch-change', (e) => {
+        if (e.target.dataset.field !== 'web.https_enabled') return;
+        const row = $('#web-redirect-row', root);
+        if (row) row.hidden = !P.switchOn(e.target);
       });
       load();
     },
