@@ -17,6 +17,7 @@ DRIVERS_FILE = os.path.join(VAR_DIR, "drivers.json")      # flag per cartella dr
 ANSWERS_DIR = os.path.join(VAR_DIR, "answers")            # file di risposta (autounattend.xml, preseed.cfg, user-data...)
 ANSWERS_FILE = os.path.join(VAR_DIR, "answers.json")      # metadati dei file di risposta
 WINPROFILES_FILE = os.path.join(VAR_DIR, "winprofiles.json")  # profili di personalizzazione Windows (generano autounattend.xml)
+DEBPROFILES_FILE = os.path.join(VAR_DIR, "debprofiles.json")  # profili di personalizzazione Debian (generano preseed.cfg)
 JOBS_DIR = os.path.join(VAR_DIR, "jobs")                  # stato job in background (copie, upload, scansioni)
 UPLOAD_TMP_DIR = os.path.join(VAR_DIR, "uploads")         # chunk degli upload web in corso
 LOG_DIR = "/var/log/pixio"
@@ -36,6 +37,7 @@ DETECT_DIR = os.path.join(SRV_DIR, "detect")                # mount temporanei p
 
 CODE_DIR = "/opt/pixio"
 RECIPES_FILE = os.path.join(CODE_DIR, "data", "recipes.json")
+PRESETS_FILE = os.path.join(CODE_DIR, "data", "profile-presets.json")   # modelli pronti per i profili Windows/Debian
 STATIC_DIR = os.path.join(CODE_DIR, "static")
 HELPER = "/usr/local/sbin/pixio-helper"
 

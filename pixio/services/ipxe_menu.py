@@ -5,6 +5,10 @@ from .. import settings as S
 from . import catalog, recipes
 
 PLATFORMS = ("efi", "bios")
+SUBMENU_MODES = ("auto", "always", "never")
+DEFAULT_THRESHOLD = 8
+# Etichette gia' usate dallo script: i sottomenu non possono chiamarsi cosi'
+RESERVED_LABELS = ("menu", "memtest", "local", "shell", "reboot", "exit", "failed")
 
 
 def _plat(p):
@@ -32,6 +36,67 @@ def _safe(s):
     s = re.sub(r"(?<!\S)(&&|\|\||;|#)(?!\S)", "-", s)
     s = re.sub(r"\s+", " ", s).strip().lstrip("-").strip()
     return (s or "voce")[:70]
+
+
+def group_entries(ents, m):
+    """[(nome gruppo, [voci])] nell'ordine di menu.groups; gruppi extra in coda, voci senza gruppo in "Altro"."""
+    groups, seen = [], set()
+    for g in list(m.get("groups") or []) + [e["group"] for e in ents if e["group"]]:
+        if g and g not in seen:
+            seen.add(g)
+            groups.append(g)
+    out = [(g, [e for e in ents if e["group"] == g]) for g in groups]
+    out = [(g, ge) for g, ge in out if ge]
+    ungrouped = [e for e in ents if not e["group"]]
+    if ungrouped:
+        out.append(("Altro", ungrouped))
+    return out
+
+
+def submenu_threshold(m):
+    """Soglia (1-100) oltre la quale i sottomenu compaiono in modalita' "auto"."""
+    try:
+        t = int(m.get("submenu_threshold") or DEFAULT_THRESHOLD)
+    except (TypeError, ValueError):
+        t = DEFAULT_THRESHOLD
+    return max(1, min(100, t))
+
+
+def submenus_on(m, count):
+    """True se il menu principale deve elencare i gruppi invece delle singole voci."""
+    mode = str(m.get("submenus") or "auto").strip().lower()
+    if mode not in SUBMENU_MODES:
+        mode = "auto"
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return count > submenu_threshold(m)
+
+
+def _group_labels(grouped, taken):
+    """Etichette dei sottomenu (grp-1, grp-2, ...): solo a-z0-9-, univoche e senza collisioni con slug e voci di sistema."""
+    used = set(taken) | set(RESERVED_LABELS)
+    labels, n = {}, 0
+    for name, _ in grouped:
+        n += 1
+        while f"grp-{n}" in used:
+            n += 1
+        labels[name] = f"grp-{n}"
+        used.add(labels[name])
+    return labels
+
+
+def _submenu(label, title, name, ge, default, ind):
+    """Sezione di un gruppo: secondo comando "menu" con le sue voci e il ritorno al menu principale (niente timeout)."""
+    out = [f":{label}", f"menu {title}   |   {_safe(name)}"]
+    for e in ge:
+        out.append(f"item {e['slug']} {ind}{_safe(e['name'])}")
+    out.append("item --gap")
+    out.append(f"item menu {ind}Torna al menu principale")
+    sel = default if any(e["slug"] == default for e in ge) else ge[0]["slug"]
+    out += [f"choose --default {sel} sel || goto menu", "goto ${sel} || goto menu", ""]
+    return out
 
 
 def entries(cfg=None):
@@ -81,27 +146,31 @@ def menu_script(platform, mac=None, auto_boot=None, cfg=None, client_ip=""):
     lines.append(":menu")
     title = _safe(m.get("title") or "PIXIO")
     lines.append(f"menu {title}   |   {plat_label}   |   {client_ip or '${ip}'}")
-    groups = list(m.get("groups") or [])
-    for e in ents:
-        if e["group"] and e["group"] not in groups:
-            groups.append(e["group"])
-    ungrouped = [e for e in ents if not e["group"]]
+    grouped = group_entries(ents, m)
+    subs = bool(grouped) and submenus_on(m, len(ents))
+    labels = _group_labels(grouped, {e["slug"] for e in ents}) if subs else {}
+    default = m.get("default") or "local"
+    valid = {e["slug"] for e in ents} | {"local", "shell", "reboot", "exit", "memtest"}
+    if default not in valid:
+        default = "local"
     IND = "   "                      # rientro delle voci sotto il titolo del gruppo
 
     def group(title):
         lines.append("item --gap")   # riga vuota fra i gruppi
         lines.append(f"item --gap {_safe(title).upper()}")
-    for g in groups:
-        ge = [e for e in ents if e["group"] == g]
-        if not ge:
-            continue
-        group(g)
-        for e in ge:
-            lines.append(f"item {e['slug']} {IND}{_safe(e['name'])}")
-    if ungrouped:
-        group("Altro")
-        for e in ungrouped:
-            lines.append(f"item {e['slug']} {IND}{_safe(e['name'])}")
+    if subs:
+        # la voce predefinita sta dentro un sottomenu: scorciatoia in cima, cosi' il timeout la avvia comunque
+        dflt = next((e for e in ents if e["slug"] == default), None)
+        if dflt:
+            lines.append(f"item {dflt['slug']} {IND}{_safe(dflt['name'])} (predefinita)")
+            lines.append("item --gap")
+        for name, ge in grouped:
+            lines.append(f"item {labels[name]} {IND}{_safe(name)} ({len(ge)})")
+    else:
+        for name, ge in grouped:
+            group(name)
+            for e in ge:
+                lines.append(f"item {e['slug']} {IND}{_safe(e['name'])}")
     if not ents:
         lines.append("item --gap")
         lines.append("item --gap Nessuna ISO abilitata per questa piattaforma: aprire la GUI di Pixio")
@@ -115,17 +184,15 @@ def menu_script(platform, mac=None, auto_boot=None, cfg=None, client_ip=""):
     if m.get("show_reboot", True):
         lines.append(f"item reboot {IND}Riavvia")
     lines.append(f"item exit {IND}Esci da iPXE (prossimo dispositivo di boot)")
-    default = m.get("default") or "local"
-    valid = {e["slug"] for e in ents} | {"local", "shell", "reboot", "exit", "memtest"}
-    if default not in valid:
-        default = "local"
     timeout = int(m.get("timeout") or 0)
-    if timeout > 0:
+    if timeout > 0:      # il timeout vale solo per il menu principale
         lines.append(f"choose --default {default} --timeout {timeout * 1000} sel || goto {default}")
     else:
         lines.append(f"choose --default {default} sel || goto local")
-    lines.append("goto ${sel}")
+    lines.append("goto ${sel} || goto menu")
     lines.append("")
+    for name, ge in (grouped if subs else []):
+        lines += _submenu(labels[name], title, name, ge, default, IND)
     for e in ents:
         lines += [f":{e['slug']}", f"chain --autofree http://{ip}/boot/{e['slug']}.ipxe?platform={platform}&mac={mac or ''} || goto failed", ""]
     memtest = recipes.render_builtin("memtest", ip, platform)
