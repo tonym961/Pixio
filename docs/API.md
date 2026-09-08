@@ -95,3 +95,66 @@ Servizio: `pixio/services/drivers.py` (list_folders, create_folder, delete_folde
 Significato dei flag (spiegazione da mostrare nella UI):
 - **winpe_inject** "Carica in WinPE all'avvio": i file .inf/.sys/.cat/.dll al primo livello della cartella vengono iniettati nel WinPE via wimboot e caricati con drvload prima della rete. Serve per schede di rete o controller storage che WinPE non riconosce (max 256 MB totali).
 - **setup_load** "Carica prima del setup di Windows": dopo aver mappato la share, drvload ricorsivo di tutti i .inf della cartella prima di setup.exe (richiede "Installazione Windows via rete" attiva).
+
+---
+
+# Contratto delle funzioni aggiunte (settembre 2026)
+
+## 2. Sottomenu per gruppo (menu di boot)
+Impostazioni in `menu`: `submenus` ("auto" | "always" | "never", default "auto") e `submenu_threshold` (int, default 8).
+Con "auto" i sottomenu compaiono quando le voci avviabili superano la soglia. Il menu principale mostra un elemento per gruppo
+(`item grp:<slug-gruppo> Nome gruppo (N)`), che porta a un sottomenu con le voci di quel gruppo più "Torna al menu principale".
+Le voci di sistema (memtest, disco locale, shell, riavvia, esci) restano sempre nel menu principale.
+`GET /api/menu` restituisce anche `settings.submenus` e `settings.submenu_threshold`; `PUT /api/menu` li accetta e li valida
+(`submenus` tra i tre valori, soglia 1-100).
+
+## 3. Risposte automatiche (installazioni non presidiate)
+Servizio `pixio/services/answers.py`, file in `/var/lib/pixio/answers/<id>/<nome file>`, metadati in `/var/lib/pixio/answers.json`.
+Oggetto risposta: `{id, name, kind, files:[{name,size,mtime}], main_file, note, created, used_by:[slug]}`.
+`kind`: `windows` (autounattend.xml) | `debian` (preseed.cfg) | `ubuntu` (user-data + meta-data, cloud-init) | `redhat` (kickstart .ks) | `generic`.
+- `GET /api/answers` → `{answers:[...], kinds:[{id,name,hint,main_file}]}`
+- `POST /api/answers {name, kind, note?, content?}` → crea (201). Con `content` scrive subito il file principale del tipo.
+- `GET /api/answers/<id>` → risposta + `content` del file principale (max 512 KB) + `url` pubblico
+- `PUT /api/answers/<id> {name?, note?, content?, filename?}` → aggiorna metadati e/o contenuto di un file
+- `DELETE /api/answers/<id>`; `DELETE /api/answers/<id>/files/<name>`
+- Upload file aggiuntivi: `POST /api/upload/init {filename, size, kind:"answer", folder:"<id risposta>"}` poi chunk/finish (estensioni: xml cfg ks yaml yml txt cmd bat ps1 reg sh conf seed json ini).
+- Associazione: `PATCH /api/catalog/<slug> {answer_id: "<id>"|null}` (campo `answer_id` nell'oggetto ISO, `answer_name` in lettura).
+- I file sono serviti ai client senza autenticazione su `http://<ip>/answers/<id>/<nome file>` (blueprint pubblico, solo lettura, nomi validati).
+Funzioni Python richieste da `answers.py` (usate dal codice di boot):
+`list_answers()`, `get(id)`, `create(data)`, `update(id, data)`, `delete(id)`, `folder_path(id)`, `public_url(server_ip, id, filename)`,
+`get_for_slug(slug)` (risposta associata a una ISO o None), `kernel_args(answer, iso_type, server_ip)` (stringa da aggiungere alla cmdline:
+Debian `auto=true priority=critical url=<url preseed>`, Ubuntu `autoinstall ds=nocloud-net;s=<url cartella con slash finale>`,
+RHEL `inst.ks=<url kickstart>`, altrimenti ""), `winpe_files(answer, server_ip)` (lista `[(nome_destinazione, url)]` da iniettare nel WinPE, es. `autounattend.xml`).
+
+## 4. Wake-on-LAN e avvio una tantum
+- `POST /api/clients/<mac>/wake` → invia il magic packet (UDP broadcast porte 9 e 7 sull'interfaccia configurata) → `{ok, sent:2}`
+- `POST /api/clients/wake {macs:[...]}` → risveglio multiplo → `{ok, results:{mac:bool}}`
+- `PATCH /api/clients/<mac> {name?, auto_boot?, boot_once?}`: `boot_once` è uno slug valido solo per il prossimo avvio.
+  Il campo si azzera quando il client richiede quella voce; ha precedenza su `auto_boot`.
+- `GET /api/clients` include `boot_once` e `wol_supported` (sempre true: il pacchetto si invia comunque).
+Funzioni richieste da `clients.py`: `wake(mac, broadcast=None)`, `set_boot_once(mac, slug)`, `take_boot_once(mac)` (legge e azzera).
+
+## 5. Copia locale automatica (cache)
+Impostazioni in `cache`: `auto` (bool), `min_size_gb` (0.1-100), `only_enabled` (bool), `keep_free_gb` (1-500).
+Servizio `pixio/services/autocache.py`: `plan()` → `{to_copy:[slug], to_free:[slug], free_gb, reason}`;
+`run(job=None)` esegue il piano (usa `catalog.set_cache`), rispetta `keep_free_gb` eliminando le copie meno usate (ultimo boot più vecchio);
+`stats()` → `{cached:int, cached_bytes, free_bytes, candidates:int}`.
+- `GET /api/cache` → `{settings, stats, plan}`
+- `POST /api/cache/run` → `{ok, job_id}`
+- `POST /api/cache/clear {slug?}` → libera una copia o tutte.
+
+## 6. Backup della configurazione e aggiornamento
+Servizio `pixio/services/backup.py`:
+- `GET /api/backup` → file `.tar.gz` (config.json senza hash password e senza credenziali SMB, catalogo, client, driver metadati, risposte, menu) con `Content-Disposition`
+- `POST /api/backup/restore` (multipart o corpo binario del tar.gz) → `{ok, restored:[str], warnings:[str]}`; non tocca le credenziali delle share
+- `GET /api/update/check` → `{current, remote, behind:int, dirty:bool, can_update:bool}` (git ls-remote + rev-list)
+- `POST /api/update/apply` → `{ok, job_id}`; il job esegue `pixio-helper update` (git pull + install.sh) e riavvia il servizio
+Comando helper aggiunto: `pixio-helper update` (git -C /opt/pixio pull --ff-only && /opt/pixio/install.sh), avviato con systemd-run come per la build iPXE.
+
+## 7. HTTPS per la GUI
+Impostazioni in `web`: `https_enabled`, `redirect_http`.
+Comando helper `pixio-helper cert [<nome host>]`: genera (se manca) un certificato autofirmato in `/etc/pixio/tls/{cert.pem,key.pem}`
+valido 10 anni, con SAN per IP e hostname; `pixio-helper apply nginx` aggiunge il server TLS sulla 443 e, se `redirect_http`,
+il reindirizzamento dalla 80 (esclusi i percorsi dei client PXE `/boot.ipxe`, `/boot/`, `/pxe/`, `/answers/`, che restano in HTTP).
+- `GET /api/system/cert` → `{enabled, exists, subject, not_after, fingerprint}`
+- `POST /api/system/cert/regenerate` → rigenera il certificato

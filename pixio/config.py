@@ -14,6 +14,8 @@ VAR_DIR = "/var/lib/pixio"
 CATALOG_FILE = os.path.join(VAR_DIR, "catalog.json")      # catalogo ISO (tutte le sorgenti)
 CLIENTS_FILE = os.path.join(VAR_DIR, "clients.json")      # client PXE visti
 DRIVERS_FILE = os.path.join(VAR_DIR, "drivers.json")      # flag per cartella driver (winpe_inject, setup_load, note)
+ANSWERS_DIR = os.path.join(VAR_DIR, "answers")            # file di risposta (autounattend.xml, preseed.cfg, user-data...)
+ANSWERS_FILE = os.path.join(VAR_DIR, "answers.json")      # metadati dei file di risposta
 JOBS_DIR = os.path.join(VAR_DIR, "jobs")                  # stato job in background (copie, upload, scansioni)
 UPLOAD_TMP_DIR = os.path.join(VAR_DIR, "uploads")         # chunk degli upload web in corso
 LOG_DIR = "/var/log/pixio"
@@ -68,6 +70,8 @@ DEFAULT_CONFIG = {
         "show_reboot": True,
         "show_memtest": True,
         "groups": ["Strumenti", "Windows", "Windows Server", "Linux", "Hypervisor"],
+        "submenus": "auto",          # auto | always | never: sottomenu per gruppo nel menu di boot
+        "submenu_threshold": 8,      # con "auto" i sottomenu compaiono oltre questo numero di voci
         "theme": {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99", "logo_text": "PIXIO", "subtitle": "Avvio da rete"},
     },
     "library": {
@@ -82,5 +86,15 @@ DEFAULT_CONFIG = {
         "smb_password": "",            # generata quando si attiva l'opzione
     },
     "scan": {"auto": True, "interval_min": 10},
+    "cache": {                       # copia locale automatica delle ISO che stanno su share remote
+        "auto": False,
+        "min_size_gb": 2,            # copia solo le ISO piu' grandi di cosi'
+        "only_enabled": True,        # solo quelle abilitate nel menu
+        "keep_free_gb": 20,          # spazio da lasciare libero: sotto questa soglia elimina le copie meno usate
+    },
+    "web": {                         # accesso alla GUI
+        "https_enabled": False,
+        "redirect_http": True,
+    },
     "auth": {"password_hash": "", "session_hours": 12},
 }
