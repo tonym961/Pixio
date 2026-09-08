@@ -19,9 +19,15 @@ Poi apri `http://<ip-del-server>/`: al primo accesso imposti la password dell'am
 | nginx | `/pxe/` = contenuto delle ISO montate in loop, file ISO interi, wimboot/memdisk; `/` = GUI e API |
 | Flask + gunicorn (`pixio/`) | GUI (SPA in `static/`), API JSON, generazione dinamica del menu iPXE |
 | `pixio-helper` (root, via sudo) | le sole operazioni privilegiate: mount CIFS/loop, config di dnsmasq/nginx/samba, riavvio servizi |
-| samba | share locale `iso` in scrittura per caricare ISO da Windows (opzionale) |
+| samba | share locali `iso` e `drivers` in scrittura per caricare ISO e driver da Windows (opzionale); share `pxe` in sola lettura per il setup di Windows (opzionale) |
 
 Percorsi: codice `/opt/pixio`, dati `/srv/pixio` (sources, library, cache, tftp, http), config `/etc/pixio`, stato `/var/lib/pixio`, log `/var/log/pixio`.
+
+## Driver per WinPE / setup di Windows
+I PC recenti hanno bisogno di driver Ethernet e storage (Intel VMD/RST, NVMe RAID) che il WinPE della ISO non ha.
+Pagina **Driver** della GUI (o share `\\<ip>\drivers`): una cartella per pacchetto con i file estratti (.inf .sys .cat).
+- "Carica in WinPE all'avvio": i file vengono iniettati via wimboot e caricati con `drvload` prima della rete.
+- "Carica prima del setup di Windows": `drvload` dalla share prima di `setup.exe` (richiede "Installazione Windows via rete").
 
 ## Tipi di ISO riconosciuti
 Windows (installazione via wimboot), WinPE (Hiren's ecc.), Ubuntu e derivate (casper), Debian live / Clonezilla / GParted,
