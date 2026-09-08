@@ -190,7 +190,9 @@ class LogsTest(unittest.TestCase):
         self.assertTrue(any(l["source"] == "nginx" and l["level"] == "warn" for l in r["lines"]))
         ts = [l["ts"] for l in r["lines"]]
         self.assertEqual(ts, sorted(ts))
-        self.assertEqual(r["cursor"], ts[-1])
+        self.assertTrue(r["cursor"].startswith(ts[-1] + "|"), r["cursor"])   # cursore "ts|n"
+        # una nuova lettura con il cursore non deve restituire righe gia' viste
+        self.assertEqual(logs.read("all", r["cursor"], 2000)["lines"], [])
         r2 = logs.read("all", r["cursor"], 200)
         self.assertEqual(r2["lines"], [])
         self.assertEqual(r2["cursor"], r["cursor"])

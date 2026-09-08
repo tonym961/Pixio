@@ -197,9 +197,14 @@ def cmd_test_cifs(a):
     d = source_def(sid)
     parts = d["unc"].lstrip("/").split("/")
     server, share, sub = parts[0], parts[1], "/".join(parts[2:])
-    cmd = ["smbclient", f"//{server}/{share}", "-A", f"{SOURCES_DIR}/{sid}.cred", "-c", f"ls \"{sub}\\*\"" if sub else "ls"]
+    # il sottopercorso va passato come argomento separato (-D): mai dentro la stringa dei comandi (-c)
+    cmd = ["smbclient", f"//{server}/{share}", "-c", "ls"]
     if d.get("guest"):
-        cmd = ["smbclient", f"//{server}/{share}", "-N", "-c", f"ls \"{sub}\\*\"" if sub else "ls"]
+        cmd.insert(2, "-N")
+    else:
+        cmd[2:2] = ["-A", f"{SOURCES_DIR}/{sid}.cred"]
+    if sub:
+        cmd[2:2] = ["-D", sub]
     p = run(cmd, check=False, timeout=30)
     ok = p.returncode == 0
     lines = [l for l in (p.stdout + p.stderr).splitlines() if l.strip()]
@@ -233,6 +238,24 @@ def _capture(fn):
 
 
 # ---------------------------------------------------------------- ISO loop mount
+import fcntl
+from contextlib import contextmanager
+
+
+@contextmanager
+def slug_lock(slug):
+    """Serializza mount/umount della stessa ISO (due richieste concorrenti = mount sovrapposti)."""
+    d = "/run/pixio/lock"
+    os.makedirs(d, exist_ok=True)
+    fd = os.open(f"{d}/{slug}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 def resolve_iso_path(path):
     rp = os.path.realpath(path)
     if not any(rp == r or rp.startswith(r + "/") for r in ISO_ROOTS):
@@ -253,7 +276,7 @@ def has_udf(path):
                     break
                 if blk[1:6] in (b"BEA01", b"NSR02", b"NSR03"):
                     return True
-                if blk[1:6] == b"CD001" and blk[0:1] == b"\xff":
+                if blk[1:6] == b"TEA01":
                     break
     except OSError:
         pass
@@ -276,29 +299,37 @@ def mount_iso_ro(rp, mp):
     raise HelperError(f"mount ISO fallito: {err}")
 
 
+def unmount_all(mp):
+    """Smonta tutti i mount sovrapposti su mp (max 8 iterazioni)."""
+    for _ in range(8):
+        if not is_mounted(mp):
+            return
+        p = run(["umount", mp], check=False, timeout=30)
+        if p.returncode != 0:
+            run(["umount", "-l", mp], check=False, timeout=30)
+
+
 def cmd_mount_detect(a):
     """Mount temporaneo (sola lettura) per il rilevamento del tipo, fuori dalla radice HTTP."""
     slug = check_slug(a.slug)
     rp = resolve_iso_path(a.path)
     mp = f"{DETECT}/{slug}"
-    os.makedirs(mp, exist_ok=True)
-    if is_mounted(mp):
-        run(["umount", "-l", mp], check=False, timeout=30)
-    mount_iso_ro(rp, mp)
+    with slug_lock("detect-" + slug):
+        os.makedirs(mp, exist_ok=True)
+        unmount_all(mp)
+        mount_iso_ro(rp, mp)
     out({"ok": True, "mountpoint": mp})
 
 
 def cmd_umount_detect(a):
     slug = check_slug(a.slug)
     mp = f"{DETECT}/{slug}"
-    if is_mounted(mp):
-        p = run(["umount", mp], check=False, timeout=30)
-        if p.returncode != 0:
-            run(["umount", "-l", mp], check=False, timeout=30)
-    try:
-        os.rmdir(mp)
-    except OSError:
-        pass
+    with slug_lock("detect-" + slug):
+        unmount_all(mp)
+        try:
+            os.rmdir(mp)
+        except OSError:
+            pass
     out({"ok": True})
 
 
@@ -306,34 +337,32 @@ def cmd_mount_iso(a):
     slug = check_slug(a.slug)
     rp = resolve_iso_path(a.path)
     mp = f"{HTTP_ISO}/{slug}"
-    os.makedirs(mp, exist_ok=True)
-    if is_mounted(mp):
-        umount_iso(slug)
-    mount_iso_ro(rp, mp)
-    os.makedirs(HTTP_ISOFILE, exist_ok=True)
-    link = f"{HTTP_ISOFILE}/{slug}.iso"
-    try:
-        os.unlink(link)
-    except FileNotFoundError:
-        pass
-    os.symlink(rp, link)
+    with slug_lock(slug):
+        os.makedirs(mp, exist_ok=True)
+        unmount_all(mp)
+        mount_iso_ro(rp, mp)
+        os.makedirs(HTTP_ISOFILE, exist_ok=True)
+        link = f"{HTTP_ISOFILE}/{slug}.iso"
+        try:
+            os.unlink(link)
+        except FileNotFoundError:
+            pass
+        os.symlink(rp, link)
     out({"ok": True, "mountpoint": mp, "isofile": link})
 
 
 def umount_iso(slug):
     mp = f"{HTTP_ISO}/{slug}"
-    if is_mounted(mp):
-        p = run(["umount", mp], check=False, timeout=30)
-        if p.returncode != 0:
-            run(["umount", "-l", mp], check=False, timeout=30)
-    try:
-        os.unlink(f"{HTTP_ISOFILE}/{slug}.iso")
-    except FileNotFoundError:
-        pass
-    try:
-        os.rmdir(mp)
-    except OSError:
-        pass
+    with slug_lock(slug):
+        unmount_all(mp)
+        try:
+            os.unlink(f"{HTTP_ISOFILE}/{slug}.iso")
+        except FileNotFoundError:
+            pass
+        try:
+            os.rmdir(mp)
+        except OSError:
+            pass
 
 
 def cmd_umount_iso(a):

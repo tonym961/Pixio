@@ -25,8 +25,13 @@ def _flags(cfg):
 
 
 def _safe(s):
-    """Testo per le voci di menu: niente a capo/${} che romperebbero lo script."""
-    return re.sub(r"[\r\n]", " ", str(s)).replace("${", "$ {")[:70]
+    """Testo per le voci di menu: solo ASCII stampabile, niente a capo, ${}, token iPXE (&& || ;) o opzioni iniziali."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
+    s = re.sub(r"[\r\n\t]", " ", s).replace("${", "$ {")
+    s = re.sub(r"(?<!\S)(&&|\|\||;|#)(?!\S)", "-", s)
+    s = re.sub(r"\s+", " ", s).strip().lstrip("-").strip()
+    return (s or "voce")[:70]
 
 
 def entries(cfg=None):
@@ -35,8 +40,8 @@ def entries(cfg=None):
     isos, _ = catalog.list_isos()
     out = []
     for e in isos:
-        if not e.get("enabled") or e.get("missing"):
-            continue
+        if not e.get("enabled") or e.get("missing") or not e.get("mounted"):
+            continue     # una ISO abilitata ma non montata (share giu') fallirebbe: il thread di background la rimonta
         out.append({"slug": e["slug"], "name": e["name"], "group": e.get("group") or "", "order": e.get("order", 0),
                     "enabled": True, "platforms": e.get("platforms", []), "type_name": e.get("type_name"), "mounted": e.get("mounted")})
     return out

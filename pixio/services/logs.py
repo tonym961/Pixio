@@ -231,9 +231,20 @@ def read(source="all", cursor=None, limit=200):
     if source in ("all", "pixio"):
         lines += read_journal()
     lines.sort(key=lambda l: l["ts"])
-    cur = _iso_norm(cursor) if cursor else None
+    # cursore "ts|n": n = righe con quel timestamp gia' restituite (righe scritte nello stesso secondo dopo il poll)
+    cur, cur_n = None, 0
+    if cursor:
+        ts_part, sep, n_part = str(cursor).rpartition("|")
+        if not sep:
+            ts_part, n_part = str(cursor), None       # cursore "nudo" (solo ts): righe strettamente successive
+        cur = _iso_norm(ts_part)
+        cur_n = int(n_part) if (n_part or "").isdigit() else None
     if cur:
-        lines = [l for l in lines if l["ts"] > cur]
+        same = [l for l in lines if l["ts"] == cur]
+        if cur_n is None:
+            cur_n = len(same)
+        lines = same[cur_n:] + [l for l in lines if l["ts"] > cur]
+    all_lines = lines
     if len(lines) > limit:
         cut = len(lines) - limit
         # non spezzare un gruppo di righe con lo stesso timestamp
@@ -241,5 +252,10 @@ def read(source="all", cursor=None, limit=200):
         while cut > 0 and lines[cut - 1]["ts"] == first_ts:
             cut -= 1
         lines = lines[cut:]
-    new_cursor = lines[-1]["ts"] if lines else (cur or cursor)
+    if lines:
+        last_ts = lines[-1]["ts"]
+        n_same = sum(1 for l in all_lines if l["ts"] == last_ts) + (cur_n if cur == last_ts else 0)
+        new_cursor = f"{last_ts}|{n_same}"
+    else:
+        new_cursor = f"{cur}|{cur_n}" if cur else cursor
     return {"lines": lines, "cursor": new_cursor}

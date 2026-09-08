@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# network-online.target puo' scattare prima del lease DHCP (dhcpcd/ifup): attendi la default route (max 60 s)
+ExecStartPre=/bin/sh -c 'for i in $(seq 60); do ip -4 route show default | grep -q . && exit 0; sleep 1; done; exit 0'
 ExecStart=/usr/local/sbin/pixio-helper mount-all
 ExecStop=/bin/true
 TimeoutStartSec=180

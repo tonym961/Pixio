@@ -86,53 +86,68 @@ def _walk_isos(root):
                 yield (fn if rel == "." else f"{rel}/{fn}"), full, st
 
 
+def _new_entry(slug, sid, rel, n):
+    return {"slug": slug, "source": sid, "rel_path": rel, "file": os.path.basename(rel),
+            "name": os.path.splitext(os.path.basename(rel))[0], "enabled": False, "group": "",
+            "order": 1000 + n, "custom_recipe": None, "cache_wanted": False,
+            "cache": {"status": "none", "path": "", "progress": 0}, "first_seen": now(), "type": "unknown", "detect": {}}
+
+
 def scan(job=None):
-    """Scansiona tutte le sorgenti. Aggiorna il catalogo; rileva il tipo delle ISO nuove o cambiate."""
+    """Scansiona tutte le sorgenti montate. Il catalogo viene aggiornato con UNA update_json (merge per sorgente+percorso):
+    le modifiche fatte dall'utente durante la scansione non vengono perse. Poi rileva il tipo delle ISO nuove o cambiate."""
     if not _scan_lock.acquire(blocking=False):
         raise RuntimeError("scansione già in corso")
     try:
-        cat = load()
-        isos = cat["isos"]
-        seen = set()
+        scanned = {}                      # sorgenti effettivamente lette: solo le loro ISO possono diventare 'missing'
         found = []
         for sid, sname, root in _sources():
             if not os.path.isdir(root):
                 continue
+            scanned[sid] = sname
             for rel, full, st in _walk_isos(root):
                 found.append((sid, sname, rel, full, st))
-        total = len(found)
-        by_key = {(v.get("source"), v.get("rel_path")): k for k, v in isos.items()}
         todo = []
-        for i, (sid, sname, rel, full, st) in enumerate(found):
-            key = (sid, rel)
-            slug = by_key.get(key)
-            if slug is None:
-                slug = unique_slug(slugify(rel), isos)
-                isos[slug] = {"slug": slug, "source": sid, "rel_path": rel, "file": os.path.basename(rel),
-                              "name": os.path.splitext(os.path.basename(rel))[0], "enabled": False, "group": "",
-                              "order": 1000 + len(isos), "custom_recipe": None, "cache_wanted": False,
-                              "cache": {"status": "none", "path": "", "progress": 0}, "first_seen": now(), "type": "unknown", "detect": {}}
-            e = isos[slug]
-            seen.add(slug)
-            e["source_name"] = sname
-            e["path"] = full
-            e["last_seen"] = now()
-            e["missing"] = False
-            changed = (e.get("size") != st.st_size) or (int(e.get("mtime") or 0) != int(st.st_mtime))
-            e["size"] = st.st_size
-            e["mtime"] = int(st.st_mtime)
-            if changed or not e.get("detect") or e.get("detect", {}).get("error"):
-                todo.append(slug)
-        for slug, e in isos.items():
-            if slug not in seen:
-                e["missing"] = True
-        cat["last_scan"] = now()
-        save(cat)
+
+        def merge(cat):
+            cat.setdefault("isos", {})
+            isos = cat["isos"]
+            by_key = {(v.get("source"), v.get("rel_path")): k for k, v in isos.items()}
+            by_sig = {(v.get("source"), v.get("size"), int(v.get("mtime") or 0), v.get("file")): k for k, v in isos.items()}
+            seen = set()
+            for sid, sname, rel, full, st in found:
+                slug = by_key.get((sid, rel))
+                if slug is None:
+                    # file rinominato/spostato dentro la stessa sorgente: stessa dimensione, mtime e nome
+                    cand = by_sig.get((sid, st.st_size, int(st.st_mtime), os.path.basename(rel)))
+                    if cand is not None and cand not in seen and isos[cand].get("missing", False) is not None:
+                        slug = cand
+                if slug is None:
+                    slug = unique_slug(slugify(rel), isos)
+                    isos[slug] = _new_entry(slug, sid, rel, len(isos))
+                e = isos[slug]
+                seen.add(slug)
+                changed = (e.get("size") != st.st_size) or (int(e.get("mtime") or 0) != int(st.st_mtime)) or (e.get("rel_path") != rel)
+                e.update({"source_name": sname, "rel_path": rel, "file": os.path.basename(rel), "path": full,
+                          "size": st.st_size, "mtime": int(st.st_mtime), "last_seen": now(), "missing": False})
+                d = e.get("detect") or {}
+                if changed or not d or (d.get("error") and int(e.get("detect_attempts") or 0) < 3):
+                    todo.append(slug)
+            for slug, e in isos.items():
+                if slug not in seen and e.get("source") in scanned:
+                    e["missing"] = True
+            cat["last_scan"] = now()
+            return cat
+        update_json(C.CATALOG_FILE, merge, default={})
+        total = len(found)
         for i, slug in enumerate(todo):
             if job is not None and getattr(job, "cancelled", False):
                 break
+            e = load()["isos"].get(slug)
+            if not e:
+                continue
             if job is not None:
-                job.set_progress(int(100 * i / max(1, len(todo))), f"Rilevamento {isos[slug]['file']} ({i + 1}/{len(todo)})")
+                job.set_progress(int(100 * i / max(1, len(todo))), f"Rilevamento {e['file']} ({i + 1}/{len(todo)})")
             _detect_one(slug)
         if job is not None:
             job.set_progress(100, f"{total} ISO trovate, {len(todo)} analizzate")
@@ -153,6 +168,7 @@ def _detect_one(slug):
         if not x:
             return c
         x["detect"] = d
+        x["detect_attempts"] = (int(x.get("detect_attempts") or 0) + 1) if d.get("error") else 0
         if not x.get("type_override"):
             x["type"] = d.get("type", "unknown")
         if d.get("name") and (x.get("name_auto", True)):
@@ -180,10 +196,7 @@ def register_local_file(path):
             break
     else:
         slug = unique_slug(slugify(rel), cat["isos"])
-        cat["isos"][slug] = {"slug": slug, "source": "local", "rel_path": rel, "file": os.path.basename(rel),
-                             "name": os.path.splitext(os.path.basename(rel))[0], "enabled": False, "group": "",
-                             "order": 1000 + len(cat["isos"]), "custom_recipe": None, "cache_wanted": False,
-                             "cache": {"status": "none", "path": "", "progress": 0}, "first_seen": now(), "type": "unknown", "detect": {}}
+        cat["isos"][slug] = _new_entry(slug, "local", rel, len(cat["isos"]))
     st = os.stat(path)
     e = cat["isos"][slug]
     e.update({"source_name": "Locale", "path": path, "size": st.st_size, "mtime": int(st.st_mtime), "last_seen": now(), "missing": False})
@@ -351,15 +364,37 @@ def umount(slug):
 
 
 def set_enabled(slug, enabled):
+    if enabled:
+        mount(slug)                 # se fallisce l'eccezione arriva alla API e la voce resta disabilitata
+
     def upd(c):
         if slug in c["isos"]:
             c["isos"][slug]["enabled"] = enabled
         return c
     update_json(C.CATALOG_FILE, upd)
-    if enabled:
-        mount(slug)
-    else:
-        umount(slug)
+    if not enabled:
+        try:
+            umount(slug)
+        except privileged.HelperError as ex:
+            log.warning("umount %s: %s", slug, ex)
+
+
+def forget_source(sid):
+    """Rimuove dal catalogo tutte le ISO di una sorgente eliminata (smontando quelle montate)."""
+    cat = load()
+    victims = [k for k, v in cat["isos"].items() if v.get("source") == sid]
+    for slug in victims:
+        try:
+            umount(slug)
+        except privileged.HelperError as ex:
+            log.warning("umount %s: %s", slug, ex)
+
+    def upd(c):
+        for slug in victims:
+            c["isos"].pop(slug, None)
+        return c
+    update_json(C.CATALOG_FILE, upd)
+    return len(victims)
 
 
 def remount_enabled():

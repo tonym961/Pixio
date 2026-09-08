@@ -171,6 +171,13 @@ def record_seen(mac, ip=None, arch="", platform="", manuf="", product=""):
             c["arch"] = a
         if hw:
             c["hw"] = hw
+        # tetto: l'endpoint e' pubblico, un client ostile non deve far crescere il file all'infinito
+        MAX_CLIENTS = 500
+        if len(d) > MAX_CLIENTS:
+            victims = sorted((k for k, v in d.items() if k != mac and not v.get("name") and not v.get("auto_boot")),
+                             key=lambda k: d[k].get("last_seen") or "")
+            for k in victims[: len(d) - MAX_CLIENTS]:
+                d.pop(k, None)
         return d
     with _lock:
         update_json(C.CLIENTS_FILE, upd, default={})

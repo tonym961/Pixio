@@ -13,6 +13,14 @@ log = logging.getLogger("pixio.boot")
 MAC_RE = re.compile(r"^[0-9a-fA-F]{2}([-:][0-9a-fA-F]{2}){5}$")
 
 
+def _ipv4(v):
+    import ipaddress
+    try:
+        return str(ipaddress.IPv4Address(v))
+    except Exception:
+        return ""
+
+
 def _mac():
     m = request.args.get("mac", "")
     return m.lower().replace("-", ":") if MAC_RE.match(m) else ""
@@ -39,12 +47,12 @@ def boot_menu():
                 auto = c["auto_boot"]
             rs = getattr(clients, "record_seen", None)
             if rs:
-                rs(mac, ip=request.args.get("ip", request.remote_addr), arch=request.args.get("arch", ""),
-                   platform=platform, manuf=request.args.get("manuf", ""), product=request.args.get("product", ""))
+                rs(mac, ip=_ipv4(request.args.get("ip", "")) or request.remote_addr, arch=request.args.get("arch", "")[:16],
+                   platform=platform[:8], manuf=request.args.get("manuf", "")[:40], product=request.args.get("product", "")[:40])
         except Exception as e:  # noqa
             log.debug("clients: %s", e)
     return _text(ipxe_menu.menu_script(platform or "bios", mac=mac.replace(":", "-") if mac else None, auto_boot=auto, cfg=cfg,
-                                       client_ip=request.args.get("ip", "")))
+                                       client_ip=_ipv4(request.args.get("ip", ""))))
 
 
 @bp.route("/boot/<slug>.ipxe")

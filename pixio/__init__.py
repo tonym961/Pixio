@@ -15,6 +15,8 @@ PUBLIC_PREFIXES = ("/boot.ipxe", "/boot/", "/api/health", "/api/auth/status", "/
 
 def create_app():
     app = Flask(__name__, static_folder=None)
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)   # nginx e' l'unico proxy davanti a gunicorn
     app.config.update(
         SECRET_KEY=auth.secret_key(),
         SESSION_COOKIE_HTTPONLY=True,

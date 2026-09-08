@@ -36,6 +36,7 @@ install -m 755 $CODE/helper/pixio-helper /usr/local/sbin/pixio-helper
 install -m 440 $CODE/etc/sudoers-pixio /etc/sudoers.d/pixio
 visudo -cf /etc/sudoers.d/pixio >/dev/null
 install -m 755 $CODE/bin/pixio-admin /usr/local/sbin/pixio-admin
+install -m 644 $CODE/etc/logrotate-pixio /etc/logrotate.d/pixio
 
 say "File di boot (wimboot, memdisk, memtest, iPXE)"
 cd $SRV/http/boot

@@ -118,8 +118,9 @@ def describe(index, root, t, files, label):
     """Versione/etichetta leggibile dal contenuto (.disk/info, .treeinfo, wiminfo, volume id)."""
     version, name = "", ""
     info = read_small(root, resolve(index, [".disk/info"]))
-    if info:
-        name = info.strip().splitlines()[0][:120]
+    first = next((l for l in info.splitlines() if l.strip()), "") if info else ""
+    if first:
+        name = first.strip()[:120]
     ti = read_small(root, resolve(index, [".treeinfo"]), 8192)
     if ti:
         m1 = re.search(r"^name\s*=\s*(.+)$", ti, re.M)
@@ -155,10 +156,10 @@ def describe(index, root, t, files, label):
         name = f"Alpine Linux {m.group(1)}" if m else "Alpine Linux"
     if t["id"] == "clonezilla":
         v = read_small(root, resolve(index, ["Clonezilla-Live-Version"]))
-        name = "Clonezilla live " + (v.strip().splitlines()[0].split()[0] if v.strip() else "")
+        name = "Clonezilla live " + (v.split()[0] if v.split() else "")
     if t["id"] == "gparted":
         v = read_small(root, resolve(index, ["GParted-Live-Version"]))
-        name = "GParted live " + (v.strip().splitlines()[0].split()[0] if v.strip() else "")
+        name = "GParted live " + (v.split()[0] if v.split() else "")
     if t["id"] == "opensuse" and label:
         name = label.replace("-", " ")
     return {"label": label, "name": name.strip(), "version": version, "editions": editions[:12]}

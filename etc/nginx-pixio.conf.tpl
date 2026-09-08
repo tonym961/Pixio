@@ -17,11 +17,9 @@ server {
         sendfile on;
         tcp_nopush on;
         aio threads;
-        directio 8m;
         output_buffers 2 1m;
         types { }
         default_type application/octet-stream;
-        add_header Accept-Ranges bytes;
         add_header Cache-Control "no-cache";
         access_log /var/log/nginx/pixio-access.log pixio;
     }
