@@ -85,8 +85,9 @@ def _loop():
             if res:
                 log.info("rimontaggio sorgenti: %s", res)
             # ISO abilitate ma non montate (share tornata raggiungibile, riavvio): rimontale
-            if cat is not None and callable(getattr(cat, "remount_enabled", None)):
-                _safe("remount ISO abilitate", cat.remount_enabled)
+            cat_mod = _catalog()
+            if cat_mod is not None and callable(getattr(cat_mod, "remount_enabled", None)):
+                _safe("remount ISO abilitate", cat_mod.remount_enabled)
         if now - last_cleanup >= CLEANUP_EVERY:
             last_cleanup = now
             _safe("pulizia upload", uploads.cleanup)
