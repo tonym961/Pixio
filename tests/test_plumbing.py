@@ -362,3 +362,37 @@ def tearDownModule():
 
 if __name__ == "__main__":
     unittest.main()
+
+# --------------------------------------------------------------------------
+# Isolamento fra moduli di test: ogni modulo imposta pixio.config e il finto di
+# pixio.privileged al proprio import. Eseguendo piu' moduli nello stesso processo
+# l'ultimo import vincerebbe su tutti: qui i valori di QUESTO modulo vengono
+# riapplicati prima dei suoi test e ripristinati alla fine.
+_ISO_CONF = {k: v for k, v in vars(C).items() if k.isupper()}
+_ISO_CALL = privileged.call
+_ISO_PREV = {}
+
+
+def _iso_setup():
+    _ISO_PREV.clear()
+    _ISO_PREV.update({k: getattr(C, k, None) for k in _ISO_CONF})
+    _ISO_PREV["__call__"] = privileged.call
+    for k, v in _ISO_CONF.items():
+        setattr(C, k, v)
+    privileged.call = _ISO_CALL
+
+
+def _iso_teardown():
+    for k, v in _ISO_PREV.items():
+        if k == "__call__":
+            privileged.call = v
+        else:
+            setattr(C, k, v)
+
+
+def setUpModule():
+    _iso_setup()
+
+
+def tearDownModule():
+    _iso_teardown()

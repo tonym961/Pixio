@@ -4,6 +4,7 @@ Chunk in config.UPLOAD_TMP_DIR/<upload_id>/<n>, stato in UPLOAD_TMP_DIR/<upload_
 kind "iso" (default): alla fine i chunk vengono assemblati in config.LIBRARY_DIR/<filename> e parte il rilevamento.
 kind "driver": destinazione config.DRIVERS_DIR/<folder>/<filename>; se il file è uno .zip viene estratto
 (in modo sicuro) nella cartella e poi cancellato.
+kind "answer": destinazione config.ANSWERS_DIR/<id risposta>/<filename>, file di testo di pochi KB.
 """
 import datetime
 import logging
@@ -27,7 +28,11 @@ CHUNK_SIZE = 8 * 1024 * 1024
 ALLOWED_EXT = (".iso", ".img", ".wim")
 DRIVER_EXT = (".inf", ".sys", ".cat", ".dll", ".exe", ".cab", ".zip", ".msi", ".txt", ".bin", ".dat",
               ".ini", ".cfg", ".xml", ".json", ".7z")
-KINDS = ("iso", "driver")
+ANSWER_EXT = (".xml", ".cfg", ".ks", ".yaml", ".yml", ".txt", ".cmd", ".bat", ".ps1", ".reg",
+              ".sh", ".conf", ".seed", ".json", ".ini")
+ANSWER_NOEXT = ("user-data", "meta-data", "vendor-data", "network-config")   # nomi cloud-init senza estensione
+ANSWER_MAX_SIZE = 8 * 1024 * 1024   # i file di risposta sono testo: 8 MiB sono già abbondanti
+KINDS = ("iso", "driver", "answer")
 DISK_MARGIN = 1024 ** 3          # 1 GiB di margine sul disco
 MAX_SIZE = 64 * 1024 ** 3        # 64 GiB
 MAX_AGE = 7 * 86400              # upload abbandonati eliminati dopo 7 giorni
@@ -62,6 +67,18 @@ def sanitize_filename(filename, kind="iso"):
         if ext.lower() not in DRIVER_EXT:
             raise UploadError("Tipo di file non ammesso per i driver: sono accettati "
                               + ", ".join(e.lstrip(".") for e in DRIVER_EXT))
+    elif kind == "answer":
+        if ext and ext.lower() not in ANSWER_EXT:
+            raise UploadError("Tipo di file non ammesso per le risposte: sono accettati "
+                              + ", ".join(e.lstrip(".") for e in ANSWER_EXT)
+                              + " (oppure " + ", ".join(ANSWER_NOEXT) + ")")
+        # nomi semplici: le stesse regole con cui il servizio risposte valida e serve i file
+        from . import answers as _answers
+        simple = re.sub(r"[^A-Za-z0-9._-]+", "-", base[:100]).strip("-") + ext.lower()
+        try:
+            return _answers.check_filename(simple)
+        except ValueError as e:
+            raise UploadError(str(e))
     elif ext.lower() not in ALLOWED_EXT:
         raise UploadError("Tipo di file non ammesso: sono accettati solo .iso, .img e .wim")
     name = base[:200] + ext.lower()
@@ -73,7 +90,7 @@ def sanitize_filename(filename, kind="iso"):
 def _check_kind(kind):
     kind = str(kind or "iso").lower()
     if kind not in KINDS:
-        raise UploadError("Tipo di upload non valido (iso o driver)")
+        raise UploadError("Tipo di upload non valido (iso, driver o answer)")
     return kind
 
 
@@ -89,10 +106,24 @@ def _driver_dir(folder):
     return p
 
 
+def _answer_dir(folder):
+    """Cartella della risposta di destinazione: 400 se l'id non è valido, 404 se non esiste."""
+    from . import answers
+    try:
+        p = answers.folder_path(str(folder or "").strip())
+    except ValueError as e:
+        raise UploadError(str(e), 400)
+    if not os.path.isdir(p):
+        raise UploadError("Risposta non trovata: creala prima dalla pagina Risposte", 404)
+    return p
+
+
 def _dest_dir(st):
     """Cartella di destinazione per lo stato `st` (crea LIBRARY_DIR se serve)."""
     if st.get("kind") == "driver":
         return _driver_dir(st.get("folder"))
+    if st.get("kind") == "answer":
+        return _answer_dir(st.get("folder"))
     os.makedirs(C.LIBRARY_DIR, exist_ok=True)
     return C.LIBRARY_DIR
 
@@ -194,9 +225,11 @@ def init(filename, size, kind="iso", folder=None):
         raise UploadError("Dimensione non valida")
     if size <= 0 or size > MAX_SIZE:
         raise UploadError("Dimensione non valida (max 64 GiB)")
-    if kind == "driver":
+    if kind == "answer" and size > ANSWER_MAX_SIZE:
+        raise UploadError("File di risposta troppo grande (max 8 MiB)")
+    if kind in ("driver", "answer"):
         folder = str(folder or "").strip()
-        dest_dir = _driver_dir(folder)
+        dest_dir = _driver_dir(folder) if kind == "driver" else _answer_dir(folder)
     else:
         folder = None
         os.makedirs(C.LIBRARY_DIR, exist_ok=True)
@@ -205,7 +238,12 @@ def init(filename, size, kind="iso", folder=None):
         cleanup()
         dest = os.path.join(dest_dir, name)
         if os.path.exists(dest):
-            where = f"nella cartella '{folder}'" if kind == "driver" else "nella libreria"
+            if kind == "driver":
+                where = f"nella cartella '{folder}'"
+            elif kind == "answer":
+                where = f"nella risposta '{folder}'"
+            else:
+                where = "nella libreria"
             raise UploadError(f"Esiste già un file '{name}' {where}", 409)
         # ripresa di un upload con stesso nome, dimensione, tipo e cartella
         for fn in os.listdir(C.UPLOAD_TMP_DIR) if os.path.isdir(C.UPLOAD_TMP_DIR) else []:
@@ -291,7 +329,7 @@ def _assemble(upload_id, st, dest_dir):
         raise UploadError(f"Upload incompleto: mancano {len(missing)} chunk (primo: {missing[0]})", 400)
     dest = os.path.join(dest_dir, st["filename"])
     tmp_dest = os.path.join(dest_dir, f".{st['filename']}.part")
-    where = "nella cartella" if st.get("kind") == "driver" else "nella libreria"
+    where = {"driver": "nella cartella", "answer": "nella risposta"}.get(st.get("kind"), "nella libreria")
     try:
         fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     except FileExistsError:
@@ -401,7 +439,8 @@ def extract_zip(zip_path, dest_dir):
 def finish(upload_id):
     """Assembla i chunk nella destinazione.
     kind iso: avvia il rilevamento del tipo; ritorna {kind, path, slug, job_id}.
-    kind driver: ritorna {kind, folder, path, extracted, files} (zip estratto e cancellato)."""
+    kind driver: ritorna {kind, folder, path, extracted, files} (zip estratto e cancellato).
+    kind answer: ritorna {kind, answer_id, folder, path, files}."""
     with _lock:
         st = _load(upload_id)
         dest_dir = _dest_dir(st)
@@ -425,6 +464,15 @@ def finish(upload_id):
                 pass
             log.info("driver: caricato %s in '%s'", st["filename"], folder)
             return {"kind": "driver", "folder": folder, "path": dest, "extracted": 0, "files": [st["filename"]]}
+        if st.get("kind") == "answer":
+            folder = st.get("folder")
+            try:
+                os.chmod(dest, 0o664)
+            except OSError:
+                pass
+            log.info("risposta: caricato %s in '%s'", st["filename"], folder)
+            return {"kind": "answer", "answer_id": folder, "folder": folder, "path": dest,
+                    "files": [st["filename"]]}
     slug = _slug_from_filename(st["filename"])
     job_id = None
     try:

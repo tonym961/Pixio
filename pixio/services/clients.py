@@ -1,21 +1,36 @@
 """Client PXE visti: ricavati dal log di dnsmasq (log-dhcp) e dalle richieste a /boot/<slug>.ipxe.
 
+Oltre all'anagrafica gestisce il Wake-on-LAN (magic packet in broadcast UDP, nessun privilegio)
+e l'avvio una tantum (`boot_once`: vale per un solo avvio, ha precedenza su `auto_boot`).
+
 Stato: config.CLIENTS_FILE ({mac: {...}}) e VAR_DIR/clients_state.json (offset/inode del log letto).
 """
 import datetime
+import fcntl
+import logging
 import os
 import re
+import socket
+import struct
 import threading
 import time
 
 from .. import config as C
+from .. import settings as S
+from ..privileged import HelperError
 from ..storage import read_json, write_json, update_json
 from .logs import parse_syslog_line, _DNSMASQ_RE, _TXN_RE, _PXE_RE, _TFTP_SENT_RE
+
+log = logging.getLogger("pixio.clients")
 
 ARCHS = {"00000": "bios", "00006": "efi32", "00007": "efi64", "00009": "efi64", "0000b": "arm64", "0000a": "arm32"}
 COUNT_MIN_INTERVAL = 60          # secondi: al massimo una "sessione PXE" al minuto per MAC
 MAX_READ_PER_POLL = 4 * 1024 * 1024
 FIRST_READ_TAIL = 1024 * 1024    # alla prima lettura si parte dagli ultimi 1 MiB
+WOL_PORTS = (9, 7)               # discard ed echo: le due porte usate dai firmware per il magic packet
+BROADCAST_FALLBACK = "255.255.255.255"
+SIOCGIFADDR = 0x8915             # stessi ioctl usati in pixio/settings.py
+SIOCGIFNETMASK = 0x891b
 
 _lock = threading.RLock()
 _txn = {}          # id transazione dnsmasq -> {vendor_class, user_class, ts}
@@ -54,12 +69,13 @@ def _load():
 
 def _new_client(mac, ts):
     return {"mac": mac, "ip": None, "arch": "?", "vendor_class": None, "name": "", "first_seen": ts,
-            "last_seen": ts, "count": 0, "last_entry": None, "auto_boot": None, "hw": ""}
+            "last_seen": ts, "count": 0, "last_entry": None, "auto_boot": None, "boot_once": None, "hw": ""}
 
 
 def _public(c):
     base = _new_client(c.get("mac", ""), c.get("first_seen"))
     base.update({k: v for k, v in c.items() if k in base})
+    base["wol_supported"] = True     # il magic packet si invia comunque: non serve nulla lato server
     return base
 
 
@@ -73,6 +89,13 @@ def get(mac):
     mac = normalize_mac(mac)
     c = _load().get(mac)
     return _public(c) if c else None
+
+
+def _check_catalog_slug(slug):
+    """La voce deve esistere nel catalogo (import ritardato: catalog importa a sua volta altri servizi)."""
+    from . import catalog
+    if catalog.get(slug) is None:
+        raise ValueError(f"Voce di avvio '{slug}' inesistente nel catalogo")
 
 
 def update(mac, data):
@@ -93,6 +116,16 @@ def update(mac, data):
             if not C.SLUG_RE.match(ab):
                 raise ValueError("Voce di avvio automatico non valida")
             changes["auto_boot"] = ab
+    if "boot_once" in data:
+        bo = data.get("boot_once")
+        if bo in (None, "", False):
+            changes["boot_once"] = None
+        else:
+            bo = str(bo).strip()
+            if not C.SLUG_RE.match(bo):
+                raise ValueError("Voce di avvio una tantum non valida")
+            _check_catalog_slug(bo)
+            changes["boot_once"] = bo
     result = {}
 
     def upd(d):
@@ -121,6 +154,103 @@ def delete(mac):
         update_json(C.CLIENTS_FILE, upd, default={})
     if not found:
         raise KeyError(mac)
+
+
+# ---------------------------------------------------------------- Wake-on-LAN
+def _broadcast_for(iface):
+    """Broadcast dell'interfaccia (IP | ~netmask via ioctl). BROADCAST_FALLBACK se non ricavabile."""
+    if not iface:
+        return BROADCAST_FALLBACK
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            req = struct.pack("256s", str(iface)[:15].encode())
+            ip = struct.unpack("!I", fcntl.ioctl(s.fileno(), SIOCGIFADDR, req)[20:24])[0]
+            mask = struct.unpack("!I", fcntl.ioctl(s.fileno(), SIOCGIFNETMASK, req)[20:24])[0]
+        finally:
+            s.close()
+    except (OSError, ValueError, struct.error):
+        return BROADCAST_FALLBACK
+    return socket.inet_ntoa(struct.pack("!I", (ip | (~mask & 0xFFFFFFFF)) & 0xFFFFFFFF))
+
+
+def broadcast_address():
+    """Broadcast dell'interfaccia configurata in impostazioni (network.interface)."""
+    try:
+        iface = (S.load().get("network") or {}).get("interface") or ""
+    except Exception:  # noqa: BLE001 - senza configurazione leggibile si usa il broadcast generico
+        iface = ""
+    return _broadcast_for(iface)
+
+
+def magic_packet(mac):
+    """6 byte 0xFF seguiti da 16 ripetizioni del MAC."""
+    return b"\xff" * 6 + bytes.fromhex(normalize_mac(mac).replace(":", "")) * 16
+
+
+def wake(mac, broadcast=None):
+    """Invia il magic packet in broadcast UDP sulle porte 9 e 7. Ritorna i pacchetti spediti."""
+    mac = normalize_mac(mac)
+    packet = magic_packet(mac)
+    dest = broadcast or broadcast_address()
+    sent, errors = 0, []
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for port in WOL_PORTS:
+            try:
+                s.sendto(packet, (dest, port))
+                sent += 1
+            except OSError as e:
+                errors.append(str(e))
+    finally:
+        s.close()
+    if not sent:
+        raise HelperError("Invio del magic packet non riuscito: " + ("; ".join(errors) or "errore di rete"))
+    log.info("Wake-on-LAN %s verso %s: %d pacchetti", mac, dest, sent)
+    return sent
+
+
+def wake_many(macs):
+    """Risveglio multiplo. Ritorna {mac: bool}: un MAC non valido o un invio fallito valgono False."""
+    dest = broadcast_address()
+    out = {}
+    for m in macs or []:
+        try:
+            out[normalize_mac(m)] = bool(wake(m, dest))
+        except (ValueError, HelperError, OSError) as e:
+            out[str(m)] = False
+            log.warning("Wake-on-LAN %s non riuscito: %s", m, e)
+    return out
+
+
+# ---------------------------------------------------------------- avvio una tantum
+def set_boot_once(mac, slug):
+    """Voce valida per il solo avvio successivo (slug, oppure None per annullare)."""
+    return update(mac, {"boot_once": slug})
+
+
+def take_boot_once(mac):
+    """Legge la voce una tantum e la azzera. Ritorna lo slug o None."""
+    try:
+        mac = normalize_mac(mac)
+    except ValueError:
+        return None
+    with _lock:
+        c = _load().get(mac)
+        if not c or not c.get("boot_once"):
+            return None                      # niente da consegnare: nessuna riscrittura del file
+        slug = str(c["boot_once"])
+
+        def upd(d):
+            d = d if isinstance(d, dict) else {}
+            cur = d.get(mac)
+            if cur:
+                cur["boot_once"] = None
+            return d
+        update_json(C.CLIENTS_FILE, upd, default={})
+    log.info("Avvio una tantum consegnato a %s: %s", mac, slug)
+    return slug
 
 
 def record_boot(mac, slug, ip=None):

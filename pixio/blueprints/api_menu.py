@@ -10,7 +10,16 @@ bp = Blueprint("api_menu", __name__)
 @bp.route("/api/menu")
 def get_menu():
     cfg = S.load()
-    return jsonify({"settings": cfg["menu"], "entries": ipxe_menu.entries(cfg), "preview": ipxe_menu.preview(cfg)})
+    return jsonify({"settings": _settings(cfg), "entries": ipxe_menu.entries(cfg), "preview": ipxe_menu.preview(cfg)})
+
+
+def _settings(cfg):
+    """Impostazioni del menu con i valori dei sottomenu sempre presenti (config vecchie comprese)."""
+    m = dict(cfg["menu"])
+    if str(m.get("submenus") or "").lower() not in ipxe_menu.SUBMENU_MODES:
+        m["submenus"] = "auto"
+    m["submenu_threshold"] = ipxe_menu.submenu_threshold(m)
+    return m
 
 
 @bp.route("/api/menu", methods=["PUT"])
@@ -36,6 +45,19 @@ def put_menu():
             m[k] = bool(s[k])
     if "groups" in s and isinstance(s["groups"], list):
         m["groups"] = [str(g).strip()[:60] for g in s["groups"] if str(g).strip()][:20]
+    if "submenus" in s:
+        v = str(s["submenus"]).strip().lower()
+        if v not in ipxe_menu.SUBMENU_MODES:
+            return jsonify({"error": "Sottomenu: valori ammessi auto, always o never"}), 400
+        m["submenus"] = v
+    if "submenu_threshold" in s:
+        try:
+            t = int(s["submenu_threshold"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "Soglia dei sottomenu non valida"}), 400
+        if not 1 <= t <= 100:
+            return jsonify({"error": "Soglia dei sottomenu tra 1 e 100 voci"}), 400
+        m["submenu_threshold"] = t
     if "theme" in s and isinstance(s["theme"], dict):
         from ..services import theme as T
         th = dict(m.get("theme") or {})
@@ -53,5 +75,5 @@ def put_menu():
         from ..services import theme as T
         T.render_background(cfg, cfg["network"]["server_ip"])
     except Exception as e:  # noqa
-        return jsonify({"ok": True, "settings": m, "preview": ipxe_menu.preview(cfg), "warnings": [f"Sfondo non rigenerato: {e}"]})
-    return jsonify({"ok": True, "settings": m, "preview": ipxe_menu.preview(cfg)})
+        return jsonify({"ok": True, "settings": _settings(cfg), "preview": ipxe_menu.preview(cfg), "warnings": [f"Sfondo non rigenerato: {e}"]})
+    return jsonify({"ok": True, "settings": _settings(cfg), "preview": ipxe_menu.preview(cfg)})

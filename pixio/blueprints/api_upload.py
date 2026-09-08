@@ -1,5 +1,6 @@
-"""API upload a chunk (riprendibile): ISO nella libreria locale (kind "iso", default) o file driver
-in una cartella della libreria driver (kind "driver" + folder)."""
+"""API upload a chunk (riprendibile): ISO nella libreria locale (kind "iso", default), file driver
+in una cartella della libreria driver (kind "driver" + folder) o file aggiuntivo di una risposta
+automatica (kind "answer" + folder = id della risposta)."""
 from flask import Blueprint, jsonify, request
 
 from .. import settings as S
@@ -46,6 +47,9 @@ def finish(upload_id):
     if res.get("kind") == "driver":
         return jsonify({"ok": True, "kind": "driver", "folder": res.get("folder"), "path": res.get("path"),
                         "extracted": res.get("extracted", 0), "files": res.get("files", [])})
+    if res.get("kind") == "answer":
+        return jsonify({"ok": True, "kind": "answer", "answer_id": res.get("answer_id"),
+                        "folder": res.get("folder"), "files": res.get("files", [])})
     return jsonify({"ok": True, "slug": res.get("slug"), "path": res.get("path"), "job_id": res.get("job_id")})
 
 

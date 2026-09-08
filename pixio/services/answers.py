@@ -429,3 +429,399 @@ def winpe_files(answer, server_ip=""):
         return [("autounattend.xml", public_url(server_ip, answer["id"], main))]
     except ValueError:
         return []
+
+
+# ---------------------------------------------------------------- modelli di partenza
+_TPL_WINDOWS = r"""<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pixio - installazione automatica di Windows 11 (64 bit).
+  ATTENZIONE: il disco 0 viene CANCELLATO e le password sono scritte in chiaro in questo file.
+  Da rivedere prima dell'uso: chiave prodotto, indice o nome dell'edizione, nome utente e password.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <!-- ============ WinPE: lingua, requisiti, partizionamento, immagine ============ -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>it-IT</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>0410:00000410</InputLocale>   <!-- tastiera italiana -->
+      <SystemLocale>it-IT</SystemLocale>
+      <UILanguage>it-IT</UILanguage>
+      <UserLocale>it-IT</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+
+      <!-- Aggira i requisiti di Windows 11 (TPM 2.0, Secure Boot, RAM, CPU, disco).
+           Togli questo blocco se il parco macchine e' gia' conforme. -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!-- Disco 0 cancellato e ripartizionato in GPT per avvio UEFI:
+           EFI 300 MB + MSR 16 MB + Windows su tutto lo spazio rimanente.
+           Per un PC che avvia in BIOS/MBR sostituisci con: una sola partizione Primary (Extend true),
+           formattata NTFS e marcata Active. -->
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order><Type>EFI</Type><Size>300</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order><Type>MSR</Type><Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order><Type>Primary</Type><Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>Sistema</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order><PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <!-- Edizione da installare: /IMAGE/INDEX numerico oppure /IMAGE/NAME con il nome esatto
+           (es. "Windows 11 Pro"). Controlla gli indici con: dism /Get-WimInfo /WimFile:install.wim -->
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>1</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Utente</FullName>
+        <Organization></Organization>
+        <!-- Lascia la chiave vuota per usare quella del BIOS o attivare dopo.
+             Se l'immagine ha piu' edizioni potrebbe servire una chiave generica di installazione. -->
+        <ProductKey>
+          <Key></Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+      </UserData>
+    </component>
+  </settings>
+
+  <!-- ============ specialize: nome computer e ritocchi di sistema ============ -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>*</ComputerName>            <!-- * = nome casuale; mettine uno fisso se serve -->
+      <TimeZone>W. Europe Standard Time</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous>
+        <!-- Consente di creare un account locale senza account Microsoft (Windows 11 22H2 e successivi) -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- ============ oobeSystem: utente locale, OOBE saltato ============ -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <InputLocale>0410:00000410</InputLocale>
+      <SystemLocale>it-IT</SystemLocale>
+      <UILanguage>it-IT</UILanguage>
+      <UserLocale>it-IT</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <TimeZone>W. Europe Standard Time</TimeZone>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>       <!-- 3 = niente invio dati facoltativi a Microsoft -->
+        <SkipMachineOOBE>false</SkipMachineOOBE>
+        <SkipUserOOBE>false</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <!-- Utente amministratore locale. NON chiamarlo "Administrator": e' un nome riservato. -->
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>tecnico</Name>
+            <DisplayName>Tecnico</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>Pixio.2026</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <!-- Primo accesso automatico (una volta sola). Togli il blocco per chiedere sempre la password. -->
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>tecnico</Username>
+        <Password>
+          <Value>Pixio.2026</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Mostra le estensioni dei file</Description>
+          <CommandLine>reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v HideFileExt /t REG_DWORD /d 0 /f</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>
+"""
+
+_TPL_DEBIAN = r"""# Pixio - preseed minimale per l'installatore Debian (testo, non presidiato).
+# Avvio: Pixio aggiunge da solo "auto=true priority=critical url=<questo file>".
+# Documentazione completa: https://www.debian.org/releases/stable/amd64/apbs04
+
+### Lingua, paese, tastiera
+d-i debian-installer/language string it
+d-i debian-installer/country string IT
+d-i debian-installer/locale string it_IT.UTF-8
+d-i keyboard-configuration/xkb-keymap select it
+
+### Rete (DHCP). Il nome host viene chiesto dal DHCP: qui lo forziamo.
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_hostname string debian
+d-i netcfg/get_domain string locale
+d-i netcfg/hostname string debian
+# Se ci sono piu' schede e una non ha cavo, evita il blocco:
+d-i netcfg/link_wait_timeout string 15
+
+### Mirror dei pacchetti
+d-i mirror/country string manual
+d-i mirror/http/hostname string deb.debian.org
+d-i mirror/http/directory string /debian
+d-i mirror/http/proxy string
+
+### Orologio e fuso
+d-i clock-setup/utc boolean true
+d-i time/zone string Europe/Rome
+d-i clock-setup/ntp boolean true
+
+### Utenti (password in chiaro: sostituiscile o usa password-crypted con un hash)
+d-i passwd/root-login boolean false
+d-i passwd/make-user boolean true
+d-i passwd/user-fullname string Amministratore
+d-i passwd/username string admin
+d-i passwd/user-password password cambiami
+d-i passwd/user-password-again password cambiami
+d-i user-setup/allow-password-weak boolean true
+d-i user-setup/encrypt-home boolean false
+
+### Partizionamento: TUTTO IL DISCO VIENE CANCELLATO
+d-i partman-auto/disk string /dev/sda
+d-i partman-auto/method string regular
+d-i partman-auto/choose_recipe select atomic
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+d-i partman-efi/non_efi_system boolean true
+d-i partman-md/confirm boolean true
+d-i partman-lvm/confirm boolean true
+d-i partman-lvm/confirm_nooverwrite boolean true
+
+### Pacchetti: sistema minimo + SSH, niente ambiente grafico
+tasksel tasksel/first multiselect standard, ssh-server
+d-i pkgsel/include string openssh-server sudo curl
+d-i pkgsel/upgrade select full-upgrade
+popularity-contest popularity-contest/participate boolean false
+
+### Boot loader
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/with_other_os boolean true
+d-i grub-installer/bootdev string default
+
+### Fine: riavvio senza chiedere conferma
+d-i finish-install/reboot_in_progress note
+# Comando eseguito a installazione finita (esempio):
+#d-i preseed/late_command string in-target sh -c 'echo "admin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/admin'
+"""
+
+_TPL_UBUNTU = r"""#cloud-config
+# Pixio - autoinstall di Ubuntu Server (cloud-init NoCloud).
+# Avvio: Pixio aggiunge da solo "autoinstall ds=nocloud-net;s=<cartella di questa risposta>/".
+# Nella stessa cartella deve esistere anche il file meta-data (Pixio lo crea vuoto).
+# Documentazione: https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html
+autoinstall:
+  version: 1
+
+  # Nessuna domanda interattiva
+  interactive-sections: []
+
+  locale: it_IT.UTF-8
+  keyboard:
+    layout: it
+
+  # Rete in DHCP su tutte le schede cablate
+  network:
+    version: 2
+    ethernets:
+      tutte:
+        match:
+          name: "en*"
+        dhcp4: true
+        optional: true
+
+  # ATTENZIONE: il disco viene CANCELLATO.
+  # "direct" = una sola partizione su tutto il disco; usa "lvm" se preferisci i volumi logici.
+  storage:
+    layout:
+      name: direct
+
+  identity:
+    hostname: ubuntu
+    realname: Amministratore
+    username: admin
+    # Hash della password (qui: "cambiami"). Generane uno con:
+    #   mkpasswd --method=SHA-512 --rounds=4096
+    password: "$6$rounds=4096$pixio$1V9Qk3nS0nOEo1s4gEwYAxAFoO3wUOu9wRJvbmwvhcRYJmRnJZ3W1RTd0jQqTjcVYlXKtLBSPqXNbHZfMhbG5."
+
+  ssh:
+    install-server: true
+    allow-pw: true
+
+  packages:
+    - curl
+    - sudo
+
+  # Aggiornamenti durante l'installazione: "security" e' un buon compromesso
+  updates: security
+
+  # Comandi eseguiti a installazione finita, dentro il sistema installato
+  late-commands:
+    - echo "admin ALL=(ALL) NOPASSWD:ALL" > /target/etc/sudoers.d/admin
+    - chmod 440 /target/etc/sudoers.d/admin
+
+  shutdown: reboot
+"""
+
+_TPL_REDHAT = r"""# Pixio - kickstart minimale (RHEL / Rocky / Alma / Fedora / CentOS Stream).
+# Avvio: Pixio aggiunge da solo "inst.ks=<questo file>".
+# Documentazione: https://pykickstart.readthedocs.io/
+
+# Modalita' testo, nessuna domanda
+text
+eula --agreed
+reboot
+
+# Lingua, tastiera, fuso
+lang it_IT.UTF-8
+keyboard --vckeymap=it --xlayouts='it'
+timezone Europe/Rome --utc
+
+# Rete in DHCP, nome host fisso
+network --bootproto=dhcp --device=link --activate --hostname=rhel
+
+# Utenti: password in chiaro (--plaintext). Meglio un hash: openssl passwd -6
+rootpw --plaintext cambiami
+user --name=admin --groups=wheel --plaintext --password=cambiami --gecos="Amministratore"
+
+# ATTENZIONE: il disco viene CANCELLATO
+ignoredisk --only-use=sda
+clearpart --all --initlabel --drives=sda
+autopart --type=lvm
+
+# Boot loader
+bootloader --location=mbr --boot-drive=sda
+
+# Servizi e sicurezza
+firewall --enabled --service=ssh
+selinux --enforcing
+services --enabled=sshd,chronyd
+firstboot --disable
+
+# Sorgente dei pacchetti: con Pixio l'installatore usa il supporto da cui e' partito.
+# Per un repository di rete togli il commento e correggi l'indirizzo:
+#url --url="http://mirror.example.it/rocky/9/BaseOS/x86_64/os/"
+
+%packages
+@^minimal-environment
+openssh-server
+sudo
+curl
+%end
+
+# Comandi dopo l'installazione (dentro il sistema installato)
+%post --log=/root/pixio-kickstart.log
+echo "admin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/admin
+chmod 440 /etc/sudoers.d/admin
+%end
+"""
+
+_TPL_GENERIC = """# Pixio - risposta generica.
+# Questa cartella viene pubblicata su http://<ip del server>/answers/<id>/<nome file>
+# senza autenticazione: i client PXE possono scaricarne i file durante l'installazione.
+# Pixio non aggiunge nessun argomento alla riga di avvio: il percorso va indicato a mano
+# nella ricetta personalizzata della ISO (pagina ISO -> Ricetta personalizzata).
+"""
+
+TEMPLATES = {
+    "windows": _TPL_WINDOWS,
+    "debian": _TPL_DEBIAN,
+    "ubuntu": _TPL_UBUNTU,
+    "redhat": _TPL_REDHAT,
+    "generic": _TPL_GENERIC,
+}
+
+
+def template(kind):
+    """Modello di partenza per un tipo di risposta: {kind, main_file, content}."""
+    k = kind_info(kind)
+    return {"kind": k["id"], "main_file": k["main_file"], "content": TEMPLATES.get(k["id"], "")}

@@ -8,11 +8,13 @@ Principi:
 - Output sempre JSON su stdout; exit code != 0 in caso di errore con {"error": "..."}.
 """
 import argparse
+import datetime
 import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -32,12 +34,20 @@ TFTP = f"{SRV}/tftp"
 CODE = "/opt/pixio"
 SERVICE_USER = "pixio"
 SERVICE_GROUP = "pixio"
+TLS_DIR = f"{ETC}/tls"                 # certificato autofirmato della GUI (HTTPS)
+TLS_KEY = f"{TLS_DIR}/key.pem"         # 0640 root:pixio
+TLS_CERT = f"{TLS_DIR}/cert.pem"       # 0644
+CERT_DAYS = 3650
+UPDATE_UNIT = "pixio-update"           # unit transiente dell'aggiornamento (git pull + install.sh)
+NGINX_TPL = f"{CODE}/etc/nginx-pixio.conf.tpl"
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 UNC_RE = re.compile(r"^//[A-Za-z0-9._-]+(/[^/\\\x00-\x1f\"';`*?<>|:]+)+$")   # niente \" ; ` ' * ? < > | : nei segmenti
 IFACE_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,15}$")
 SMBNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                         r"(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
 SERVICES = {"dnsmasq": "dnsmasq.service", "nginx": "nginx.service", "smbd": "smbd.service",
             "nmbd": "nmbd.service", "pixio": "pixio.service", "pixio-mounts": "pixio-mounts.service"}
 ISO_ROOTS = (SOURCES_MOUNT, LIBRARY, CACHE)
@@ -507,9 +517,62 @@ def render_dnsmasq(cfg):
     return "\n".join(lines) + "\n"
 
 
+def web_settings(cfg):
+    """Impostazioni `web`: HTTPS attivo e reindirizzamento della porta 80."""
+    w = cfg.get("web") or {}
+    return bool(w.get("https_enabled", False)), bool(w.get("redirect_http", True))
+
+
+def tpl_fragments(path):
+    """Legge il modello nginx: frammenti separati da righe '#@ nome' (l'intestazione viene scartata)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        raise HelperError(f"modello nginx non leggibile ({path}): {e}")
+    frags, name, buf = {}, None, []
+    for line in text.splitlines():
+        m = re.match(r"^#@\s*([a-z_]+)\s*$", line)
+        if m:
+            if name:
+                frags[name] = "\n".join(buf).strip("\n")
+            name, buf = m.group(1), []
+        elif name is not None:
+            buf.append(line)
+    if name:
+        frags[name] = "\n".join(buf).strip("\n")
+    return frags
+
+
+def fill(text, values):
+    """Sostituisce i segnaposto @NOME@ (i valori sono percorsi/frammenti generati qui, mai testo della GUI)."""
+    for k, v in values.items():
+        text = text.replace(f"@{k}@", v)
+    return text
+
+
 def render_nginx(cfg):
-    tpl = open(f"{CODE}/etc/nginx-pixio.conf.tpl").read()
-    return tpl
+    """Config nginx: porta 80 sempre attiva (i client PXE non parlano HTTPS), 443 se web.https_enabled.
+
+    Con web.redirect_http la porta 80 reindirizza a HTTPS tutto tranne i percorsi dei client PXE
+    (/boot.ipxe, /boot/, /pxe/, /answers/), che restano in chiaro.
+    """
+    frags = tpl_fragments(NGINX_TPL)
+    for need in ("base", "http", "https", "pxe", "app", "app_redirect", "proxy"):
+        if need not in frags:
+            raise HelperError(f"modello nginx incompleto: manca il frammento '{need}'")
+    https, redirect = web_settings(cfg)
+    app = fill(frags["app"], {"PROXY": frags["proxy"]})
+    app80 = fill(frags["app_redirect"], {"PROXY": frags["proxy"]}) if (https and redirect) else app
+    http = fill(frags["http"], {"PXE": frags["pxe"], "APP": app80})
+    tls = ""
+    if https:
+        tls = fill(frags["https"], {"PXE": frags["pxe"], "APP": app, "CERT": TLS_CERT, "KEY": TLS_KEY})
+    text = fill(frags["base"], {"HTTP": http, "HTTPS": tls})
+    left = re.search(r"@[A-Z_]+@", text)
+    if left:
+        raise HelperError(f"modello nginx: segnaposto non sostituito {left.group(0)}")
+    return text.rstrip("\n") + "\n"
 
 
 def render_smb(cfg):
@@ -613,8 +676,11 @@ def cmd_apply(a):
         run(["systemctl", "restart", "dnsmasq.service"])
         out({"ok": True, "file": target, "restarted": "dnsmasq"})
     elif what == "nginx":
+        https, _ = web_settings(cfg)
+        cert_created = generate_cert() if https else False      # con HTTPS attivo il certificato deve esserci
         content = render_nginx(cfg)
         target = "/etc/nginx/sites-available/pixio"
+        old = open(target).read() if os.path.exists(target) else None
         write_file(target, content)
         link = "/etc/nginx/sites-enabled/pixio"
         if not os.path.islink(link):
@@ -624,9 +690,11 @@ def cmd_apply(a):
             os.unlink(default)
         p = run(["nginx", "-t"], check=False)
         if p.returncode != 0:
+            if old is not None:
+                write_file(target, old)
             raise HelperError(f"config nginx non valida: {p.stderr.strip()}")
         run(["systemctl", "reload-or-restart", "nginx.service"])
-        out({"ok": True, "file": target, "restarted": "nginx"})
+        out({"ok": True, "file": target, "restarted": "nginx", "https": https, "cert_created": cert_created})
     elif what == "samba":
         content = render_smb(cfg)
         target = "/etc/samba/smb.conf"
@@ -737,6 +805,184 @@ def cmd_chown_library(a):
     out({"ok": True})
 
 
+# ---------------------------------------------------------------- certificato TLS della GUI
+def check_hostname(h):
+    """Nome host valido (lettere, cifre, '-', punti) oppure stringa vuota."""
+    h = str(h or "").strip().rstrip(".")
+    if not h:
+        return ""
+    if not HOSTNAME_RE.match(h):
+        raise HelperError(f"nome host non valido: {h!r}")
+    return h
+
+
+def cert_names(cfg, hostname=""):
+    """Nomi e indirizzi da mettere nel subjectAltName: host richiesto, host della macchina, IP del server."""
+    names = []
+    h = check_hostname(hostname)
+    if h:
+        names.append(h)
+    try:
+        sysname = socket.gethostname()
+    except OSError:
+        sysname = ""
+    if sysname and HOSTNAME_RE.match(sysname) and sysname not in names:
+        names.append(sysname)
+    if "localhost" not in names:
+        names.append("localhost")
+    ips = []
+    ip = (cfg.get("network") or {}).get("server_ip") or ""
+    if ip:
+        ips.append(_ip(ip, "server_ip"))
+    if "127.0.0.1" not in ips:
+        ips.append("127.0.0.1")
+    return names, ips
+
+
+def generate_cert(hostname="", force=False):
+    """Genera key.pem/cert.pem autofirmati se mancano (o se force). True se li ha creati adesso."""
+    hostname = check_hostname(hostname)          # validato sempre, anche se poi non si rigenera nulla
+    if os.path.isfile(TLS_CERT) and os.path.isfile(TLS_KEY) and not force:
+        return False
+    if not shutil.which("openssl"):
+        raise HelperError("openssl non installato: impossibile generare il certificato")
+    names, ips = cert_names(load_config(), hostname)
+    san = ",".join([f"DNS:{n}" for n in names] + [f"IP:{i}" for i in ips])
+    try:
+        gid = uid_gid()[1]
+    except KeyError:
+        gid = 0
+    os.makedirs(TLS_DIR, exist_ok=True)
+    os.chown(TLS_DIR, 0, gid)
+    os.chmod(TLS_DIR, 0o750)
+    tmp_key, tmp_cert = f"{TLS_KEY}.pixio-new", f"{TLS_CERT}.pixio-new"
+    try:
+        run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", str(CERT_DAYS), "-nodes",
+             "-keyout", tmp_key, "-out", tmp_cert, "-subj", f"/CN={names[0][:64]}",
+             "-addext", f"subjectAltName={san}",
+             "-addext", "basicConstraints=critical,CA:TRUE",
+             "-addext", "keyUsage=digitalSignature,keyEncipherment,keyCertSign",
+             "-addext", "extendedKeyUsage=serverAuth"], timeout=180)
+        os.chown(tmp_key, 0, gid)
+        os.chmod(tmp_key, 0o640)          # la legge nginx come root, il gruppo pixio per diagnostica
+        os.chown(tmp_cert, 0, gid)
+        os.chmod(tmp_cert, 0o644)
+        os.replace(tmp_key, TLS_KEY)
+        os.replace(tmp_cert, TLS_CERT)
+    finally:
+        for t in (tmp_key, tmp_cert):
+            try:
+                os.unlink(t)
+            except OSError:
+                pass
+    return True
+
+
+def _cert_date(s):
+    """'Sep  6 12:00:00 2036 GMT' -> ISO 8601 (se non si riesce a leggerla si restituisce com'è)."""
+    s = (s or "").strip()
+    for fmt in ("%b %d %H:%M:%S %Y %Z", "%b %d %H:%M:%S %Y"):
+        try:
+            dt = datetime.datetime.strptime(s, fmt).replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        return dt.isoformat()
+    return s
+
+
+def cert_details():
+    """Subject, scadenza e impronta del certificato (exists=False se non c'è)."""
+    base = {"exists": False, "subject": "", "not_after": None, "days_left": None,
+            "fingerprint": "", "cert": TLS_CERT, "key": TLS_KEY}
+    if not (os.path.isfile(TLS_CERT) and os.path.isfile(TLS_KEY)):
+        return base
+    p = run(["openssl", "x509", "-noout", "-subject", "-enddate", "-fingerprint", "-sha256",
+             "-in", TLS_CERT], check=False, timeout=60)
+    if p.returncode != 0:
+        raise HelperError(f"certificato non leggibile: {p.stderr.strip() or p.stdout.strip()}")
+    info = {}
+    for line in p.stdout.splitlines():
+        k, sep, v = line.partition("=")
+        if sep:
+            info[k.strip().lower()] = v.strip()
+    not_after = _cert_date(info.get("notafter", ""))
+    days = None
+    try:
+        days = (datetime.datetime.fromisoformat(not_after) - datetime.datetime.now(datetime.timezone.utc)).days
+    except (TypeError, ValueError):
+        pass
+    base.update(exists=True, subject=info.get("subject", ""), not_after=not_after or None,
+                days_left=days, fingerprint=info.get("sha256 fingerprint", ""))
+    return base
+
+
+def cmd_cert(a):
+    created = generate_cert(a.hostname, force=bool(a.force))
+    out({"ok": True, "created": created, **cert_details()})
+
+
+def cmd_cert_info(a):
+    out({"ok": True, **cert_details()})
+
+
+# ---------------------------------------------------------------- aggiornamento del software
+def git_bin():
+    g = shutil.which("git")
+    if not g:
+        raise HelperError("git non installato: aggiornamento non disponibile")
+    return g
+
+
+def cmd_update(a):
+    """git pull --ff-only + install.sh in una unit transiente (l'aggiornamento riavvia pixio.service)."""
+    if not os.path.isdir(f"{CODE}/.git"):
+        raise HelperError(f"{CODE} non è un repository git: aggiornamento non disponibile")
+    if not os.path.isfile(f"{CODE}/install.sh"):
+        raise HelperError(f"{CODE}/install.sh non trovato: aggiornamento non disponibile")
+    git = git_bin()
+    p = run([git, "-C", CODE, "status", "--porcelain"], check=False, timeout=60)
+    if p.returncode != 0:
+        raise HelperError(f"git status fallito: {p.stderr.strip() or p.stdout.strip()}")
+    dirty = [l for l in p.stdout.splitlines() if l.strip()]
+    if dirty and not a.force:
+        raise HelperError(f"ci sono {len(dirty)} modifiche locali in {CODE}: aggiornamento rifiutato "
+                          "(rimuoverle oppure ripetere con force)")
+    run(["systemctl", "reset-failed", f"{UPDATE_UNIT}.service"], check=False)
+    # ExecStartPre e comando finale sono costruiti solo da costanti: niente testo che venga dalla GUI
+    q = run(["systemd-run", "--unit", UPDATE_UNIT, "--collect", "--quiet",
+             "-p", "Type=oneshot", "-p", "TimeoutStartSec=3600", "-p", f"WorkingDirectory={CODE}",
+             "-p", f"ExecStartPre={git} -C {CODE} pull --ff-only",
+             f"{CODE}/install.sh"], check=False, timeout=60)
+    if q.returncode != 0:
+        err = (q.stderr or "").strip()
+        if "already exists" in err:
+            raise HelperError("aggiornamento già in corso")
+        raise HelperError(err or f"systemd-run: exit {q.returncode}")
+    out({"ok": True, "unit": UPDATE_UNIT, "dirty": len(dirty), "forced": bool(a.force)})
+
+
+def cmd_update_status(a):
+    """Stato della unit di aggiornamento e ultime righe del suo registro."""
+    try:
+        lines = int(a.lines)
+    except (TypeError, ValueError):
+        raise HelperError("numero di righe non valido")
+    if not 1 <= lines <= 500:
+        raise HelperError("numero di righe fuori intervallo (1-500)")
+    unit = f"{UPDATE_UNIT}.service"
+    p = run(["systemctl", "show", unit, "--property=ActiveState,SubState,Result,ExecMainStatus,"
+             "ExecMainStartTimestamp,ExecMainExitTimestamp"], check=False, timeout=30)
+    props = dict(l.split("=", 1) for l in p.stdout.splitlines() if "=" in l)
+    q = run(["journalctl", "-u", unit, "-n", str(lines), "--no-pager", "-o", "cat"], check=False, timeout=60)
+    log = [l for l in q.stdout.splitlines() if l.strip()][-lines:]
+    state = props.get("ActiveState", "unknown")
+    out({"unit": unit, "active": state, "sub": props.get("SubState", ""),
+         "running": state in ("active", "activating", "reloading", "deactivating"),
+         "result": props.get("Result", ""), "exit_status": props.get("ExecMainStatus", ""),
+         "started": props.get("ExecMainStartTimestamp", ""), "finished": props.get("ExecMainExitTimestamp", ""),
+         "log": log})
+
+
 def cmd_reboot(a):
     if a.action == "reboot":
         run(["systemctl", "reboot"])
@@ -772,6 +1018,10 @@ def main():
     p = sp.add_parser("rebuild-ipxe"); p.add_argument("ip"); p.set_defaults(fn=cmd_rebuild_ipxe)
     p = sp.add_parser("chown-library"); p.set_defaults(fn=cmd_chown_library)
     p = sp.add_parser("power"); p.add_argument("action"); p.set_defaults(fn=cmd_reboot)
+    p = sp.add_parser("cert"); p.add_argument("hostname", nargs="?", default=""); p.add_argument("--force", action="store_true"); p.set_defaults(fn=cmd_cert)
+    p = sp.add_parser("cert-info"); p.set_defaults(fn=cmd_cert_info)
+    p = sp.add_parser("update"); p.add_argument("--force", action="store_true"); p.set_defaults(fn=cmd_update)
+    p = sp.add_parser("update-status"); p.add_argument("--lines", default="40"); p.set_defaults(fn=cmd_update_status)
     a = ap.parse_args()
     try:
         a.fn(a)

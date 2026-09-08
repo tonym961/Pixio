@@ -12,6 +12,8 @@
   const THEME_COLORS = [['bg', 'Sfondo', 'Colore di fondo del menu'], ['accent', 'Accento', 'Titoli dei gruppi e voce selezionata'], ['fg', 'Testo', 'Voci normali'], ['muted', 'Testo attenuato', 'Note e piè di pagina']];
   const HEX_RE = /^#?([0-9a-fA-F]{6})$/;
   const BG_URL = '/pxe/inject/theme/bg.png';
+  // sottomenu per gruppo nel menu di boot
+  const SUBMENU_MODES = [['auto', 'Automatici oltre N voci'], ['always', 'Sempre'], ['never', 'Mai']];
 
   function normHex(v, fallback) {
     const m = HEX_RE.exec(String(v || '').trim());
@@ -141,6 +143,7 @@
     const entries = enabledEntries();
     const groups = (s.groups || []).slice();
     entries.forEach((e) => { const g = e.group || 'Altro'; if (!groups.includes(g)) groups.push(g); });
+    const subMode = SUBMENU_MODES.some(([v]) => v === s.submenus) ? s.submenus : 'auto';
     const defaultOpts = [['local', 'Avvia dal disco locale'], ['shell', 'Shell iPXE']].concat(entries.map((e) => [e.slug, e.name]));
     if (s.default && !defaultOpts.some((o) => o[0] === s.default)) defaultOpts.push([s.default, s.default + ' (non abilitata)']);
 
@@ -177,6 +180,14 @@
               <label><input type="checkbox" id="m-show_memtest" ${s.show_memtest !== false ? 'checked' : ''}> Memtest86+</label>
             </div></div>
             <div class="field"><label for="m-groups">Gruppi del menu (uno per riga, nell'ordine di visualizzazione)</label><textarea id="m-groups">${esc((s.groups || []).join('\n'))}</textarea><div class="hint">Max 20 gruppi da 60 caratteri.</div></div>
+            <div class="row2">
+              <div class="field"><label for="m-submenus">Sottomenu per gruppo</label>
+                <select id="m-submenus">${SUBMENU_MODES.map(([v, l]) => `<option value="${esc(v)}" ${v === subMode ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+                <div class="hint">Con i sottomenu il menu di boot mostra un elemento per gruppo (con il numero di voci); le ISO compaiono nel secondo livello, le voci di sistema restano nel menu principale.</div></div>
+              <div class="field" id="m-subthr-field" ${subMode === 'auto' ? '' : 'hidden'}><label for="m-submenu_threshold">Soglia (numero di voci)</label>
+                <input id="m-submenu_threshold" type="number" min="1" max="100" value="${esc(s.submenu_threshold != null ? s.submenu_threshold : 8)}">
+                <div class="hint">I sottomenu compaiono quando le voci avviabili superano questo numero. Da 1 a 100.</div></div>
+            </div>
           </form>
           ${themeHtml(s, entries, groups)}
           <div class="eyebrow" style="margin:6px 0 8px">Ordine delle voci</div>
@@ -200,6 +211,8 @@
       $('#m-preview', M.root).textContent = ((M.data && M.data.preview) || {})[M.platform] || '(anteprima non disponibile)';
       const a = $('a[href^="/boot.ipxe"]', M.root); if (a) a.href = '/boot.ipxe?platform=' + (M.platform === 'efi' ? 'efi' : 'pcbios');
     }));
+    const sub = $('#m-submenus', M.root);
+    if (sub) sub.addEventListener('change', () => { $('#m-subthr-field', M.root).hidden = sub.value !== 'auto'; });
     bindList();
     bindTheme();
   }
@@ -276,6 +289,11 @@
     if (groups.length > 20) { P.toast('Troppi gruppi: massimo 20', 'bad'); $('#m-groups', r).focus(); return; }
     const longGroup = groups.find((g) => g.length > 60);
     if (longGroup) { P.toast(`Nome del gruppo troppo lungo (max 60 caratteri): "${longGroup.slice(0, 30)}…"`, 'bad'); $('#m-groups', r).focus(); return; }
+    const submenus = $('#m-submenus', r).value;
+    const threshold = parseInt($('#m-submenu_threshold', r).value, 10);
+    if (submenus === 'auto' && (isNaN(threshold) || threshold < 1 || threshold > 100)) {
+      P.toast('Soglia dei sottomenu non valida: da 1 a 100 voci', 'bad'); $('#m-submenu_threshold', r).focus(); return;
+    }
     const theme = readTheme(); if (!theme) return;
     const settings = {
       title: title || 'PIXIO - Avvio da rete',
@@ -286,6 +304,8 @@
       show_reboot: $('#m-show_reboot', r).checked,
       show_memtest: $('#m-show_memtest', r).checked,
       groups,
+      submenus,
+      submenu_threshold: isNaN(threshold) ? 8 : Math.min(100, Math.max(1, threshold)),
       theme,
     };
     P.setBusy(btn, true, 'Salvataggio…');
