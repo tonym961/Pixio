@@ -52,6 +52,8 @@ if [ ! -s $SRV/tftp/.ipxe-build ]; then
   fi
 fi
 chmod 644 $SRV/tftp/* 2>/dev/null || true
+# UEFI HTTP Boot: il firmware scarica iPXE via HTTP da /pxe/tftp/
+[ -L $SRV/http/tftp ] || ln -s $SRV/tftp $SRV/http/tftp
 
 say "Servizi systemd"
 install -m 644 $CODE/systemd/pixio.service /etc/systemd/system/pixio.service

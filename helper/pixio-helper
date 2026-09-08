@@ -447,6 +447,8 @@ def render_dnsmasq(cfg):
         f"dhcp-boot=tag:httpclient,tag:http32,http://{ip}/pxe/tftp/ipxe32.efi,,{ip}",
         f"dhcp-option-pxe=tag:httpclient,tag:http64,67,http://{ip}/pxe/tftp/ipxe.efi",
         f"dhcp-option-pxe=tag:httpclient,tag:http32,67,http://{ip}/pxe/tftp/ipxe32.efi",
+        "# In DHCP completo (senza pxe-service) dnsmasq non aggiunge da solo option 60: EDK2 ignora l'URL senza 'HTTPClient'",
+        "dhcp-option-force=tag:httpclient,60,HTTPClient",
     ]
     if mode == "proxy":
         lines += [
