@@ -12,7 +12,8 @@
       "priority": 10,
       "files": {
         "bootwim": [
-          "sources/boot.wim"
+          "sources/boot.wim",
+          "x64/sources/boot.wim"
         ],
         "bcd": [
           "boot/bcd"
@@ -23,7 +24,10 @@
         "install": [
           "sources/install.wim",
           "sources/install.esd",
-          "sources/install*.swm"
+          "sources/install*.swm",
+          "x64/sources/install.wim",
+          "x64/sources/install.esd",
+          "x64/sources/install*.swm"
         ]
       },
       "require": [

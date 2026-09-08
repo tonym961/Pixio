@@ -134,6 +134,7 @@ def describe(index, root, t, files, label):
             editions, version = wim_info(os.path.join(root, wim))
             if t["id"] == "windows" and editions:
                 base = re.sub(r"\s+(Home|Pro|Education|Enterprise|Core|N|Single Language|for Workstations|Standard|Datacenter|Essentials|Evaluation|\(.*\))+$", "", editions[0]).strip()
+                base = re.sub(r"\s+SERVER[A-Z]+(CORE)?\b", "", base).strip()      # nomi immagine dei server: SERVERSTANDARDCORE ecc.
                 name = base or editions[0]
                 # lingua/arch dal volume id: es. CCCOMA_X64FRE_IT-IT_DV9
                 m = re.search(r"_(X64|X86|ARM64)FRE_([A-Z]{2}-[A-Z]{2})", label or "")
