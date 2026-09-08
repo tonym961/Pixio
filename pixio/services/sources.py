@@ -104,10 +104,17 @@ def mounted_map(force=False):
         now = time.monotonic()
         if not force and _mounts_cache["data"] is not None and now - _mounts_cache["ts"] < MOUNTS_TTL:
             return dict(_mounts_cache["data"])
+        # /proc/self/mounts non richiede privilegi: niente sudo a ogni richiesta di stato
+        data = {}
+        prefix = C.SOURCES_MOUNT_DIR.rstrip("/") + "/"
         try:
-            res = privileged.call("list-mounts", timeout=30)
-            data = {k: bool(v) for k, v in (res.get("sources") or {}).items()}
-        except (HelperError, Exception):  # noqa: BLE001
+            with open("/proc/self/mounts") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) > 2 and parts[1].startswith(prefix) and parts[2] in ("cifs", "smb3"):
+                        sid = parts[1][len(prefix):].split("/")[0]
+                        data[sid] = True
+        except OSError:
             data = {}
         _mounts_cache.update(ts=now, data=data)
         return dict(data)

@@ -182,7 +182,8 @@ class LogsTest(unittest.TestCase):
         logs.NGINX_ACCESS_LOG = self._orig
 
     def test_read_with_cursor(self):
-        r = logs.read("all", None, 200)
+        # il journal reale della macchina puo' contenere centinaia di righe: limite alto per non perdere quelle finte
+        r = logs.read("all", None, 2000)
         msgs = [l["msg"] for l in r["lines"]]
         self.assertIn("PXE d8:bb:c1:4a:20:7e (10.10.0.57) → ipxe.efi", msgs)
         self.assertIn("TFTP: inviato ipxe.efi a 10.10.0.57", msgs)
