@@ -1,0 +1,5 @@
+ipxe/src/
+ipxe/embed.built.ipxe
+__pycache__/
+*.pyc
+*.log

@@ -1,0 +1,21 @@
+#!ipxe
+# Pixio - script embedded in iPXE (BIOS/UEFI). Ottiene IP via DHCP e carica il menu HTTP.
+set attempts:int32 0
+:dhcp
+dhcp && goto boot ||
+inc attempts
+iseq ${attempts} 5 && goto failed ||
+echo Pixio: DHCP fallito, nuovo tentativo (${attempts}/5)...
+sleep 2
+goto dhcp
+:boot
+echo Pixio: IP ${ip} - next-server ${next-server} - proxy ${proxydhcp/next-server}
+isset ${proxydhcp/next-server} && chain --autofree http://${proxydhcp/next-server}/boot.ipxe && goto done ||
+isset ${next-server} && chain --autofree http://${next-server}/boot.ipxe && goto done ||
+chain --autofree http://__PIXIO_SERVER_IP__/boot.ipxe && goto done ||
+goto failed
+:failed
+echo Pixio: impossibile contattare il server PXE. Apro la shell iPXE (digita 'exit' per uscire).
+shell
+:done
+exit

@@ -1,0 +1,38 @@
+#!/bin/bash
+# Compila iPXE con lo script embedded Pixio. Uso: build.sh <server_ip> [outdir]
+set -euo pipefail
+SERVER_IP="${1:?server ip}"; OUT="${2:-/srv/pixio/tftp}"
+SRC=/opt/pixio/ipxe/src
+[ -d "$SRC/.git" ] || git clone --depth 1 https://github.com/ipxe/ipxe.git "$SRC"
+cd "$SRC/src"
+sed "s/__PIXIO_SERVER_IP__/$SERVER_IP/g" /opt/pixio/ipxe/embed.ipxe > /opt/pixio/ipxe/embed.built.ipxe
+mkdir -p config/local
+cat > config/local/general.h <<'EOH'
+#define DOWNLOAD_PROTO_HTTPS
+#define NET_PROTO_IPV6
+#define PING_CMD
+#define NSLOOKUP_CMD
+#define REBOOT_CMD
+#define POWEROFF_CMD
+#define CONSOLE_CMD
+#define IMAGE_PNG
+#define NTP_CMD
+#define VLAN_CMD
+#define PARAM_CMD
+EOH
+cat > config/local/console.h <<'EOH'
+#define CONSOLE_SERIAL
+#define CONSOLE_FRAMEBUFFER
+EOH
+NPROC=$(nproc)
+make -j"$NPROC" NO_WERROR=1 EMBED=/opt/pixio/ipxe/embed.built.ipxe \
+  bin/undionly.kpxe bin/ipxe.pxe bin-x86_64-efi/ipxe.efi bin-x86_64-efi/snponly.efi bin-i386-efi/ipxe.efi bin/ipxe.lkrn bin-x86_64-efi/ipxe.usb 2>&1 | tail -5 || true
+mkdir -p "$OUT"
+cp bin/undionly.kpxe "$OUT/undionly.kpxe"
+cp bin/ipxe.pxe "$OUT/ipxe.pxe"
+cp bin-x86_64-efi/ipxe.efi "$OUT/ipxe.efi"
+cp bin-x86_64-efi/snponly.efi "$OUT/snponly.efi"
+cp bin-i386-efi/ipxe.efi "$OUT/ipxe32.efi"
+cp bin/ipxe.lkrn "$OUT/ipxe.lkrn"
+echo "BUILD_OK $(date -Is)" > "$OUT/.ipxe-build"
+ls -la "$OUT"
