@@ -16,6 +16,7 @@ CLIENTS_FILE = os.path.join(VAR_DIR, "clients.json")      # client PXE visti
 DRIVERS_FILE = os.path.join(VAR_DIR, "drivers.json")      # flag per cartella driver (winpe_inject, setup_load, note)
 ANSWERS_DIR = os.path.join(VAR_DIR, "answers")            # file di risposta (autounattend.xml, preseed.cfg, user-data...)
 ANSWERS_FILE = os.path.join(VAR_DIR, "answers.json")      # metadati dei file di risposta
+WINPROFILES_FILE = os.path.join(VAR_DIR, "winprofiles.json")  # profili di personalizzazione Windows (generano autounattend.xml)
 JOBS_DIR = os.path.join(VAR_DIR, "jobs")                  # stato job in background (copie, upload, scansioni)
 UPLOAD_TMP_DIR = os.path.join(VAR_DIR, "uploads")         # chunk degli upload web in corso
 LOG_DIR = "/var/log/pixio"

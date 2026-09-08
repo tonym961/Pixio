@@ -158,3 +158,21 @@ valido 10 anni, con SAN per IP e hostname; `pixio-helper apply nginx` aggiunge i
 il reindirizzamento dalla 80 (esclusi i percorsi dei client PXE `/boot.ipxe`, `/boot/`, `/pxe/`, `/answers/`, che restano in HTTP).
 - `GET /api/system/cert` → `{enabled, exists, subject, not_after, fingerprint}`
 - `POST /api/system/cert/regenerate` → rigenera il certificato
+
+## 8. Personalizzatore Windows (profili che generano autounattend.xml)
+Servizio `pixio/services/winprofile.py`, profili in `/var/lib/pixio/winprofiles.json`.
+Profilo: `{id, name, note, updated, settings:{...}}`. Campi di `settings` (tutti con valore predefinito sensato per l'Italia):
+`language` (it-IT), `input_locale`, `timezone` (W. Europe Standard Time), `architecture` (amd64|x86), `edition_index` (indice o nome immagine in install.wim),
+`product_key`, `computer_name` (supporta `*` = casuale), `organization`, `owner`,
+`admin_user`, `admin_password`, `autologon` (bool), `autologon_count`,
+`extra_user` (nome, password, gruppo), `join_domain:{enabled, domain, ou, user, password}`,
+`disk:{mode: "auto-uefi"|"auto-bios"|"manuale", wipe (bool), efi_mb, msr_mb, recovery_mb}`,
+`skip_oobe` (privacy, EULA, rete, account Microsoft), `bypass_requirements` (TPM/SecureBoot/RAM/CPU per Windows 11),
+`disable_defender_prompt`, `hide_files_ext`, `disable_hibernate`, `power_scheme` ("bilanciato"|"prestazioni"),
+`remove_apps` (lista di pacchetti Appx da rimuovere), `run_commands` (comandi FirstLogon), `drivers_from_pixio` (bool: aggiunge il percorso della share driver in DriverPaths).
+Il generatore produce un `autounattend.xml` valido con i passaggi windowsPE (locale, disco, immagine, product key), specialize (nome computer, dominio, tweak),
+oobeSystem (utente locale, autologon, OOBE saltato, FirstLogonCommands). Le password vengono scritte in chiaro nel file (avvisare nella GUI).
+- `GET /api/winprofiles` → `{profiles:[...], defaults:{...}, timezones:[...], languages:[...], apps:[{id,name}]}`
+- `POST /api/winprofiles {name, settings}` → 201; `GET|PUT|DELETE /api/winprofiles/<id>`
+- `POST /api/winprofiles/<id>/preview` → `{xml}` (anteprima del file generato, senza salvare)
+- `POST /api/winprofiles/<id>/save-answer {answer_id?}` → genera l'XML e lo salva come risposta di tipo windows (`services/answers.py`), creandola se manca; risposta `{ok, answer_id, answer_name}`
