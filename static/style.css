@@ -57,7 +57,7 @@ button{font:inherit}
 .navlist{display:flex;flex-direction:column;gap:4px}
 .nav{border:0;background:none;text-align:left;font:inherit;color:var(--ink);padding:9px 12px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;text-decoration:none;gap:8px}
 .nav:hover{background:var(--surface)}
-.nav[aria-selected="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .nav .n{font-size:11.5px;color:var(--muted);font-weight:500;white-space:nowrap}
 .side .foot{margin-top:auto;padding:10px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
 .main{padding:22px 26px 40px;min-width:0}
@@ -150,7 +150,7 @@ td.actions-cell{white-space:nowrap;text-align:right}
 .search,.filters select{font:inherit;font-size:13.5px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--surface);color:var(--ink)}
 .search{min-width:240px;flex:1;max-width:420px}
 .field{display:grid;gap:5px;margin-bottom:12px}
-.field label{font-size:12.5px;font-weight:600;color:var(--muted)}
+.field label,.field .field-label{font-size:12.5px;font-weight:600;color:var(--muted)}
 .field input,.field select,.field textarea{font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface);color:var(--ink);width:100%}
 .field textarea{min-height:70px;resize:vertical}
 .field textarea.mono,.field input.mono{font-family:var(--mono);font-size:13px}

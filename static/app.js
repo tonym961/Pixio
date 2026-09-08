@@ -196,6 +196,17 @@
   };
 
   // ------------------------------------------------------------------ finestre modali
+  // Focus trap minimo: con Tab/Shift+Tab il fuoco resta tra gli elementi attivabili del contenitore.
+  const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  P.trapTab = function (e, container) {
+    const items = $$(FOCUSABLE, container).filter((el) => !el.hidden && el.offsetParent !== null);
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0]; const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (active === first || !container.contains(active)) { e.preventDefault(); last.focus(); }
+    } else if (active === last || !container.contains(active)) { e.preventDefault(); first.focus(); }
+  };
   let modalPrevFocus = null;
   P.modal = function (opts) {
     const overlay = document.getElementById('modal');
@@ -217,7 +228,10 @@
       resolve(v);
       if (modalPrevFocus && modalPrevFocus.focus) { try { modalPrevFocus.focus(); } catch (e) { /* ignora */ } }
     };
-    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(null); } };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(null); return; }
+      if (e.key === 'Tab') P.trapTab(e, dlg);
+    };
     const buttons = opts.buttons || [{ label: 'Chiudi', value: null }];
     buttons.forEach((b) => {
       const btn = document.createElement('button');
@@ -292,7 +306,9 @@
   $('#drawer-close').addEventListener('click', () => P.drawer.close());
   drawerOverlay.addEventListener('click', () => P.drawer.close());
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !drawerEl.hidden && document.getElementById('modal').hidden) P.drawer.close();
+    if (drawerEl.hidden || !document.getElementById('modal').hidden) return;
+    if (e.key === 'Escape') P.drawer.close();
+    else if (e.key === 'Tab') P.trapTab(e, drawerEl);
   });
 
   // ------------------------------------------------------------------ autenticazione
@@ -389,9 +405,14 @@
     P.refreshStatus().catch(() => {});
   }, 15000);
 
+  const WIZARD_DONE_KEY = 'pixio.wizardDone';
+  const wizardDone = () => { try { return !!localStorage.getItem(WIZARD_DONE_KEY); } catch (e) { return false; } };
+  P.markWizardDone = function () { try { localStorage.setItem(WIZARD_DONE_KEY, '1'); } catch (e) { /* storage non disponibile */ } };
   function needsWizard(st) {
     if (!st) return false;
     if (sessionStorage.getItem('pixio.wizard.skip')) return false;
+    if (wizardDone()) return false;                       // l'utente lo ha già chiuso in passato
+    if (st.catalog && Number(st.catalog.total) > 0) return false;   // c'è già almeno una ISO nel catalogo
     const noSources = !st.sources || st.sources.length === 0;
     const noLocal = !st.library || !st.library.iso_count;
     return noSources && noLocal;
@@ -430,7 +451,7 @@
     state.route = name;
     $$('.nav').forEach((a) => {
       const sel = a.dataset.route === name;
-      a.setAttribute('aria-selected', sel ? 'true' : 'false');
+      a.removeAttribute('aria-selected');
       if (sel) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     appEl.classList.toggle('wizard-mode', name === 'benvenuto');
@@ -506,7 +527,7 @@
         const act = b.dataset.act;
         if (act === 'skip' || act === 'next') { step = Math.min(3, step + 1); render(); }
         else if (act === 'back') { step = Math.max(1, step - 1); render(); }
-        else if (act === 'finish') { sessionStorage.setItem('pixio.wizard.skip', '1'); location.hash = '#/iso'; }
+        else if (act === 'finish') { sessionStorage.setItem('pixio.wizard.skip', '1'); P.markWizardDone(); location.hash = '#/iso'; }
         else if (act === 'upload') { if (P.uploads) { P.uploads.pick(() => { uploadStarted = true; const h = $('#wz-upload-hint', root); if (h) h.textContent = 'Caricamento avviato: lo trovi nel Catalogo.'; }); } }
         else if (act === 'add') {
           let form;
@@ -515,7 +536,9 @@
           try {
             const r = await P.post('/api/sources', form);
             addedSource = (r && r.source) || form;
-            P.toast('Share aggiunta e scansione avviata');
+            const warnings = (r && Array.isArray(r.warnings)) ? r.warnings : [];
+            if (warnings.length) warnings.forEach((w) => P.toast('Share aggiunta, ma: ' + w, 'warn', 8000));
+            else P.toast('Share aggiunta e scansione avviata');
             P.refreshStatus().catch(() => {});
             step = 2; render();
           } catch (err) { P.setBusy(b, false); P.fail(err); }

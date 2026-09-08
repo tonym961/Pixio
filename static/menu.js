@@ -166,17 +166,17 @@
         <div>
           <form id="menu-form" novalidate>
             <div class="row2">
-              <div class="field"><label for="m-title">Titolo</label><input id="m-title" value="${esc(s.title || '')}" maxlength="80"></div>
-              <div class="field"><label for="m-timeout">Timeout (s)</label><input id="m-timeout" type="number" min="0" max="3600" value="${esc(s.timeout != null ? s.timeout : 30)}"><div class="hint">0 = attende una scelta.</div></div>
+              <div class="field"><label for="m-title">Titolo</label><input id="m-title" value="${esc(s.title || '')}" maxlength="60"><div class="hint">Max 60 caratteri.</div></div>
+              <div class="field"><label for="m-timeout">Timeout (s)</label><input id="m-timeout" type="number" min="0" max="600" value="${esc(s.timeout != null ? s.timeout : 30)}"><div class="hint">0 = attende una scelta. Massimo 600 s.</div></div>
             </div>
             <div class="field"><label for="m-default">Voce predefinita allo scadere</label><select id="m-default">${defaultOpts.map(([v, l]) => `<option value="${esc(v)}" ${v === (s.default || 'local') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select><div class="hint">Consigliato: disco locale, così un PC acceso per sbaglio in PXE riparte normalmente.</div></div>
-            <div class="field"><label>Voci di sistema</label><div class="checks">
+            <div class="field"><span class="field-label">Voci di sistema</span><div class="checks">
               <label><input type="checkbox" id="m-show_local" ${s.show_local !== false ? 'checked' : ''}> Disco locale</label>
               <label><input type="checkbox" id="m-show_shell" ${s.show_shell !== false ? 'checked' : ''}> Shell iPXE</label>
               <label><input type="checkbox" id="m-show_reboot" ${s.show_reboot !== false ? 'checked' : ''}> Riavvia</label>
               <label><input type="checkbox" id="m-show_memtest" ${s.show_memtest !== false ? 'checked' : ''}> Memtest86+</label>
             </div></div>
-            <div class="field"><label for="m-groups">Gruppi del menu (uno per riga, nell'ordine di visualizzazione)</label><textarea id="m-groups">${esc((s.groups || []).join('\n'))}</textarea></div>
+            <div class="field"><label for="m-groups">Gruppi del menu (uno per riga, nell'ordine di visualizzazione)</label><textarea id="m-groups">${esc((s.groups || []).join('\n'))}</textarea><div class="hint">Max 20 gruppi da 60 caratteri.</div></div>
           </form>
           ${themeHtml(s, entries, groups)}
           <div class="eyebrow" style="margin:6px 0 8px">Ordine delle voci</div>
@@ -269,16 +269,23 @@
     const r = M.root; const btn = $('#menu-save', r);
     const timeout = parseInt($('#m-timeout', r).value, 10);
     if (isNaN(timeout) || timeout < 0) { P.toast('Timeout non valido', 'bad'); $('#m-timeout', r).focus(); return; }
+    if (timeout > 600) { P.toast('Timeout troppo alto: massimo 600 secondi', 'bad'); $('#m-timeout', r).focus(); return; }
+    const title = $('#m-title', r).value.trim();
+    if (title.length > 60) { P.toast('Titolo troppo lungo: massimo 60 caratteri', 'bad'); $('#m-title', r).focus(); return; }
+    const groups = $('#m-groups', r).value.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (groups.length > 20) { P.toast('Troppi gruppi: massimo 20', 'bad'); $('#m-groups', r).focus(); return; }
+    const longGroup = groups.find((g) => g.length > 60);
+    if (longGroup) { P.toast(`Nome del gruppo troppo lungo (max 60 caratteri): "${longGroup.slice(0, 30)}…"`, 'bad'); $('#m-groups', r).focus(); return; }
     const theme = readTheme(); if (!theme) return;
     const settings = {
-      title: $('#m-title', r).value.trim() || 'PIXIO - Avvio da rete',
+      title: title || 'PIXIO - Avvio da rete',
       timeout,
       default: $('#m-default', r).value,
       show_local: $('#m-show_local', r).checked,
       show_shell: $('#m-show_shell', r).checked,
       show_reboot: $('#m-show_reboot', r).checked,
       show_memtest: $('#m-show_memtest', r).checked,
-      groups: $('#m-groups', r).value.split('\n').map((s) => s.trim()).filter(Boolean),
+      groups,
       theme,
     };
     P.setBusy(btn, true, 'Salvataggio…');

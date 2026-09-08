@@ -21,7 +21,7 @@
         <div class="field"><label for="sf-domain">Dominio / workgroup</label><input id="sf-domain" value="${esc(src.domain || '')}" placeholder="facoltativo"></div>
         <div class="field"><label for="sf-user">Utente</label><input id="sf-user" value="${esc(src.username || '')}" placeholder="vuoto = guest" autocomplete="off"></div>
       </div>
-      <div class="field"><label for="sf-pass">Password</label><input id="sf-pass" type="password" autocomplete="new-password" placeholder="${src.id ? 'lascia vuoto per non cambiarla' : ''}"><div class="hint">Salvata sul server in un file leggibile solo da root.</div></div>`;
+      <div class="field"><label for="sf-pass">Password</label><input id="sf-pass" type="password" autocomplete="new-password" placeholder="${src.id ? 'lascia vuoto per non cambiarla (obbligatoria se modifichi server/utente)' : ''}"><div class="hint">Salvata sul server in un file leggibile solo da root.</div></div>`;
   };
   P.readSourceForm = function (root) {
     const v = (id) => ($('#' + id, root) || { value: '' }).value;
@@ -76,7 +76,7 @@
           ${toggleRow(`Share Samba in scrittura <span class="mono">${esc(sambaPath)}</span>`, 'Per copiare ISO da Windows con Esplora file. Utente <span class="mono">pixio</span>, password impostata qui sotto.', 'lib.samba_share_enabled', lib.samba_share_enabled !== false)}
           <div class="row2" style="margin-top:8px">
             <div class="field"><label for="s-share-name">Nome della share</label><input id="s-share-name" value="${esc(lib.samba_share_name || 'iso')}" maxlength="32" pattern="[A-Za-z0-9._-]+"></div>
-            <div class="field"><label>Password Samba (utente pixio)</label><div class="actions"><button class="btn" type="button" data-act="samba-password">${lib.samba_password_set ? 'Cambia password' : 'Imposta password'}</button>${lib.samba_password_set ? P.pill('impostata', 'ok') : P.pill('non impostata', 'warn')}</div></div>
+            <div class="field"><span class="field-label">Password Samba (utente pixio)</span><div class="actions"><button class="btn" type="button" data-act="samba-password">${lib.samba_password_set ? 'Cambia password' : 'Imposta password'}</button>${lib.samba_password_set ? P.pill('impostata', 'ok') : P.pill('non impostata', 'warn')}</div></div>
           </div>
           ${toggleRow('Upload dalla web UI', 'Trascina la ISO nella pagina Catalogo. Riprende da dove si era interrotto.', 'lib.web_upload_enabled', lib.web_upload_enabled !== false)}
           ${toggleRow('Scansione automatica', 'Cerca nuove ISO in tutte le sorgenti a intervalli regolari.', 'scan.auto', scan.auto !== false)}
@@ -152,9 +152,18 @@
         label: src ? 'Salva e rimonta' : 'Aggiungi e monta', cls: 'primary',
         onClick: async (dlg) => {
           const form = P.readSourceForm(dlg);
-          if (src) await P.api('PUT', '/api/sources/' + encodeURIComponent(src.id), form);
-          else await P.post('/api/sources', form);
-          P.toast(src ? 'Share aggiornata' : 'Share aggiunta: montaggio e scansione avviati');
+          if (src && src.username && !form.password) {
+            // l'API rifiuta di cambiare server/utente/dominio/versione SMB senza la password per sorgenti con utente
+            const norm = (x) => String(x || '').trim();
+            const changed = ['unc', 'domain', 'username', 'vers'].some((k) => norm(form[k]) !== norm(src[k]));
+            if (changed) { P.toast('Per cambiare server, utente, dominio o versione SMB reinserisci la password', 'bad'); const pw = $('#sf-pass', dlg); if (pw) pw.focus(); return false; }
+          }
+          let r;
+          if (src) r = await P.api('PUT', '/api/sources/' + encodeURIComponent(src.id), form);
+          else r = await P.post('/api/sources', form);
+          const warnings = (r && Array.isArray(r.warnings)) ? r.warnings : [];
+          if (warnings.length) warnings.forEach((w) => P.toast((src ? 'Share aggiornata, ma: ' : 'Share aggiunta, ma: ') + w, 'warn', 8000));
+          else P.toast(src ? 'Share aggiornata' : 'Share aggiunta: montaggio e scansione avviati');
           reloadSources();
           return true;
         },
@@ -197,9 +206,11 @@
     const r = S.root; const btn = $('#set-save', r);
     const v = (id) => $('#' + id, r).value.trim();
     const dhcp_mode = v('s-dhcp');
-    const network = { interface: v('s-iface'), server_ip: v('s-ip'), dhcp_mode, dhcp_range_start: v('s-r1'), dhcp_range_end: v('s-r2'), dhcp_netmask: v('s-mask'), dhcp_router: v('s-router'), dhcp_dns: v('s-dns'), dhcp_lease: v('s-lease') || '12h' };
+    // in modalità proxy si inviano solo interface/server_ip/dhcp_mode; i campi DHCP solo con dhcp_mode === 'full'
+    const network = { interface: v('s-iface'), server_ip: v('s-ip'), dhcp_mode };
     if (!IPV4.test(network.server_ip)) { P.toast('IP del server non valido', 'bad'); $('#s-ip', r).focus(); return; }
     if (dhcp_mode === 'full') {
+      Object.assign(network, { dhcp_range_start: v('s-r1'), dhcp_range_end: v('s-r2'), dhcp_netmask: v('s-mask'), dhcp_router: v('s-router'), dhcp_dns: v('s-dns'), dhcp_lease: v('s-lease') || '12h' });
       for (const [k, lbl] of [['dhcp_range_start', 'Inizio range'], ['dhcp_range_end', 'Fine range']]) {
         if (!IPV4.test(network[k])) { P.toast(lbl + ' non valido', 'bad'); return; }
       }

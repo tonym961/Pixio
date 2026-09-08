@@ -66,7 +66,14 @@
         }
         this.status = 'finishing'; uploads.notify();
         const fin = await P.post(`/api/upload/${encodeURIComponent(this.id)}/finish`);
-        this.status = 'done'; this.slug = fin && fin.slug; this.sent = this.size; uploads.notify();
+        this.slug = fin && fin.slug; this.sent = this.size;
+        if (fin && fin.job_id) {
+          // il server ha avviato il rilevamento del tipo in background: attendo il job prima di dichiarare completato
+          this.status = 'detecting'; this.jobMessage = null; uploads.notify();
+          const job = await P.watchJob(fin.job_id, (j) => { if (j && j.message) { this.jobMessage = j.message; uploads.notify(); } });
+          if (job && job.status !== 'done') P.toast(`${this.name}: rilevamento del tipo non riuscito (${job.message || job.status}). Puoi ripeterlo dai dettagli della ISO.`, 'warn', 8000);
+        }
+        this.status = 'done'; uploads.notify();
         P.toast(`Caricamento di ${this.name} completato`);
         if (uploads.onDone) uploads.onDone(this);
         setTimeout(() => uploads.remove(this), 10000);
@@ -77,7 +84,7 @@
       }
     }
     async cancel() {
-      const wasDone = this.status === 'done';
+      const wasDone = this.status === 'done' || this.status === 'detecting';   // file già assemblato sul server
       this.status = 'cancelled';
       if (this.ctrl) { try { this.ctrl.abort(); } catch (e) { /* ignora */ } }
       if (this.id && !wasDone) { try { await P.api('DELETE', `/api/upload/${encodeURIComponent(this.id)}`); } catch (e) { /* ignora */ } }
@@ -137,12 +144,13 @@
       let barCls = '';
       if (u.status === 'init') meta = 'Avvio del caricamento…';
       else if (u.status === 'uploading' || u.status === 'retry') meta = `${pct}% · ${P.fmtBytes(u.sent)} di ${P.fmtBytes(u.size)} · ${u.speed ? P.fmtBytes(u.speed) + '/s' : '—'} · rimanenti ${P.fmtDuration(u.eta)}${u.status === 'retry' ? ' · nuovo tentativo…' : ''}`;
-      else if (u.status === 'finishing') meta = 'Assemblaggio del file e rilevamento del tipo…';
+      else if (u.status === 'finishing') meta = 'Assemblaggio del file…';
+      else if (u.status === 'detecting') meta = 'Rilevamento del tipo in corso…' + (u.jobMessage ? ' ' + u.jobMessage : '');
       else if (u.status === 'done') { meta = 'Completato'; barCls = 'done'; }
       else if (u.status === 'error') { meta = 'Errore: ' + (u.error || ''); barCls = 'err'; }
       const btns = u.status === 'error'
         ? `<button class="btn small" type="button" data-up="retry" data-i="${i}">Riprova</button><button class="btn small" type="button" data-up="cancel" data-i="${i}">Rimuovi</button>`
-        : (u.status === 'done' ? '' : `<button class="btn small" type="button" data-up="cancel" data-i="${i}">Annulla</button>`);
+        : ((u.status === 'done' || u.status === 'detecting') ? '' : `<button class="btn small" type="button" data-up="cancel" data-i="${i}">Annulla</button>`);
       return `<div class="upload" role="group" aria-label="Caricamento ${esc(u.name)}"><div class="row"><span class="name">${esc(u.name)}</span><span class="actions">${btns}</span></div>
         <div class="bar ${barCls}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><div class="meta">${esc(meta)}</div></div>`;
     });
@@ -383,11 +391,11 @@
           <div class="field"><label for="d-cr-kernel">Kernel (percorso relativo alla ISO o URL)</label><input id="d-cr-kernel" class="mono" value="${esc(cr ? cr.kernel : '')}" placeholder="casper/vmlinuz"></div>
           <div class="field"><label for="d-cr-initrd">Initrd (uno per riga)</label><textarea id="d-cr-initrd" class="mono" placeholder="casper/initrd">${esc(cr ? (cr.initrds || []).join('\n') : '')}</textarea></div>
           <div class="field"><label for="d-cr-cmdline">Riga di comando del kernel</label><textarea id="d-cr-cmdline" class="mono" placeholder="boot=casper ip=dhcp">${esc(cr ? cr.cmdline : '')}</textarea><div class="hint">I percorsi relativi si riferiscono al contenuto della ISO montata. Dopo il salvataggio l'anteprima qui sotto mostra lo script risultante.</div></div>
-          <div class="field"><label>Piattaforme</label><div class="checks"><label><input type="checkbox" id="d-cr-bios" ${plats.includes('bios') ? 'checked' : ''}> BIOS</label><label><input type="checkbox" id="d-cr-efi" ${plats.includes('efi') ? 'checked' : ''}> UEFI</label></div></div>
+          <div class="field"><span class="field-label">Piattaforme</span><div class="checks"><label><input type="checkbox" id="d-cr-bios" ${plats.includes('bios') ? 'checked' : ''}> BIOS</label><label><input type="checkbox" id="d-cr-efi" ${plats.includes('efi') ? 'checked' : ''}> UEFI</label></div></div>
         </div></details>
       </div>
       <div class="drawer-sec">
-        <div class="field"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><label>Anteprima script iPXE</label><div class="seg" role="group" aria-label="Piattaforma"><button type="button" data-plat="efi" aria-pressed="true">UEFI</button><button type="button" data-plat="bios" aria-pressed="false">BIOS</button></div></div>
+        <div class="field"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="field-label">Anteprima script iPXE</span><div class="seg" role="group" aria-label="Piattaforma"><button type="button" data-plat="efi" aria-pressed="true">UEFI</button><button type="button" data-plat="bios" aria-pressed="false">BIOS</button></div></div>
         <pre class="code mono" id="d-preview" style="max-height:260px">${esc(preview.efi || '(nessuna anteprima)')}</pre></div>
       </div>
       <div class="drawer-sec actions" style="justify-content:space-between">
