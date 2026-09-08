@@ -22,9 +22,9 @@ usermod -a -G systemd-journal,adm pixio
 # nginx deve leggere i file: la libreria e la cache sono world-readable, i loop mount pure
 
 say "Directory"
-mkdir -p $SRV/{sources,library,cache,tftp,detect,http/iso,http/isofile,http/boot,http/inject} /etc/pixio/sources /var/lib/pixio/{jobs,uploads} /var/log/pixio
-chown -R pixio:pixio /var/lib/pixio /var/log/pixio $SRV/library $SRV/cache $SRV/http/inject
-chmod 2775 $SRV/library $SRV/cache
+mkdir -p $SRV/{sources,library,cache,tftp,detect,http/iso,http/isofile,http/boot,http/inject,http/drivers} /etc/pixio/sources /var/lib/pixio/{jobs,uploads} /var/log/pixio
+chown -R pixio:pixio /var/lib/pixio /var/log/pixio $SRV/library $SRV/cache $SRV/http/inject $SRV/http/drivers
+chmod 2775 $SRV/library $SRV/cache $SRV/http/drivers
 chmod 755 $SRV $SRV/http $SRV/http/iso $SRV/http/isofile $SRV/http/boot $SRV/tftp
 chmod 700 /etc/pixio/sources
 chown pixio:pixio /etc/pixio; chmod 750 /etc/pixio

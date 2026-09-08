@@ -64,6 +64,11 @@ def render_lines(lines, ctx, files, flags):
     out = []
     for raw in lines:
         line = raw
+        if line.strip() == "{drivers}":
+            for folder, name, _path in (flags.get("driver_files") or []):
+                from . import drivers as _drv
+                out.append(f"initrd {_drv.http_url(ctx['server_ip'], folder, name)} {name}")
+            continue
         m = re.match(r"^\?(!?)(has:)?([a-z_]+)\s+(.*)$", line)
         if m:
             neg, has, name, rest = m.group(1) == "!", bool(m.group(2)), m.group(3), m.group(4)

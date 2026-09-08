@@ -378,41 +378,8 @@ def remount_enabled():
 
 
 def write_inject_files(e):
-    """File iniettati nel WinPE (wimboot): winpeshl.ini + install.cmd (solo se export SMB attivo)."""
-    slug = e["slug"]
-    d = os.path.join(C.HTTP_INJECT_DIR, slug)
-    cfg = S.load()
-    if e.get("type") != "windows" or not cfg["windows"].get("smb_export_enabled"):
-        shutil.rmtree(d, ignore_errors=True)
-        return
-    ip = cfg["network"]["server_ip"]
-    wuser = cfg["windows"].get("smb_user") or "pxe"
-    wpass = cfg["windows"].get("smb_password") or ""
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "winpeshl.ini"), "w", newline="\r\n") as f:
-        f.write("[LaunchApps]\n\"install.cmd\"\n")
-    cmd = f"""@echo off
-title Pixio - installazione Windows
-wpeinit
-set /a tries=0
-:retry
-set /a tries+=1
-net use S: \\\\{ip}\\pxe\\{slug} {wpass} /user:{wuser} /persistent:no >nul 2>&1 && goto ok
-if %tries% GEQ 30 goto fail
-echo In attesa della rete (%tries%/30)...
-ping -n 3 127.0.0.1 >nul
-goto retry
-:ok
-echo Avvio setup.exe da \\\\{ip}\\pxe\\{slug}
-S:\\setup.exe
-goto end
-:fail
-echo Impossibile raggiungere \\\\{ip}\\pxe\\{slug}. Apro il prompt.
-cmd.exe
-:end
-"""
-    with open(os.path.join(d, "install.cmd"), "w", newline="\r\n") as f:
-        f.write(cmd)
+    """Compatibilita': i file WinPE (winpeshl.ini, install.cmd) sono ora generati al volo da /boot/inject/<slug>/."""
+    shutil.rmtree(os.path.join(C.HTTP_INJECT_DIR, e["slug"]), ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cache locale

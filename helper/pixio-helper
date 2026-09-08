@@ -25,6 +25,8 @@ LIBRARY = f"{SRV}/library"
 CACHE = f"{SRV}/cache"
 HTTP_ISO = f"{SRV}/http/iso"
 HTTP_ISOFILE = f"{SRV}/http/isofile"
+HTTP_ROOT = f"{SRV}/http"
+DRIVERS = f"{SRV}/http/drivers"
 DETECT = f"{SRV}/detect"
 TFTP = f"{SRV}/tftp"
 CODE = "/opt/pixio"
@@ -425,10 +427,26 @@ def render_dnsmasq(cfg):
         "dhcp-match=set:efi64,option:client-arch,7",
         "dhcp-match=set:efi64,option:client-arch,9",
         "dhcp-match=set:efiarm64,option:client-arch,11",
+        "# UEFI HTTP Boot (RFC 4578: 15 = x86 HTTP, 16 = x64 HTTP): il firmware si presenta come 'HTTPClient'",
+        "# e vuole un URL http:// nel bootfile; scarica iPXE via nginx (/pxe/tftp/ -> symlink alla root TFTP)",
+        "dhcp-pxe-vendor=PXEClient,HTTPClient",
+        "dhcp-vendorclass=set:httpclient,HTTPClient",
+        "dhcp-match=set:http32,option:client-arch,15",
+        "dhcp-match=set:http64,option:client-arch,16",
         "# Client gia' in iPXE: option 175 e user-class",
         "dhcp-match=set:ipxe,175",
         "dhcp-userclass=set:ipxe,iPXE",
         "",
+    ]
+    # Offerta per i client HTTP Boot (valida sia in proxy sia in DHCP completo): l'URL va nel campo file/siaddr
+    # (dhcp-boot) e anche in option 67 (dhcp-option-pxe, inviata pure dal proxy): EDK2 legge la 67 se c'e',
+    # altrimenti il campo file. Option 60 = 'HTTPClient' la mette dnsmasq grazie a dhcp-pxe-vendor.
+    httpboot = [
+        "# UEFI HTTP Boot: il firmware scarica iPXE via HTTP, poi iPXE fa il proprio DHCP (tag ipxe) e carica boot.ipxe",
+        f"dhcp-boot=tag:httpclient,tag:http64,http://{ip}/pxe/tftp/ipxe.efi,,{ip}",
+        f"dhcp-boot=tag:httpclient,tag:http32,http://{ip}/pxe/tftp/ipxe32.efi,,{ip}",
+        f"dhcp-option-pxe=tag:httpclient,tag:http64,67,http://{ip}/pxe/tftp/ipxe.efi",
+        f"dhcp-option-pxe=tag:httpclient,tag:http32,67,http://{ip}/pxe/tftp/ipxe32.efi",
     ]
     if mode == "proxy":
         lines += [
@@ -442,7 +460,7 @@ def render_dnsmasq(cfg):
             f"dhcp-boot=tag:bios,tag:!ipxe,undionly.kpxe,,{ip}",
             "# iPXE: secondo stadio via HTTP (il server deve essere esplicito: iPXE ignora offerte proxy con siaddr=0)",
             f"dhcp-boot=tag:ipxe,http://{ip}/boot.ipxe,,{ip}",
-        ]
+        ] + httpboot
     else:
         lines += [
             "# DHCP completo: Pixio assegna anche gli indirizzi",
@@ -454,7 +472,7 @@ def render_dnsmasq(cfg):
             f"dhcp-boot=tag:!ipxe,tag:efi64,ipxe.efi,,{ip}",
             f"dhcp-boot=tag:!ipxe,tag:efi32,ipxe32.efi,,{ip}",
             f"dhcp-boot=tag:!ipxe,tag:bios,undionly.kpxe,,{ip}",
-        ]
+        ] + httpboot
     return "\n".join(lines) + "\n"
 
 
@@ -491,29 +509,34 @@ def render_smb(cfg):
         "   unix charset = UTF-8",
         "",
     ]
+    dshare = lib.get("drivers_share_name", "drivers") or "drivers"
+    if not SMBNAME_RE.match(dshare):
+        raise HelperError("nome share driver non valido")
     if lib.get("samba_share_enabled", True):
-        lines += [
-            f"[{share}]",
-            "   comment = Libreria ISO di Pixio (copia qui le ISO)",
-            f"   path = {LIBRARY}",
-            "   browseable = yes",
-            "   read only = no",
-            f"   valid users = {SERVICE_USER}",
-            f"   force user = {SERVICE_USER}",
-            f"   force group = {SERVICE_GROUP}",
-            "   create mask = 0644",
-            "   directory mask = 0755",
-            "   veto files = /.*/Thumbs.db/desktop.ini/",
-            "",
-        ]
+        for nm, path, comment in ((share, LIBRARY, "Libreria ISO di Pixio (copia qui le ISO)"),
+                                  (dshare, DRIVERS, "Driver di Pixio (una cartella per pacchetto: .inf .sys .cat)")):
+            lines += [
+                f"[{nm}]",
+                f"   comment = {comment}",
+                f"   path = {path}",
+                "   browseable = yes",
+                "   read only = no",
+                f"   valid users = {SERVICE_USER}",
+                f"   force user = {SERVICE_USER}",
+                f"   force group = {SERVICE_GROUP}",
+                "   create mask = 0644",
+                "   directory mask = 0755",
+                "   veto files = /.*/Thumbs.db/desktop.ini/",
+                "",
+            ]
     if win.get("smb_export_enabled", False):
         wuser = win.get("smb_user") or "pxe"
         if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", wuser):
             raise HelperError("nome utente share Windows non valido")
         lines += [
             "[pxe]",
-            "   comment = ISO montate per il setup di Windows (sola lettura)",
-            f"   path = {HTTP_ISO}",
+            "   comment = ISO montate e driver per il setup di Windows (sola lettura): iso\\<slug>, drivers\\<cartella>",
+            f"   path = {HTTP_ROOT}",
             "   browseable = no",
             "   read only = yes",
             "   guest ok = no",
@@ -676,7 +699,7 @@ def cmd_rebuild_ipxe(a):
 
 def cmd_chown_library(a):
     uid, gid = uid_gid()
-    for d in (LIBRARY, CACHE):
+    for d in (LIBRARY, CACHE, DRIVERS):
         os.makedirs(d, exist_ok=True)
         os.chown(d, uid, gid)
         os.chmod(d, 0o2775)

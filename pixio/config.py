@@ -13,6 +13,7 @@ SOURCES_DIR = os.path.join(ETC_DIR, "sources")            # <id>.json + <id>.cre
 VAR_DIR = "/var/lib/pixio"
 CATALOG_FILE = os.path.join(VAR_DIR, "catalog.json")      # catalogo ISO (tutte le sorgenti)
 CLIENTS_FILE = os.path.join(VAR_DIR, "clients.json")      # client PXE visti
+DRIVERS_FILE = os.path.join(VAR_DIR, "drivers.json")      # flag per cartella driver (winpe_inject, setup_load, note)
 JOBS_DIR = os.path.join(VAR_DIR, "jobs")                  # stato job in background (copie, upload, scansioni)
 UPLOAD_TMP_DIR = os.path.join(VAR_DIR, "uploads")         # chunk degli upload web in corso
 LOG_DIR = "/var/log/pixio"
@@ -27,6 +28,7 @@ HTTP_ISO_DIR = os.path.join(HTTP_DIR, "iso")              # /pxe/iso/<slug>/  (l
 HTTP_ISOFILE_DIR = os.path.join(HTTP_DIR, "isofile")      # /pxe/isofile/<slug>.iso (symlink al file)
 HTTP_BOOT_DIR = os.path.join(HTTP_DIR, "boot")            # /pxe/boot/ wimboot, memdisk, memtest
 HTTP_INJECT_DIR = os.path.join(HTTP_DIR, "inject")        # /pxe/inject/<slug>/ file iniettati (winpeshl.ini, ...)
+DRIVERS_DIR = os.path.join(HTTP_DIR, "drivers")             # libreria driver (share \\ip\\drivers + upload web), servita come /pxe/drivers/
 DETECT_DIR = os.path.join(SRV_DIR, "detect")                # mount temporanei per il rilevamento
 
 CODE_DIR = "/opt/pixio"
@@ -70,6 +72,7 @@ DEFAULT_CONFIG = {
     "library": {
         "samba_share_enabled": True,   # share \\pixio\iso in scrittura
         "samba_share_name": "iso",
+        "drivers_share_name": "drivers",
         "web_upload_enabled": True,
     },
     "windows": {

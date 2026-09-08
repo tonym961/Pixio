@@ -62,3 +62,16 @@ def boot_entry(slug):
             log.debug("record_boot: %s", e)
     log.info("boot %s da %s (%s) %s", slug, request.remote_addr, platform, "; ".join(warnings))
     return _text(text)
+
+
+@bp.route("/boot/inject/<slug>/<name>")
+def boot_inject(slug, name):
+    """File iniettati nel WinPE via wimboot, generati al volo (sempre aggiornati a impostazioni e driver)."""
+    if not C.SLUG_RE.match(slug):
+        return _text("slug non valido"), 400
+    from ..services import winpe
+    if name == "winpeshl.ini":
+        return _text(winpe.winpeshl_ini())
+    if name == "install.cmd":
+        return _text(winpe.install_cmd(slug))
+    return _text("file non previsto"), 404

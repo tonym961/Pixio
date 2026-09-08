@@ -17,7 +17,11 @@ def _plat(p):
 
 
 def _flags(cfg):
-    return {"smb_export": bool(cfg["windows"].get("smb_export_enabled"))}
+    from . import winpe
+    try:
+        return winpe.flags(cfg)
+    except Exception:  # noqa
+        return {"smb_export": bool(cfg["windows"].get("smb_export_enabled")), "inject": bool(cfg["windows"].get("smb_export_enabled")), "driver_files": []}
 
 
 def _safe(s):
