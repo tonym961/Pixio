@@ -108,7 +108,7 @@
         </div>
 
         <div class="card"><h3>Windows</h3>
-          ${toggleRow('Installazione Windows via rete (share SMB <span class="mono">pxe</span>)', 'Il setup di Windows (WinPE) deve leggere <span class="mono">install.wim</span> da un percorso SMB: con questa opzione Pixio ri-esporta in sola lettura e senza password le ISO Windows montate. Disattivato: WinPE parte ma il setup non trova i file.', 'win.smb_export_enabled', win.smb_export_enabled === true)}
+          ${toggleRow('Installazione Windows via rete (share SMB <span class="mono">pxe</span>)', 'Il setup di Windows (WinPE) deve leggere <span class="mono">install.wim</span> da un percorso SMB: con questa opzione Pixio ri-esporta in sola lettura le ISO Windows montate (utente Samba dedicato 'pxe', password generata automaticamente). Disattivato: WinPE parte ma il setup non trova i file.', 'win.smb_export_enabled', win.smb_export_enabled === true)}
         </div>
 
         <div class="card"><h3>Sistema</h3>

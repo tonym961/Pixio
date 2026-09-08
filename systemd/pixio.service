@@ -9,7 +9,7 @@ User=pixio
 Group=pixio
 WorkingDirectory=/opt/pixio
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8080 --workers 1 --threads 8 --timeout 600 --access-logfile - --error-logfile - wsgi:app
+ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8080 --workers 1 --threads 8 --timeout 600 --error-logfile - wsgi:app
 Restart=always
 RestartSec=3
 UMask=0022

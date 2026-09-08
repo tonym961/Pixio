@@ -185,7 +185,8 @@ td.actions-cell{white-space:nowrap;text-align:right}
 .result-list div{display:flex;gap:8px;align-items:center}
 
 /* ---------- editor menu ---------- */
-.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.menu-grid{display:grid;grid-template-columns:minmax(320px,2fr) minmax(0,3fr);gap:16px}
+.menu-grid>*{min-width:0}
 .mlist{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .mlist li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface-2)}
 .mlist li.group{background:transparent;border-style:dashed;color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
