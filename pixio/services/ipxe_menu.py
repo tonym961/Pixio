@@ -65,6 +65,9 @@ def menu_script(platform, mac=None, auto_boot=None, cfg=None, client_ip=""):
     plat_label = "UEFI" if platform == "efi" else "BIOS"
     ents = [e for e in entries(cfg) if platform in e["platforms"]]
     lines = ["#!ipxe", f"# Pixio - menu generato per {platform} {mac or ''}".rstrip(), f"set pixio_url http://{ip}", ""]
+    from . import theme
+    lines += theme.ipxe_header(cfg, ip)
+    lines.append("")
     if auto_boot:
         target = f"http://{ip}/boot/{auto_boot}.ipxe?platform={platform}&mac={mac or ''}"
         lines += [f"echo Pixio: boot automatico configurato per questo PC ({auto_boot}). Premi ESC entro 5 secondi per il menu.",
@@ -72,35 +75,41 @@ def menu_script(platform, mac=None, auto_boot=None, cfg=None, client_ip=""):
                   f"chain --autofree {target} || echo Boot automatico fallito, apro il menu.", ""]
     lines.append(":menu")
     title = _safe(m.get("title") or "PIXIO")
-    lines.append(f"menu {title} - {plat_label} - {client_ip or '${ip}'}")
+    lines.append(f"menu {title}   |   {plat_label}   |   {client_ip or '${ip}'}")
     groups = list(m.get("groups") or [])
     for e in ents:
         if e["group"] and e["group"] not in groups:
             groups.append(e["group"])
     ungrouped = [e for e in ents if not e["group"]]
+    IND = "   "                      # rientro delle voci sotto il titolo del gruppo
+
+    def group(title):
+        lines.append("item --gap")   # riga vuota fra i gruppi
+        lines.append(f"item --gap {_safe(title).upper()}")
     for g in groups:
         ge = [e for e in ents if e["group"] == g]
         if not ge:
             continue
-        lines.append(f"item --gap {_safe(g)}")
+        group(g)
         for e in ge:
-            lines.append(f"item {e['slug']} {_safe(e['name'])}")
+            lines.append(f"item {e['slug']} {IND}{_safe(e['name'])}")
     if ungrouped:
-        lines.append("item --gap Altro")
+        group("Altro")
         for e in ungrouped:
-            lines.append(f"item {e['slug']} {_safe(e['name'])}")
+            lines.append(f"item {e['slug']} {IND}{_safe(e['name'])}")
     if not ents:
+        lines.append("item --gap")
         lines.append("item --gap Nessuna ISO abilitata per questa piattaforma: aprire la GUI di Pixio")
-    lines.append("item --gap Sistema")
+    group("Sistema")
     if m.get("show_memtest", True):
-        lines.append("item memtest Memtest86+ (test memoria)")
+        lines.append(f"item memtest {IND}Memtest86+ (test memoria)")
     if m.get("show_local", True):
-        lines.append("item local Avvia dal disco locale")
+        lines.append(f"item local {IND}Avvia dal disco locale")
     if m.get("show_shell", True):
-        lines.append("item shell Shell iPXE")
+        lines.append(f"item shell {IND}Shell iPXE")
     if m.get("show_reboot", True):
-        lines.append("item reboot Riavvia")
-    lines.append("item exit Esci da iPXE (prossimo dispositivo di boot)")
+        lines.append(f"item reboot {IND}Riavvia")
+    lines.append(f"item exit {IND}Esci da iPXE (prossimo dispositivo di boot)")
     default = m.get("default") or "local"
     valid = {e["slug"] for e in ents} | {"local", "shell", "reboot", "exit", "memtest"}
     if default not in valid:

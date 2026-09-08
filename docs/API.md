@@ -80,7 +80,7 @@ Oggetto ISO:
 - `POST /api/settings/samba-password {password}` → password dell'utente `pixio` per la share `\\<ip>\iso`
 
 ## SPA (static/)
-- `static/index.html`, `static/app.js`, `static/style.css` (+ eventuali moduli). Nessuna CDN. Router ad hash: `#/dashboard`, `#/iso`, `#/menu`, `#/impostazioni`, `#/client`, `#/log`.
+- `static/index.html`, `static/app.js`, `static/style.css` (+ eventuali moduli). Nessuna CDN. Router ad hash: `#/dashboard`, `#/iso`, `#/menu`, `#/driver`, `#/impostazioni`, `#/client`, `#/log`.
 - Schermata di login (se `password_set` false: "Imposta la password dell'amministratore"). Wizard primo avvio quando non ci sono sorgenti né ISO locali.
 - Lingua italiana. Tema chiaro/scuro automatico. Design come nell'anteprima `docs/preview.html`.
 

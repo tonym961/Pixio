@@ -12,7 +12,7 @@ say(){ echo -e "\e[1;36m[pixio]\e[0m $*"; }
 say "Pacchetti"
 apt-get update -qq
 apt-get install -y -qq dnsmasq nginx samba smbclient cifs-utils python3 python3-flask python3-werkzeug python3-jinja2 gunicorn \
-  python3-psutil wimtools syslinux-common memtest86+ ipxe curl git jq rsync sudo \
+  python3-psutil python3-pil fonts-dejavu-core wimtools syslinux-common memtest86+ ipxe curl git jq rsync sudo \
   build-essential liblzma-dev zlib1g-dev perl mtools >/dev/null
 
 say "Utente di servizio"

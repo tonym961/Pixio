@@ -36,5 +36,22 @@ def put_menu():
             m[k] = bool(s[k])
     if "groups" in s and isinstance(s["groups"], list):
         m["groups"] = [str(g).strip()[:60] for g in s["groups"] if str(g).strip()][:20]
+    if "theme" in s and isinstance(s["theme"], dict):
+        from ..services import theme as T
+        th = dict(m.get("theme") or {})
+        for k in ("bg", "accent", "fg", "muted"):
+            if k in s["theme"]:
+                if not T.HEX_RE.match(str(s["theme"][k] or "")):
+                    return jsonify({"error": f"Colore non valido per {k} (formato #RRGGBB)"}), 400
+                th[k] = T.hexcol(s["theme"][k], T.DEFAULT_THEME[k])
+        for k in ("logo_text", "subtitle"):
+            if k in s["theme"]:
+                th[k] = str(s["theme"][k]).strip()[:40]
+        m["theme"] = th
     S.save(cfg)
+    try:
+        from ..services import theme as T
+        T.render_background(cfg, cfg["network"]["server_ip"])
+    except Exception as e:  # noqa
+        return jsonify({"ok": True, "settings": m, "preview": ipxe_menu.preview(cfg), "warnings": [f"Sfondo non rigenerato: {e}"]})
     return jsonify({"ok": True, "settings": m, "preview": ipxe_menu.preview(cfg)})

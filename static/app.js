@@ -1,7 +1,7 @@
 /* Pixio – SPA di amministrazione.
    Nucleo: utilità, chiamate API (CSRF, 401), notifiche, finestre modali, pannello laterale,
    router ad hash, login, wizard di primo avvio e dashboard. Le altre pagine sono nei moduli
-   catalog.js, menu.js, settings.js, clients.js, logs.js e si registrano in Pixio.pages. */
+   catalog.js, menu.js, drivers.js, settings.js, clients.js, logs.js e si registrano in Pixio.pages. */
 'use strict';
 (function () {
   const P = window.Pixio = window.Pixio || {};
@@ -409,7 +409,7 @@
   }
 
   // ------------------------------------------------------------------ router
-  const ROUTES = ['dashboard', 'iso', 'menu', 'impostazioni', 'client', 'log', 'benvenuto'];
+  const ROUTES = ['dashboard', 'iso', 'menu', 'driver', 'impostazioni', 'client', 'log', 'benvenuto'];
   const mainEl = document.getElementById('main');
 
   function stopCurrentPage() {

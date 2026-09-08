@@ -68,6 +68,7 @@ DEFAULT_CONFIG = {
         "show_reboot": True,
         "show_memtest": True,
         "groups": ["Sistemi operativi", "Strumenti"],
+        "theme": {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99", "logo_text": "PIXIO", "subtitle": "Avvio da rete"},
     },
     "library": {
         "samba_share_enabled": True,   # share \\pixio\iso in scrittura
