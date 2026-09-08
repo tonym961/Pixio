@@ -1,0 +1,684 @@
+#!/usr/bin/python3
+"""pixio-helper: le SOLE operazioni privilegiate di Pixio, eseguite come root via sudo dall'utente 'pixio'.
+
+Principi:
+- Ogni argomento è validato (regex/realpath) prima di toccare il sistema.
+- Le config di dnsmasq/nginx/samba vengono renderizzate QUI dai valori in /etc/pixio/config.json
+  (mai da testo libero passato dalla GUI) e validate con i tool ufficiali prima di riavviare.
+- Output sempre JSON su stdout; exit code != 0 in caso di errore con {"error": "..."}.
+"""
+import argparse
+import ipaddress
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+ETC = "/etc/pixio"
+CONFIG_FILE = f"{ETC}/config.json"
+SOURCES_DIR = f"{ETC}/sources"
+SRV = "/srv/pixio"
+SOURCES_MOUNT = f"{SRV}/sources"
+LIBRARY = f"{SRV}/library"
+CACHE = f"{SRV}/cache"
+HTTP_ISO = f"{SRV}/http/iso"
+HTTP_ISOFILE = f"{SRV}/http/isofile"
+DETECT = f"{SRV}/detect"
+TFTP = f"{SRV}/tftp"
+CODE = "/opt/pixio"
+SERVICE_USER = "pixio"
+SERVICE_GROUP = "pixio"
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+UNC_RE = re.compile(r"^//[A-Za-z0-9._-]+(/[^/\\\x00-\x1f]+)+$")
+IFACE_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,15}$")
+SMBNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+SERVICES = {"dnsmasq": "dnsmasq.service", "nginx": "nginx.service", "smbd": "smbd.service",
+            "nmbd": "nmbd.service", "pixio": "pixio.service", "pixio-mounts": "pixio-mounts.service"}
+ISO_ROOTS = (SOURCES_MOUNT, LIBRARY, CACHE)
+
+
+class HelperError(Exception):
+    pass
+
+
+def out(obj):
+    print(json.dumps(obj, ensure_ascii=False))
+
+
+def run(cmd, check=True, input_text=None, timeout=120):
+    p = subprocess.run(cmd, capture_output=True, text=True, input=input_text, timeout=timeout)
+    if check and p.returncode != 0:
+        raise HelperError(f"{' '.join(cmd)}: {p.stderr.strip() or p.stdout.strip() or 'exit ' + str(p.returncode)}")
+    return p
+
+
+def uid_gid():
+    import pwd, grp
+    return pwd.getpwnam(SERVICE_USER).pw_uid, grp.getgrnam(SERVICE_GROUP).gr_gid
+
+
+def load_config():
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        raise HelperError(f"config.json non valido: {e}")
+
+
+def is_mounted(path):
+    path = os.path.realpath(path)
+    with open("/proc/self/mounts") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) > 1 and unescape_mnt(parts[1]) == path:
+                return True
+    return False
+
+
+def unescape_mnt(s):
+    return s.replace("\\040", " ").replace("\\011", "\t").replace("\\012", "\n").replace("\\134", "\\")
+
+
+def check_slug(s):
+    if not SLUG_RE.match(s or ""):
+        raise HelperError(f"slug non valido: {s!r}")
+    return s
+
+
+def check_source_id(s):
+    if not SOURCE_ID_RE.match(s or ""):
+        raise HelperError(f"id sorgente non valido: {s!r}")
+    return s
+
+
+# ---------------------------------------------------------------- sorgenti CIFS
+def cmd_write_source(a):
+    """Legge JSON da stdin: {unc, domain, username, password, options} e salva definizione + credenziali."""
+    sid = check_source_id(a.source_id)
+    data = json.load(sys.stdin)
+    unc = str(data.get("unc", "")).replace("\\", "/").rstrip("/")
+    if not UNC_RE.match(unc):
+        raise HelperError("percorso UNC non valido (atteso \\\\server\\share[\\cartella])")
+    domain = str(data.get("domain", "") or "")
+    username = str(data.get("username", "") or "")
+    password = str(data.get("password", "") or "")
+    for v in (domain, username):
+        if any(c in v for c in "\n\r\x00"):
+            raise HelperError("caratteri non ammessi nelle credenziali")
+    if "\n" in password or "\r" in password or "\x00" in password:
+        raise HelperError("caratteri non ammessi nella password")
+    vers = str(data.get("vers", "") or "")
+    if vers and not re.match(r"^(1\.0|2\.0|2\.1|3\.0|3\.02|3\.1\.1|3)$", vers):
+        raise HelperError("versione SMB non valida")
+    os.makedirs(SOURCES_DIR, mode=0o700, exist_ok=True)
+    cred = f"{SOURCES_DIR}/{sid}.cred"
+    with open(os.open(cred, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        if username:
+            f.write(f"username={username}\n")
+        f.write(f"password={password}\n")
+        if domain:
+            f.write(f"domain={domain}\n")
+    os.chmod(cred, 0o600)
+    defn = {"id": sid, "unc": unc, "domain": domain, "username": username, "vers": vers, "guest": not username}
+    with open(os.open(f"{SOURCES_DIR}/{sid}.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+        json.dump(defn, f)
+    out({"ok": True, "source": defn})
+
+
+def source_def(sid):
+    try:
+        with open(f"{SOURCES_DIR}/{sid}.json") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise HelperError(f"sorgente {sid} non definita")
+
+
+def cmd_mount_cifs(a):
+    sid = check_source_id(a.source_id)
+    d = source_def(sid)
+    mp = f"{SOURCES_MOUNT}/{sid}"
+    os.makedirs(mp, exist_ok=True)
+    if is_mounted(mp):
+        out({"ok": True, "mounted": True, "already": True, "mountpoint": mp})
+        return
+    uid, gid = uid_gid()
+    opts = [f"credentials={SOURCES_DIR}/{sid}.cred", "ro", f"uid={uid}", f"gid={gid}",
+            "file_mode=0444", "dir_mode=0555", "iocharset=utf8", "noperm", "soft",
+            "echo_interval=30", "actimeo=30", "cache=strict", "_netdev", "nofail"]
+    if d.get("guest"):
+        opts.append("guest")
+    if d.get("vers"):
+        opts.append(f"vers={d['vers']}")
+    p = run(["mount", "-t", "cifs", d["unc"], mp, "-o", ",".join(opts)], check=False, timeout=60)
+    if p.returncode != 0:
+        raise HelperError(f"mount fallito: {p.stderr.strip() or p.stdout.strip()}")
+    out({"ok": True, "mounted": True, "mountpoint": mp})
+
+
+def cmd_umount_cifs(a):
+    sid = check_source_id(a.source_id)
+    mp = f"{SOURCES_MOUNT}/{sid}"
+    if is_mounted(mp):
+        # prima smonta le ISO in loop che dipendono da questa sorgente
+        for slug in loop_mounts_under(mp):
+            umount_iso(slug)
+        p = run(["umount", mp], check=False, timeout=30)
+        if p.returncode != 0:
+            run(["umount", "-l", mp], check=False, timeout=30)
+    out({"ok": True, "mounted": is_mounted(mp)})
+
+
+def cmd_remove_source(a):
+    sid = check_source_id(a.source_id)
+    cmd_umount_cifs(a)
+    for ext in ("json", "cred"):
+        try:
+            os.unlink(f"{SOURCES_DIR}/{sid}.{ext}")
+        except FileNotFoundError:
+            pass
+    try:
+        os.rmdir(f"{SOURCES_MOUNT}/{sid}")
+    except OSError:
+        pass
+    out({"ok": True})
+
+
+def cmd_test_cifs(a):
+    """Verifica connessione con smbclient (senza montare). Lista la cartella."""
+    sid = check_source_id(a.source_id)
+    d = source_def(sid)
+    parts = d["unc"].lstrip("/").split("/")
+    server, share, sub = parts[0], parts[1], "/".join(parts[2:])
+    cmd = ["smbclient", f"//{server}/{share}", "-A", f"{SOURCES_DIR}/{sid}.cred", "-c", f"ls \"{sub}\\*\"" if sub else "ls"]
+    if d.get("guest"):
+        cmd = ["smbclient", f"//{server}/{share}", "-N", "-c", f"ls \"{sub}\\*\"" if sub else "ls"]
+    p = run(cmd, check=False, timeout=30)
+    ok = p.returncode == 0
+    lines = [l for l in (p.stdout + p.stderr).splitlines() if l.strip()]
+    out({"ok": ok, "output": lines[-25:]})
+
+
+def cmd_mount_all(a):
+    res = {}
+    if os.path.isdir(SOURCES_DIR):
+        for fn in sorted(os.listdir(SOURCES_DIR)):
+            if fn.endswith(".json"):
+                sid = fn[:-5]
+                try:
+                    class A: source_id = sid
+                    _capture(lambda: cmd_mount_cifs(A))
+                    res[sid] = "ok"
+                except HelperError as e:
+                    res[sid] = str(e)
+    out({"ok": True, "sources": res})
+
+
+def _capture(fn):
+    """Esegue fn scartando il suo output JSON (usato dai comandi aggregati)."""
+    old = sys.stdout
+    sys.stdout = open(os.devnull, "w")
+    try:
+        fn()
+    finally:
+        sys.stdout.close()
+        sys.stdout = old
+
+
+# ---------------------------------------------------------------- ISO loop mount
+def resolve_iso_path(path):
+    rp = os.path.realpath(path)
+    if not any(rp == r or rp.startswith(r + "/") for r in ISO_ROOTS):
+        raise HelperError("percorso ISO fuori dalle cartelle consentite")
+    if not os.path.isfile(rp):
+        raise HelperError("file ISO non trovato")
+    return rp
+
+
+def cmd_mount_detect(a):
+    """Mount temporaneo (sola lettura) per il rilevamento del tipo, fuori dalla radice HTTP."""
+    slug = check_slug(a.slug)
+    rp = resolve_iso_path(a.path)
+    mp = f"{DETECT}/{slug}"
+    os.makedirs(mp, exist_ok=True)
+    if is_mounted(mp):
+        run(["umount", "-l", mp], check=False, timeout=30)
+    p = run(["mount", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp], check=False, timeout=60)
+    if p.returncode != 0:
+        p = run(["mount", "-o", "loop,ro", rp, mp], check=False, timeout=60)
+        if p.returncode != 0:
+            raise HelperError(f"mount ISO fallito: {p.stderr.strip()}")
+    out({"ok": True, "mountpoint": mp})
+
+
+def cmd_umount_detect(a):
+    slug = check_slug(a.slug)
+    mp = f"{DETECT}/{slug}"
+    if is_mounted(mp):
+        p = run(["umount", mp], check=False, timeout=30)
+        if p.returncode != 0:
+            run(["umount", "-l", mp], check=False, timeout=30)
+    try:
+        os.rmdir(mp)
+    except OSError:
+        pass
+    out({"ok": True})
+
+
+def cmd_mount_iso(a):
+    slug = check_slug(a.slug)
+    rp = resolve_iso_path(a.path)
+    mp = f"{HTTP_ISO}/{slug}"
+    os.makedirs(mp, exist_ok=True)
+    if is_mounted(mp):
+        umount_iso(slug)
+    # iso9660/udf: mode/dmode rendono tutto leggibile da www-data
+    p = run(["mount", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp], check=False, timeout=60)
+    if p.returncode != 0:
+        p = run(["mount", "-o", "loop,ro", rp, mp], check=False, timeout=60)
+        if p.returncode != 0:
+            raise HelperError(f"mount ISO fallito: {p.stderr.strip()}")
+    os.makedirs(HTTP_ISOFILE, exist_ok=True)
+    link = f"{HTTP_ISOFILE}/{slug}.iso"
+    try:
+        os.unlink(link)
+    except FileNotFoundError:
+        pass
+    os.symlink(rp, link)
+    out({"ok": True, "mountpoint": mp, "isofile": link})
+
+
+def umount_iso(slug):
+    mp = f"{HTTP_ISO}/{slug}"
+    if is_mounted(mp):
+        p = run(["umount", mp], check=False, timeout=30)
+        if p.returncode != 0:
+            run(["umount", "-l", mp], check=False, timeout=30)
+    try:
+        os.unlink(f"{HTTP_ISOFILE}/{slug}.iso")
+    except FileNotFoundError:
+        pass
+    try:
+        os.rmdir(mp)
+    except OSError:
+        pass
+
+
+def cmd_umount_iso(a):
+    slug = check_slug(a.slug)
+    umount_iso(slug)
+    out({"ok": True, "mounted": is_mounted(f"{HTTP_ISO}/{slug}")})
+
+
+def loop_mounts_under(prefix):
+    """Slug delle ISO montate in loop il cui file sta sotto prefix."""
+    res = []
+    if not os.path.isdir(HTTP_ISOFILE):
+        return res
+    for fn in os.listdir(HTTP_ISOFILE):
+        if fn.endswith(".iso"):
+            slug = fn[:-4]
+            try:
+                target = os.readlink(f"{HTTP_ISOFILE}/{fn}")
+            except OSError:
+                continue
+            if target.startswith(prefix + "/") and is_mounted(f"{HTTP_ISO}/{slug}"):
+                res.append(slug)
+    return res
+
+
+def cmd_list_mounts(a):
+    res = {"iso": {}, "sources": {}}
+    if os.path.isdir(HTTP_ISO):
+        for slug in os.listdir(HTTP_ISO):
+            mp = f"{HTTP_ISO}/{slug}"
+            if is_mounted(mp):
+                try:
+                    target = os.readlink(f"{HTTP_ISOFILE}/{slug}.iso")
+                except OSError:
+                    target = None
+                res["iso"][slug] = {"mountpoint": mp, "file": target}
+    if os.path.isdir(SOURCES_MOUNT):
+        for sid in os.listdir(SOURCES_MOUNT):
+            res["sources"][sid] = is_mounted(f"{SOURCES_MOUNT}/{sid}")
+    out(res)
+
+
+# ---------------------------------------------------------------- config di sistema
+def _ip(v, name):
+    try:
+        return str(ipaddress.IPv4Address(v))
+    except Exception:
+        raise HelperError(f"{name}: indirizzo IPv4 non valido: {v!r}")
+
+
+def net_settings(cfg):
+    n = cfg.get("network", {})
+    iface = n.get("interface", "")
+    if not IFACE_RE.match(iface) or not os.path.isdir(f"/sys/class/net/{iface}"):
+        raise HelperError(f"interfaccia non valida: {iface!r}")
+    ip = _ip(n.get("server_ip", ""), "server_ip")
+    mode = n.get("dhcp_mode", "proxy")
+    if mode not in ("proxy", "full"):
+        raise HelperError("dhcp_mode deve essere proxy o full")
+    full = {}
+    if mode == "full":
+        full = {
+            "start": _ip(n.get("dhcp_range_start"), "dhcp_range_start"),
+            "end": _ip(n.get("dhcp_range_end"), "dhcp_range_end"),
+            "netmask": _ip(n.get("dhcp_netmask") or "255.255.255.0", "dhcp_netmask"),
+            "router": _ip(n.get("dhcp_router"), "dhcp_router") if n.get("dhcp_router") else "",
+            "dns": _ip(n.get("dhcp_dns"), "dhcp_dns") if n.get("dhcp_dns") else "",
+            "lease": n.get("dhcp_lease", "12h"),
+        }
+        if not re.match(r"^\d{1,4}[mhd]?$", full["lease"]):
+            raise HelperError("lease non valido (es. 12h)")
+    return iface, ip, mode, full
+
+
+def render_dnsmasq(cfg):
+    iface, ip, mode, full = net_settings(cfg)
+    lines = [
+        "# Generato da Pixio (pixio-helper apply dnsmasq). Non modificare a mano.",
+        "port=0",                      # nessun DNS: restano solo DHCP/proxyDHCP e TFTP
+        f"interface={iface}",
+        "bind-dynamic",
+        "log-dhcp",
+        "log-facility=/var/log/pixio/dnsmasq.log",
+        "enable-tftp",
+        f"tftp-root={TFTP}",
+        "tftp-no-fail",
+        "",
+        "# Architettura client (option 93, RFC 4578)",
+        "dhcp-match=set:bios,option:client-arch,0",
+        "dhcp-match=set:efi32,option:client-arch,6",
+        "dhcp-match=set:efi64,option:client-arch,7",
+        "dhcp-match=set:efi64,option:client-arch,9",
+        "dhcp-match=set:efiarm64,option:client-arch,11",
+        "# Client gia' in iPXE: option 175 e user-class",
+        "dhcp-match=set:ipxe,175",
+        "dhcp-userclass=set:ipxe,iPXE",
+        "",
+    ]
+    if mode == "proxy":
+        lines += [
+            "# proxyDHCP: nessun lease, risponde solo ai client PXE; il DHCP esistente resta com'e'",
+            f"dhcp-range={ip},proxy",
+            "# Firmware PXE (non iPXE): UN solo pxe-service per architettura -> boot diretto (UEFI via porta 4011)",
+            "pxe-service=tag:!ipxe,x86PC,\"Pixio (BIOS)\",undionly.kpxe",
+            "pxe-service=tag:!ipxe,IA32_EFI,\"Pixio (UEFI ia32)\",ipxe32.efi",
+            "pxe-service=tag:!ipxe,X86-64_EFI,\"Pixio (UEFI x64)\",ipxe.efi",
+            "pxe-service=tag:!ipxe,BC_EFI,\"Pixio (UEFI x64)\",ipxe.efi",
+            f"dhcp-boot=tag:bios,tag:!ipxe,undionly.kpxe,,{ip}",
+            "# iPXE: secondo stadio via HTTP (il server deve essere esplicito: iPXE ignora offerte proxy con siaddr=0)",
+            f"dhcp-boot=tag:ipxe,http://{ip}/boot.ipxe,,{ip}",
+        ]
+    else:
+        lines += [
+            "# DHCP completo: Pixio assegna anche gli indirizzi",
+            f"dhcp-range={full['start']},{full['end']},{full['netmask']},{full['lease']}",
+            f"dhcp-option=option:router,{full['router']}" if full["router"] else "# router: non impostato",
+            f"dhcp-option=option:dns-server,{full['dns']}" if full["dns"] else "# dns: non impostato",
+            "dhcp-authoritative",
+            f"dhcp-boot=tag:ipxe,http://{ip}/boot.ipxe,,{ip}",
+            f"dhcp-boot=tag:!ipxe,tag:efi64,ipxe.efi,,{ip}",
+            f"dhcp-boot=tag:!ipxe,tag:efi32,ipxe32.efi,,{ip}",
+            f"dhcp-boot=tag:!ipxe,tag:bios,undionly.kpxe,,{ip}",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def render_nginx(cfg):
+    tpl = open(f"{CODE}/etc/nginx-pixio.conf.tpl").read()
+    return tpl
+
+
+def render_smb(cfg):
+    lib = cfg.get("library", {})
+    win = cfg.get("windows", {})
+    share = lib.get("samba_share_name", "iso") or "iso"
+    if not SMBNAME_RE.match(share):
+        raise HelperError("nome share non valido")
+    iface, ip, _, _ = net_settings(cfg)
+    lines = [
+        "# Generato da Pixio (pixio-helper apply samba). Non modificare a mano.",
+        "[global]",
+        "   server string = Pixio PXE",
+        "   workgroup = WORKGROUP",
+        "   server role = standalone server",
+        "   server min protocol = SMB2",
+        "   map to guest = Bad User",
+        "   log file = /var/log/samba/log.%m",
+        "   max log size = 1000",
+        "   disable netbios = yes",
+        "   smb ports = 445",
+        f"   interfaces = lo {iface}",
+        "   bind interfaces only = yes",
+        "   load printers = no",
+        "   printing = bsd",
+        "   printcap name = /dev/null",
+        "   disable spoolss = yes",
+        "   unix charset = UTF-8",
+        "",
+    ]
+    if lib.get("samba_share_enabled", True):
+        lines += [
+            f"[{share}]",
+            "   comment = Libreria ISO di Pixio (copia qui le ISO)",
+            f"   path = {LIBRARY}",
+            "   browseable = yes",
+            "   read only = no",
+            f"   valid users = {SERVICE_USER}",
+            f"   force user = {SERVICE_USER}",
+            f"   force group = {SERVICE_GROUP}",
+            "   create mask = 0644",
+            "   directory mask = 0755",
+            "   veto files = /.*/Thumbs.db/desktop.ini/",
+            "",
+        ]
+    if win.get("smb_export_enabled", False):
+        lines += [
+            "[pxe]",
+            "   comment = ISO montate per il setup di Windows (sola lettura)",
+            f"   path = {HTTP_ISO}",
+            "   browseable = no",
+            "   read only = yes",
+            "   guest ok = yes",
+            "   force user = nobody",
+            "",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def write_file(path, content, mode=0o644):
+    tmp = path + ".pixio-new"
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode), "w") as f:
+        f.write(content)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def cmd_apply(a):
+    cfg = load_config()
+    what = a.what
+    if what == "dnsmasq":
+        content = render_dnsmasq(cfg)
+        target = "/etc/dnsmasq.d/pixio.conf"
+        old = open(target).read() if os.path.exists(target) else None
+        write_file(target, content)
+        # Disabilita la config di default di Debian che ascolta DNS su tutte le interfacce
+        p = run(["dnsmasq", "--test", "-C", "/etc/dnsmasq.conf"], check=False)
+        if p.returncode != 0:
+            if old is not None:
+                write_file(target, old)
+            raise HelperError(f"config dnsmasq non valida: {p.stderr.strip()}")
+        os.makedirs("/var/log/pixio", exist_ok=True)
+        logf = "/var/log/pixio/dnsmasq.log"
+        if not os.path.exists(logf):
+            open(logf, "a").close()
+        try:
+            import pwd
+            os.chown(logf, pwd.getpwnam("dnsmasq").pw_uid, uid_gid()[1])
+        except KeyError:
+            pass
+        os.chmod(logf, 0o644)
+        run(["systemctl", "restart", "dnsmasq.service"])
+        out({"ok": True, "file": target, "restarted": "dnsmasq"})
+    elif what == "nginx":
+        content = render_nginx(cfg)
+        target = "/etc/nginx/sites-available/pixio"
+        write_file(target, content)
+        link = "/etc/nginx/sites-enabled/pixio"
+        if not os.path.islink(link):
+            os.symlink(target, link)
+        default = "/etc/nginx/sites-enabled/default"
+        if os.path.islink(default):
+            os.unlink(default)
+        p = run(["nginx", "-t"], check=False)
+        if p.returncode != 0:
+            raise HelperError(f"config nginx non valida: {p.stderr.strip()}")
+        run(["systemctl", "reload-or-restart", "nginx.service"])
+        out({"ok": True, "file": target, "restarted": "nginx"})
+    elif what == "samba":
+        content = render_smb(cfg)
+        target = "/etc/samba/smb.conf"
+        write_file(target, content)
+        p = run(["testparm", "-s", target], check=False)
+        if p.returncode != 0:
+            raise HelperError(f"smb.conf non valido: {p.stderr.strip()}")
+        enabled = cfg.get("library", {}).get("samba_share_enabled", True) or cfg.get("windows", {}).get("smb_export_enabled", False)
+        if enabled:
+            run(["systemctl", "enable", "--now", "smbd.service"])
+            run(["systemctl", "reload-or-restart", "smbd.service"])
+        else:
+            run(["systemctl", "disable", "--now", "smbd.service"], check=False)
+        run(["systemctl", "disable", "--now", "nmbd.service"], check=False)
+        out({"ok": True, "file": target, "smbd_enabled": enabled})
+    elif what == "all":
+        res = {}
+        for w in ("dnsmasq", "nginx", "samba"):
+            class A: what = w
+            try:
+                _capture(lambda: cmd_apply(A))
+                res[w] = "ok"
+            except HelperError as e:
+                res[w] = str(e)
+        out({"ok": all(v == "ok" for v in res.values()), "results": res})
+    else:
+        raise HelperError("cosa applicare? dnsmasq|nginx|samba|all")
+
+
+def cmd_render(a):
+    cfg = load_config()
+    if a.what == "dnsmasq":
+        out({"content": render_dnsmasq(cfg)})
+    elif a.what == "samba":
+        out({"content": render_smb(cfg)})
+    elif a.what == "nginx":
+        out({"content": render_nginx(cfg)})
+    else:
+        raise HelperError("dnsmasq|samba|nginx")
+
+
+def cmd_samba_password(a):
+    """Imposta la password Samba dell'utente pixio (letta da stdin, una riga)."""
+    pw = sys.stdin.readline().rstrip("\n")
+    if not pw or len(pw) < 4 or "\x00" in pw:
+        raise HelperError("password troppo corta")
+    run(["smbpasswd", "-a", "-s", SERVICE_USER], input_text=f"{pw}\n{pw}\n")
+    run(["smbpasswd", "-e", SERVICE_USER], check=False)
+    out({"ok": True})
+
+
+def cmd_service(a):
+    unit = SERVICES.get(a.name)
+    if not unit:
+        raise HelperError("servizio non gestito")
+    if a.action not in ("start", "stop", "restart", "reload", "status", "enable", "disable"):
+        raise HelperError("azione non valida")
+    if a.action == "status":
+        p = run(["systemctl", "show", unit, "--property=ActiveState,SubState,ExecMainStartTimestamp,NRestarts"], check=False)
+        props = dict(l.split("=", 1) for l in p.stdout.splitlines() if "=" in l)
+        out({"unit": unit, **props})
+        return
+    if a.action in ("enable", "disable"):
+        run(["systemctl", a.action, "--now", unit], check=False)
+    else:
+        run(["systemctl", a.action, unit])
+    out({"ok": True})
+
+
+def cmd_rebuild_ipxe(a):
+    ip = _ip(a.ip, "ip")
+    unit = "pixio-ipxe-build"
+    run(["systemctl", "reset-failed", f"{unit}.service"], check=False)
+    p = run(["systemd-run", "--unit", unit, "--collect", "--quiet", "-p", "Nice=10",
+             f"{CODE}/ipxe/build.sh", ip, TFTP], check=False)
+    if p.returncode != 0 and "already exists" in (p.stderr or ""):
+        raise HelperError("build già in corso")
+    if p.returncode != 0:
+        raise HelperError(p.stderr.strip())
+    out({"ok": True, "unit": unit})
+
+
+def cmd_chown_library(a):
+    uid, gid = uid_gid()
+    for d in (LIBRARY, CACHE):
+        os.makedirs(d, exist_ok=True)
+        os.chown(d, uid, gid)
+        os.chmod(d, 0o2775)
+    out({"ok": True})
+
+
+def cmd_reboot(a):
+    if a.action == "reboot":
+        run(["systemctl", "reboot"])
+    elif a.action == "poweroff":
+        run(["systemctl", "poweroff"])
+    else:
+        raise HelperError("reboot|poweroff")
+    out({"ok": True})
+
+
+def main():
+    if os.geteuid() != 0:
+        out({"error": "pixio-helper deve girare come root (via sudo)"})
+        sys.exit(2)
+    ap = argparse.ArgumentParser(prog="pixio-helper")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    p = sp.add_parser("write-source"); p.add_argument("source_id"); p.set_defaults(fn=cmd_write_source)
+    p = sp.add_parser("mount-cifs"); p.add_argument("source_id"); p.set_defaults(fn=cmd_mount_cifs)
+    p = sp.add_parser("umount-cifs"); p.add_argument("source_id"); p.set_defaults(fn=cmd_umount_cifs)
+    p = sp.add_parser("remove-source"); p.add_argument("source_id"); p.set_defaults(fn=cmd_remove_source)
+    p = sp.add_parser("test-cifs"); p.add_argument("source_id"); p.set_defaults(fn=cmd_test_cifs)
+    p = sp.add_parser("mount-all"); p.set_defaults(fn=cmd_mount_all)
+    p = sp.add_parser("mount-iso"); p.add_argument("slug"); p.add_argument("path"); p.set_defaults(fn=cmd_mount_iso)
+    p = sp.add_parser("umount-iso"); p.add_argument("slug"); p.set_defaults(fn=cmd_umount_iso)
+    p = sp.add_parser("mount-detect"); p.add_argument("slug"); p.add_argument("path"); p.set_defaults(fn=cmd_mount_detect)
+    p = sp.add_parser("umount-detect"); p.add_argument("slug"); p.set_defaults(fn=cmd_umount_detect)
+    p = sp.add_parser("list-mounts"); p.set_defaults(fn=cmd_list_mounts)
+    p = sp.add_parser("apply"); p.add_argument("what"); p.set_defaults(fn=cmd_apply)
+    p = sp.add_parser("render"); p.add_argument("what"); p.set_defaults(fn=cmd_render)
+    p = sp.add_parser("samba-password"); p.set_defaults(fn=cmd_samba_password)
+    p = sp.add_parser("service"); p.add_argument("name"); p.add_argument("action"); p.set_defaults(fn=cmd_service)
+    p = sp.add_parser("rebuild-ipxe"); p.add_argument("ip"); p.set_defaults(fn=cmd_rebuild_ipxe)
+    p = sp.add_parser("chown-library"); p.set_defaults(fn=cmd_chown_library)
+    p = sp.add_parser("power"); p.add_argument("action"); p.set_defaults(fn=cmd_reboot)
+    a = ap.parse_args()
+    try:
+        a.fn(a)
+    except HelperError as e:
+        out({"error": str(e)})
+        sys.exit(1)
+    except subprocess.TimeoutExpired as e:
+        out({"error": f"timeout: {e}"})
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

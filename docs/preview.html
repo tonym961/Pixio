@@ -1,0 +1,446 @@
+<title>Pixio</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EEF2F6; --surface:#FFFFFF; --surface-2:#F6F8FA; --ink:#141C26; --muted:#5C6B7A; --line:#D5DCE5; --line-strong:#B8C2CE;
+  --accent:#0B7285; --accent-ink:#FFFFFF; --accent-soft:#DDF3F6;
+  --ok:#1B8A4C; --ok-soft:#DFF3E7; --warn:#B7791F; --warn-soft:#FBEFD6; --bad:#C23A3A; --bad-soft:#F9E1E1;
+  --chrome:#E3E8EE; --shadow:0 12px 32px rgba(20,28,38,.10);
+  --screen-bg:#05080C; --screen-fg:#D7DEE6; --screen-dim:#6E7B8A; --screen-sel:#0E9AA7; --screen-title:#5FD3DE;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1319; --surface:#161C24; --surface-2:#1C242E; --ink:#E6ECF2; --muted:#93A1B0; --line:#2A3542; --line-strong:#3A475A;
+    --accent:#3FC1CF; --accent-ink:#06282C; --accent-soft:#12333A;
+    --ok:#4CC97A; --ok-soft:#13301F; --warn:#E0A64A; --warn-soft:#3A2D14; --bad:#F07373; --bad-soft:#3D1A1A;
+    --chrome:#0B0F14; --shadow:0 12px 32px rgba(0,0,0,.45);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1319; --surface:#161C24; --surface-2:#1C242E; --ink:#E6ECF2; --muted:#93A1B0; --line:#2A3542; --line-strong:#3A475A;
+  --accent:#3FC1CF; --accent-ink:#06282C; --accent-soft:#12333A;
+  --ok:#4CC97A; --ok-soft:#13301F; --warn:#E0A64A; --warn-soft:#3A2D14; --bad:#F07373; --bad-soft:#3D1A1A;
+  --chrome:#0B0F14; --shadow:0 12px 32px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.5}
+.mono{font-family:"IBM Plex Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace}
+.wrap{max-width:1180px;margin:0 auto;padding:40px 24px 80px}
+h1,h2,h3{margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:34px;font-weight:600}
+h2{font-size:22px;font-weight:600;margin-bottom:6px}
+h3{font-size:15px;font-weight:600}
+p{margin:0}
+.lede{color:var(--muted);max-width:66ch;margin-top:8px}
+.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);font-weight:600}
+section{margin-top:56px}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.sec-head p{color:var(--muted);max-width:70ch}
+
+/* URL cards */
+.urls{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:22px}
+.url{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:6px}
+.url .k{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.url .v{font-size:17px;font-weight:500}
+.url .d{color:var(--muted);font-size:13.5px}
+
+/* browser frame */
+.browser{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+.chrome{background:var(--chrome);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;padding:10px 14px}
+.dots{display:flex;gap:6px}.dots i{width:11px;height:11px;border-radius:50%;background:var(--line-strong);display:block}
+.omni{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:5px 12px;font-size:13px;color:var(--muted)}
+.omni b{color:var(--ink);font-weight:500}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:560px}
+.side{background:var(--surface-2);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 16px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:700;font-size:15px}
+.brand .name{font-weight:600;font-size:16px;letter-spacing:.02em}
+.brand .host{font-size:11.5px;color:var(--muted)}
+.nav{border:0;background:none;text-align:left;font:inherit;color:var(--ink);padding:9px 12px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.nav:hover{background:var(--surface)}
+.nav[aria-selected="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav .n{font-size:11.5px;color:var(--muted);font-weight:500}
+.nav:focus-visible,.tab:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.side .foot{margin-top:auto;padding:10px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
+.main{padding:22px 26px 28px;display:none;min-width:0}
+.main[aria-hidden="false"]{display:block}
+.ph{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.ph h2{font-size:20px;margin:0}
+.ph .sub{color:var(--muted);font-size:13.5px}
+.btn{font:inherit;font-size:13.5px;font-weight:500;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.small{padding:4px 9px;font-size:12.5px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* dashboard */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.tile{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:grid;gap:4px;border-left:4px solid var(--ok)}
+.tile.warn{border-left-color:var(--warn)}.tile.bad{border-left-color:var(--bad)}.tile.neutral{border-left-color:var(--line-strong)}
+.tile .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.tile .v{font-size:16px;font-weight:600}
+.tile .d{font-size:12.5px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-top:16px}
+.panel{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.panel .hd{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--surface-2)}
+.panel .hd h3{font-size:13.5px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);font-weight:600}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums}
+.tbl-wrap{overflow-x:auto}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;line-height:1.5;white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.warn{background:var(--warn-soft);color:var(--warn)}.pill.bad{background:var(--bad-soft);color:var(--bad)}.pill.neutral{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.pill.acc{background:var(--accent-soft);color:var(--accent)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;vertical-align:middle}
+.dot.off{background:var(--line-strong)}
+.log{font-size:12.5px;padding:10px 14px;display:grid;gap:4px;color:var(--muted)}
+.log b{color:var(--ink);font-weight:500}
+.log .t{color:var(--accent)}
+
+/* iso list */
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.search{font:inherit;font-size:13.5px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--surface);color:var(--ink);min-width:240px}
+.switch{width:34px;height:20px;border-radius:999px;background:var(--line-strong);position:relative;display:inline-block;vertical-align:middle}
+.switch.on{background:var(--accent)}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}
+.switch.on::after{left:17px}
+.iso-name{font-weight:500}
+.iso-file{font-size:12px;color:var(--muted)}
+.plat{display:inline-flex;gap:4px}
+.plat span{font-size:11px;font-weight:600;border:1px solid var(--line-strong);border-radius:4px;padding:0 5px;color:var(--muted)}
+.plat span.y{border-color:var(--accent);color:var(--accent)}
+
+/* menu editor */
+.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.mlist{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.mlist li{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface-2)}
+.mlist li.group{background:transparent;border-style:dashed;color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.handle{color:var(--line-strong);cursor:grab;font-size:16px;line-height:1}
+.mlist .lbl{flex:1;font-weight:500}
+.field{display:grid;gap:5px;margin-bottom:12px}
+.field label{font-size:12.5px;font-weight:600;color:var(--muted)}
+.field input,.field select{font:inherit;font-size:14px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface);color:var(--ink)}
+.field .hint{font-size:12px;color:var(--muted)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.code{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.55;white-space:pre;overflow-x:auto;color:var(--ink)}
+.code .c{color:var(--muted)}
+.settings{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{border:1px solid var(--line);border-radius:10px;padding:16px 18px;background:var(--surface)}
+.card h3{margin-bottom:12px}
+.toggle-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.toggle-row .tt{font-weight:500}.toggle-row .td{font-size:12.5px;color:var(--muted);max-width:44ch}
+
+/* tabs above browser */
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
+.tab{font:inherit;font-size:13.5px;font-weight:500;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:6px 14px;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+
+/* monitor */
+.monitor{background:#1A1D22;border-radius:16px;padding:18px;box-shadow:var(--shadow);border:1px solid #2B3038}
+.screen{background:var(--screen-bg);color:var(--screen-fg);border-radius:6px;padding:22px 26px;font-family:"IBM Plex Mono","SFMono-Regular",Consolas,monospace;font-size:13.5px;line-height:1.45;white-space:pre;overflow-x:auto;min-height:520px;position:relative}
+.screen .dim{color:var(--screen-dim)}
+.screen .ttl{color:var(--screen-title);font-weight:600}
+.screen .sel{background:var(--screen-sel);color:#03191C;font-weight:600;display:inline-block;width:100%}
+.screen .grp{color:var(--screen-title)}
+.screen .cur{animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.screen .cur{animation:none}}
+.monitor-foot{display:flex;justify-content:space-between;align-items:center;margin-top:12px;color:#8B95A3;font-size:12.5px;font-family:"IBM Plex Mono",monospace}
+.monitor-foot .led{display:inline-block;width:8px;height:8px;border-radius:50%;background:#3FC1CF;margin-right:8px;box-shadow:0 0 8px #3FC1CF}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}
+.step{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);display:grid;gap:4px}
+.step .k{font-size:12px;color:var(--muted);font-weight:600}
+.step .v{font-weight:500}
+.step .d{font-size:12.5px;color:var(--muted)}
+.note{margin-top:18px;padding:12px 16px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 8px 8px 0;color:var(--muted);font-size:13.5px}
+.note b{color:var(--ink);font-weight:600}
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}.side{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}.side .foot{display:none}.brand{padding:6px 10px}
+  .tiles{grid-template-columns:1fr 1fr}.grid2,.menu-grid,.settings,.row2{grid-template-columns:1fr}.steps{grid-template-columns:1fr 1fr}
+}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Anteprima · server PXE Pixio</div>
+  <h1 style="margin-top:8px">Cosa troverai nel browser e cosa vedrai al boot</h1>
+  <p class="lede">Questa è un'anteprima di design, con dati d'esempio: nomi delle ISO, client e log sono inventati per mostrare le schermate. L'app vera si chiama allo stesso modo e ha le stesse sezioni.</p>
+
+  <div class="urls">
+    <div class="url"><div class="k">La GUI (single page app)</div><div class="v mono">http://10.10.0.254/</div><div class="d">Login con password. Da qui gestisci share, ISO, menu di boot, client e log.</div></div>
+    <div class="url"><div class="k">Menu di boot per i PC</div><div class="v mono">http://10.10.0.254/boot.ipxe</div><div class="d">Generato al volo dal server. Lo carica iPXE, non serve aprirlo a mano.</div></div>
+    <div class="url"><div class="k">Caricare ISO da Windows</div><div class="v mono">\\10.10.0.254\iso</div><div class="d">Share Samba di Pixio in scrittura: copi la ISO lì e compare nel catalogo. In alternativa upload dalla GUI.</div></div>
+    <div class="url"><div class="k">File serviti ai client</div><div class="v mono">http://10.10.0.254/pxe/</div><div class="d">Contenuto delle ISO montate, kernel, initrd, wimboot. Solo lettura.</div></div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <div><div class="eyebrow">1 · Nel browser</div><h2>La GUI di amministrazione</h2><p>Sei sezioni. Clicca le voci del menu laterale (o i tab qui sopra) per vedere ogni schermata.</p></div>
+    </div>
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-p="dash" aria-selected="true">Dashboard</button>
+      <button class="tab" role="tab" data-p="iso" aria-selected="false">ISO</button>
+      <button class="tab" role="tab" data-p="menu" aria-selected="false">Menu di boot</button>
+      <button class="tab" role="tab" data-p="set" aria-selected="false">Impostazioni</button>
+      <button class="tab" role="tab" data-p="cli" aria-selected="false">Client</button>
+      <button class="tab" role="tab" data-p="log" aria-selected="false">Log</button>
+    </div>
+
+    <div class="browser">
+      <div class="chrome"><div class="dots"><i></i><i></i><i></i></div><div class="omni mono">http://<b>10.10.0.254</b>/#/<span id="omni-path">dashboard</span></div></div>
+      <div class="app">
+        <aside class="side">
+          <div class="brand"><div class="logo">P</div><div><div class="name">PIXIO</div><div class="host">pixio · 10.10.0.254</div></div></div>
+          <button class="nav" data-p="dash" aria-selected="true">Dashboard</button>
+          <button class="nav" data-p="iso" aria-selected="false">ISO <span class="n">12</span></button>
+          <button class="nav" data-p="menu" aria-selected="false">Menu di boot <span class="n">8 voci</span></button>
+          <button class="nav" data-p="set" aria-selected="false">Impostazioni</button>
+          <button class="nav" data-p="cli" aria-selected="false">Client <span class="n">3 oggi</span></button>
+          <button class="nav" data-p="log" aria-selected="false">Log</button>
+          <div class="foot">admin · <span class="mono">v1.0</span> · Esci</div>
+        </aside>
+
+        <!-- DASHBOARD -->
+        <div class="main" id="p-dash" aria-hidden="false">
+          <div class="ph"><div><h2>Dashboard</h2><div class="sub">Stato del server PXE · aggiornato 2 s fa</div></div><div class="actions"><button class="btn">Riscansiona share</button><button class="btn primary">Rigenera menu</button></div></div>
+          <div class="tiles">
+            <div class="tile"><div class="k">Sorgenti ISO</div><div class="v">2 attive</div><div class="d"><span class="mono">\\SRV-FILE\ISO</span> montata · Libreria locale 3 ISO</div></div>
+            <div class="tile"><div class="k">DHCP proxy + TFTP</div><div class="v">Attivo su ens18</div><div class="d">coesiste con DHCP 10.10.0.1</div></div>
+            <div class="tile"><div class="k">HTTP (nginx)</div><div class="v">Attivo</div><div class="d">porta 80 · 9 ISO montate</div></div>
+            <div class="tile neutral"><div class="k">Cache locale</div><div class="v num">18,4 GB</div><div class="d">2 ISO copiate · 442 GB liberi</div></div>
+          </div>
+          <div class="grid2">
+            <div class="panel"><div class="hd"><h3>Ultimi client PXE</h3><span class="pill neutral">oggi</span></div>
+              <div class="tbl-wrap"><table>
+                <tr><th>Ora</th><th>MAC</th><th>IP</th><th>Firmware</th><th>Voce avviata</th></tr>
+                <tr><td class="num">17:42</td><td class="mono">d8:bb:c1:4a:20:7e</td><td class="mono">10.10.0.57</td><td><span class="pill acc">UEFI x64</span></td><td>Windows 11 24H2</td></tr>
+                <tr><td class="num">16:05</td><td class="mono">00:e0:4c:68:01:19</td><td class="mono">10.10.0.61</td><td><span class="pill neutral">BIOS</span></td><td>Clonezilla live 3.2</td></tr>
+                <tr><td class="num">09:31</td><td class="mono">b4:2e:99:7f:c3:02</td><td class="mono">10.10.0.44</td><td><span class="pill acc">UEFI x64</span></td><td>Ubuntu 24.04.3 Desktop</td></tr>
+              </table></div>
+            </div>
+            <div class="panel"><div class="hd"><h3>Attività recente</h3></div>
+              <div class="log mono">
+                <div><span class="t">17:42:10</span> PXE <b>d8:bb:c1:4a:20:7e</b> → ipxe.efi</div>
+                <div><span class="t">17:42:14</span> menu servito a 10.10.0.57</div>
+                <div><span class="t">17:42:31</span> GET /pxe/iso/win11-24h2/sources/boot.wim <b>512 MB</b></div>
+                <div><span class="t">17:30:02</span> scansione share: 12 ISO, 1 nuova (<b>proxmox-ve_9.0-1.iso</b>)</div>
+                <div><span class="t">16:05:47</span> PXE <b>00:e0:4c:68:01:19</b> → undionly.kpxe</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ISO -->
+        <div class="main" id="p-iso" aria-hidden="true">
+          <div class="ph"><div><h2>Catalogo ISO</h2><div class="sub">12 ISO da 2 sorgenti · ultima scansione 17:30 · scansione automatica ogni 10 min</div></div><div class="actions"><button class="btn">Riscansiona</button><button class="btn primary">Carica ISO</button></div></div>
+          <div class="filters"><input class="search" placeholder="Cerca per nome, tipo o sorgente…"><span class="pill acc">Tutte 12</span><span class="pill neutral">Nel menu 8</span><span class="pill neutral">\\SRV-FILE\ISO 9</span><span class="pill neutral">Locale 3</span><span class="pill neutral">Windows 3</span><span class="pill neutral">Linux 6</span></div>
+          <div class="tbl-wrap"><table>
+            <tr><th>Nel menu</th><th>Nome</th><th>Sorgente</th><th>Tipo rilevato</th><th>Dimensione</th><th>BIOS / UEFI</th><th>Stato</th><th></th></tr>
+            <tr><td><span class="switch on"></span></td><td><div class="iso-name">Windows 11 24H2</div><div class="iso-file mono">Windows/Win11_24H2_Italian_x64.iso</div></td><td><span class="pill neutral">\\SRV-FILE\ISO</span></td><td>Installazione Windows</td><td class="num">6,2 GB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill ok">Montata</span></td><td><button class="btn small">Dettagli</button></td></tr>
+            <tr><td><span class="switch on"></span></td><td><div class="iso-name">Ubuntu 24.04.3 Desktop</div><div class="iso-file mono">ubuntu-24.04.3-desktop-amd64.iso</div></td><td><span class="pill acc">Locale</span></td><td>Ubuntu (casper)</td><td class="num">6,1 GB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill ok">Montata</span></td><td><button class="btn small">Dettagli</button></td></tr>
+            <tr><td><span class="switch on"></span></td><td><div class="iso-name">Debian 13 netinst</div><div class="iso-file mono">Linux/debian-13.1.0-amd64-netinst.iso</div></td><td><span class="pill neutral">\\SRV-FILE\ISO</span></td><td>Debian installer</td><td class="num">742 MB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill ok">Montata</span></td><td><button class="btn small">Dettagli</button></td></tr>
+            <tr><td><span class="switch on"></span></td><td><div class="iso-name">Clonezilla live 3.2.1</div><div class="iso-file mono">Tools/clonezilla-live-3.2.1-28-amd64.iso</div></td><td><span class="pill neutral">\\SRV-FILE\ISO</span></td><td>Debian live</td><td class="num">433 MB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill ok">Montata</span></td><td><button class="btn small">Dettagli</button></td></tr>
+            <tr><td><span class="switch on"></span></td><td><div class="iso-name">SystemRescue 12.01</div><div class="iso-file mono">systemrescue-12.01-amd64.iso</div></td><td><span class="pill acc">Locale</span></td><td>Arch live (sysresccd)</td><td class="num">912 MB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill ok">Montata</span></td><td><button class="btn small">Dettagli</button></td></tr>
+            <tr><td><span class="switch"></span></td><td><div class="iso-name">Windows 10 22H2</div><div class="iso-file mono">Windows/Win10_22H2_Italian_x64v1.iso</div></td><td><span class="pill neutral">\\SRV-FILE\ISO</span></td><td>Installazione Windows</td><td class="num">5,8 GB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill neutral">Non nel menu</span></td><td><button class="btn small">Dettagli</button></td></tr>
+            <tr><td><span class="switch"></span></td><td><div class="iso-name">Proxmox VE 9.0</div><div class="iso-file mono">Linux/proxmox-ve_9.0-1.iso</div></td><td><span class="pill neutral">\\SRV-FILE\ISO</span></td><td>Sconosciuto</td><td class="num">1,5 GB</td><td><span class="plat"><span>BIOS</span><span>UEFI</span></span></td><td><span class="pill warn">Nessuna ricetta di boot</span></td><td><button class="btn small">Ricetta manuale</button></td></tr>
+            <tr><td><span class="switch"></span></td><td><div class="iso-name">Hiren's BootCD PE 1.0.8</div><div class="iso-file mono">HBCD_PE_x64.iso</div></td><td><span class="pill acc">Locale</span></td><td>WinPE (strumento)</td><td class="num">3,1 GB</td><td><span class="plat"><span class="y">BIOS</span><span class="y">UEFI</span></span></td><td><span class="pill warn">Upload 68% · 4 min</span></td><td><button class="btn small">Annulla</button></td></tr>
+          </table></div>
+        </div>
+
+        <!-- MENU -->
+        <div class="main" id="p-menu" aria-hidden="true">
+          <div class="ph"><div><h2>Menu di boot</h2><div class="sub">Ordine, gruppi, voce predefinita e timeout. L'anteprima a destra è lo script iPXE reale.</div></div><div class="actions"><button class="btn">Anteprima a schermo</button><button class="btn primary">Salva</button></div></div>
+          <div class="menu-grid">
+            <div>
+              <div class="row2">
+                <div class="field"><label>Titolo</label><input value="PIXIO · Avvio da rete"></div>
+                <div class="field"><label>Timeout (s)</label><input value="30"></div>
+              </div>
+              <div class="field"><label>Voce predefinita allo scadere</label><select><option>Avvia dal disco locale</option><option>Windows 11 24H2</option><option>Clonezilla live 3.2.1</option></select><div class="hint">Consigliato: disco locale, così un PC acceso per sbaglio in PXE riparte normalmente.</div></div>
+              <ul class="mlist">
+                <li class="group">Sistemi operativi</li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Windows 11 24H2</span><span class="pill neutral">win11-24h2</span></li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Ubuntu 24.04.3 Desktop</span><span class="pill neutral">ubuntu-2404</span></li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Debian 13 netinst</span><span class="pill neutral">debian-13</span></li>
+                <li class="group">Strumenti</li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Clonezilla live 3.2.1</span><span class="pill neutral">clonezilla</span></li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">SystemRescue 12.01</span><span class="pill neutral">sysrescue</span></li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Hiren's BootCD PE</span><span class="pill neutral">hbcd</span></li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Memtest86+ 7.20</span><span class="pill acc">integrato</span></li>
+                <li class="group">Sistema</li>
+                <li><span class="handle">⋮⋮</span><span class="lbl">Avvia dal disco locale</span><span class="pill acc">predefinita</span></li>
+              </ul>
+            </div>
+            <div class="code mono"><span class="c">#!ipxe — generato da Pixio per ${platform}=${platform} ${mac}</span>
+menu PIXIO · Avvio da rete · UEFI x64 · ${ip}
+item --gap Sistemi operativi
+item win11-24h2   Windows 11 24H2
+item ubuntu-2404  Ubuntu 24.04.3 Desktop
+item debian-13    Debian 13 netinst
+item --gap Strumenti
+item clonezilla   Clonezilla live 3.2.1
+item sysrescue    SystemRescue 12.01
+item hbcd         Hiren's BootCD PE
+item memtest      Memtest86+ 7.20
+item --gap Sistema
+item local        Avvia dal disco locale
+item shell        Shell iPXE
+choose --default local --timeout 30000 sel || goto local
+goto ${sel}
+
+:win11-24h2
+kernel http://10.10.0.254/pxe/boot/wimboot
+initrd http://10.10.0.254/pxe/inject/win11-24h2/winpeshl.ini winpeshl.ini
+initrd http://10.10.0.254/pxe/inject/win11-24h2/install.cmd install.cmd
+initrd http://10.10.0.254/pxe/iso/win11-24h2/boot/bcd      BCD
+initrd http://10.10.0.254/pxe/iso/win11-24h2/boot/boot.sdi boot.sdi
+initrd http://10.10.0.254/pxe/iso/win11-24h2/sources/boot.wim boot.wim
+boot
+
+:ubuntu-2404
+kernel http://10.10.0.254/pxe/iso/ubuntu-2404/casper/vmlinuz initrd=initrd boot=casper netboot=url url=http://10.10.0.254/pxe/isofile/ubuntu-2404.iso ip=dhcp ---
+initrd http://10.10.0.254/pxe/iso/ubuntu-2404/casper/initrd
+boot
+<span class="c">…</span></div>
+          </div>
+        </div>
+
+        <!-- SETTINGS -->
+        <div class="main" id="p-set" aria-hidden="true">
+          <div class="ph"><div><h2>Impostazioni</h2><div class="sub">Share Windows, rete, opzioni avanzate, accesso.</div></div><div class="actions"><button class="btn primary">Salva e applica</button></div></div>
+          <div class="settings">
+            <div class="card"><h3>Sorgenti ISO</h3>
+              <div class="eyebrow" style="margin-bottom:8px">Share Windows remote (sola lettura)</div>
+              <div class="field"><label>Percorso UNC</label><input value="\\SRV-FILE\ISO"><div class="hint">Anche una sottocartella: <span class="mono">\\SRV-FILE\Software\ISO</span>. Puoi aggiungerne più di una.</div></div>
+              <div class="row2"><div class="field"><label>Dominio / workgroup</label><input value="AZIENDA"></div><div class="field"><label>Utente</label><input value="pxe-reader"></div></div>
+              <div class="field"><label>Password</label><input type="password" value="••••••••••"><div class="hint">Salvata in <span class="mono">/etc/pixio/smb.cred</span>, leggibile solo da root.</div></div>
+              <div class="actions"><button class="btn">Verifica connessione</button><button class="btn">Monta ora</button><button class="btn">+ Aggiungi share</button></div>
+              <div class="eyebrow" style="margin:18px 0 4px">Libreria locale su Pixio</div>
+              <div class="toggle-row"><div><div class="tt">Share Samba in scrittura <span class="mono">\\10.10.0.254\iso</span></div><div class="td">Per copiare ISO da Windows con Esplora file. Utente <span class="mono">pixio</span>, password impostata qui.</div></div><span class="switch on"></span></div>
+              <div class="toggle-row"><div><div class="tt">Upload dalla web UI</div><div class="td">Trascina la ISO nella pagina Catalogo. Riprende da dove si era interrotto.</div></div><span class="switch on"></span></div>
+              <div class="toggle-row"><div><div class="tt">Scansione automatica</div><div class="td">Cerca nuove ISO in tutte le sorgenti ogni 10 minuti.</div></div><span class="switch on"></span></div>
+            </div>
+            <div class="card"><h3>Rete e boot</h3>
+              <div class="row2"><div class="field"><label>Interfaccia</label><select><option>ens18 · 10.10.0.254/23</option></select></div><div class="field"><label>IP del server</label><input value="10.10.0.254"></div></div>
+              <div class="field"><label>Modalità DHCP</label><select><option>Proxy (consigliata: il DHCP esistente resta com'è)</option><option>Completa (Pixio assegna anche gli IP)</option></select></div>
+              <div class="toggle-row"><div><div class="tt">Installazione Windows via rete</div><div class="td">Il setup di Windows deve leggere install.wim da un percorso SMB. Disattivato: nessuna condivisione locale.</div></div><span class="switch"></span></div>
+              <div class="toggle-row"><div><div class="tt">Copia locale delle ISO grandi</div><div class="td">Copia su disco le ISO oltre 2 GB per non dipendere dalla share durante il boot.</div></div><span class="switch on"></span></div>
+              <div class="toggle-row"><div><div class="tt">Password amministratore</div><div class="td">Ultima modifica 8 set 2026.</div></div><button class="btn small">Cambia</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CLIENTS -->
+        <div class="main" id="p-cli" aria-hidden="true">
+          <div class="ph"><div><h2>Client</h2><div class="sub">PC che hanno chiesto il boot da rete. Puoi assegnare una voce automatica per MAC.</div></div></div>
+          <div class="tbl-wrap"><table>
+            <tr><th>MAC</th><th>Ultimo IP</th><th>Firmware</th><th>Produttore</th><th>Ultimo boot</th><th>Boot automatico</th><th>Volte</th></tr>
+            <tr><td class="mono">d8:bb:c1:4a:20:7e</td><td class="mono">10.10.0.57</td><td><span class="pill acc">UEFI x64</span></td><td>Dell OptiPlex 7010</td><td>oggi 17:42 · Windows 11 24H2</td><td><span class="pill neutral">menu</span></td><td class="num">4</td></tr>
+            <tr><td class="mono">00:e0:4c:68:01:19</td><td class="mono">10.10.0.61</td><td><span class="pill neutral">BIOS</span></td><td>Realtek (scheda)</td><td>oggi 16:05 · Clonezilla</td><td><span class="pill acc">Clonezilla live</span></td><td class="num">12</td></tr>
+            <tr><td class="mono">b4:2e:99:7f:c3:02</td><td class="mono">10.10.0.44</td><td><span class="pill acc">UEFI x64</span></td><td>Lenovo ThinkCentre M70q</td><td>oggi 09:31 · Ubuntu 24.04.3</td><td><span class="pill neutral">menu</span></td><td class="num">1</td></tr>
+            <tr><td class="mono">52:54:00:12:34:56</td><td class="mono">10.10.0.90</td><td><span class="pill neutral">BIOS</span></td><td>QEMU (test)</td><td>ieri 22:10 · Memtest86+</td><td><span class="pill neutral">menu</span></td><td class="num">31</td></tr>
+          </table></div>
+        </div>
+
+        <!-- LOG -->
+        <div class="main" id="p-log" aria-hidden="true">
+          <div class="ph"><div><h2>Log</h2><div class="sub">dnsmasq (DHCP/TFTP), nginx (HTTP), Pixio. Aggiornamento in tempo reale.</div></div><div class="actions"><button class="btn">Pausa</button><button class="btn">Scarica</button></div></div>
+          <div class="code mono" style="min-height:380px"><span class="c">17:42:10</span> dnsmasq  PXE(ens18) d8:bb:c1:4a:20:7e proxy — arch x86-64 UEFI → ipxe.efi
+<span class="c">17:42:11</span> dnsmasq  TFTP sent /srv/pixio/tftp/ipxe.efi to 10.10.0.57
+<span class="c">17:42:14</span> nginx    10.10.0.57 GET /boot.ipxe 200 (iPXE/1.21.1+ UEFI x64)
+<span class="c">17:42:29</span> nginx    10.10.0.57 GET /pxe/boot/wimboot 200 76064
+<span class="c">17:42:30</span> nginx    10.10.0.57 GET /pxe/iso/win11-24h2/boot/bcd 200 16384
+<span class="c">17:42:30</span> nginx    10.10.0.57 GET /pxe/iso/win11-24h2/boot/boot.sdi 200 3170304
+<span class="c">17:42:31</span> nginx    10.10.0.57 GET /pxe/iso/win11-24h2/sources/boot.wim 200 536870912
+<span class="c">17:30:02</span> pixio    scansione \\SRV-FILE\ISO: 12 ISO (1 nuova: proxmox-ve_9.0-1.iso, tipo sconosciuto)
+<span class="c">17:30:05</span> pixio    menu rigenerato: 8 voci, predefinita "local", timeout 30 s
+<span class="c">16:05:47</span> dnsmasq  PXE(ens18) 00:e0:4c:68:01:19 proxy — arch x86 BIOS → undionly.kpxe
+<span class="c">16:05:52</span> nginx    10.10.0.61 GET /boot.ipxe 200 (iPXE/1.21.1+ pcbios)
+<span class="c">16:06:03</span> nginx    10.10.0.61 GET /pxe/iso/clonezilla/live/vmlinuz 200 …</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <div><div class="eyebrow">2 · Sul PC che si avvia</div><h2>Cosa vedi al boot</h2><p>Premi F12 (o il tasto di boot da rete del PC), la scheda di rete parla con Pixio e dopo pochi secondi appare questo menu. Testo puro, funziona uguale in BIOS e UEFI, tastiera per scegliere.</p></div>
+      <button class="btn" id="replay">Rivedi la sequenza</button>
+    </div>
+    <div class="monitor">
+      <div class="screen" id="screen"></div>
+      <div class="monitor-foot"><span><span class="led"></span>Dell OptiPlex 7010 · UEFI · d8:bb:c1:4a:20:7e</span><span>frecce = scegli · Invio = avvia · Esc = disco locale</span></div>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="k">0–3 s</div><div class="v">DHCP e proxy</div><div class="d">Il DHCP aziendale dà l'IP, Pixio aggiunge solo "il boot file sta qui".</div></div>
+      <div class="step"><div class="k">3–5 s</div><div class="v">iPXE via TFTP</div><div class="d">undionly.kpxe (BIOS) o ipxe.efi (UEFI), 100–1000 KB.</div></div>
+      <div class="step"><div class="k">5–6 s</div><div class="v">Menu via HTTP</div><div class="d">Pixio genera il menu in base al firmware del PC.</div></div>
+      <div class="step"><div class="k">poi</div><div class="v">Kernel e file dalla ISO</div><div class="d">Serviti via HTTP dalla ISO montata; le ISO Windows passano da wimboot.</div></div>
+    </div>
+    <div class="note"><b>Secure Boot.</b> iPXE non è firmato Microsoft: sui PC con Secure Boot attivo va disattivato per il boot da rete (la GUI lo ricorda nella pagina Client quando rileva un tentativo fallito).</div>
+  </section>
+</div>
+
+<script>
+(function(){
+  const pages={dash:'dashboard',iso:'iso',menu:'menu',set:'impostazioni',cli:'client',log:'log'};
+  function show(p){
+    document.querySelectorAll('.main').forEach(m=>m.setAttribute('aria-hidden', m.id==='p-'+p?'false':'true'));
+    document.querySelectorAll('.nav,.tab').forEach(b=>b.setAttribute('aria-selected', b.dataset.p===p?'true':'false'));
+    document.getElementById('omni-path').textContent=pages[p];
+  }
+  document.querySelectorAll('.nav,.tab').forEach(b=>b.addEventListener('click',()=>show(b.dataset.p)));
+
+  const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const boot=[
+    ['dim','Dell OptiPlex 7010  ·  Network boot (UEFI PXE IPv4)'],
+    ['','iPXE 1.21.1+ (dad20) -- Open Source Network Boot Firmware -- https://ipxe.org'],
+    ['dim','Features: DNS HTTP HTTPS iSCSI TFTP VLAN AoE EFI Menu'],
+    ['',''],
+    ['','Configuring (net0 d8:bb:c1:4a:20:7e)...... ok'],
+    ['','Pixio: IP 10.10.0.57 - next-server 10.10.0.254 - proxy 10.10.0.254'],
+    ['','http://10.10.0.254/boot.ipxe... ok'],
+    ['',''],
+  ];
+  const menu=[
+    ['ttl','┌──────────────────────── PIXIO · Avvio da rete · UEFI x64 · 10.10.0.57 ────────────────────────┐'],
+    ['',''],
+    ['grp','  Sistemi operativi'],
+    ['sel','   ▶ Windows 11 24H2'],
+    ['','     Ubuntu 24.04.3 Desktop'],
+    ['','     Debian 13 netinst'],
+    ['',''],
+    ['grp','  Strumenti'],
+    ['','     Clonezilla live 3.2.1'],
+    ['','     SystemRescue 12.01'],
+    ['','     Hiren\'s BootCD PE'],
+    ['','     Memtest86+ 7.20'],
+    ['',''],
+    ['grp','  Sistema'],
+    ['','     Avvia dal disco locale'],
+    ['','     Shell iPXE'],
+    ['','     Riavvia'],
+    ['',''],
+    ['ttl','└──────────────────────────────────────────────────────────────────────────────────────────────┘'],
+    ['dim','  Avvio automatico di "Avvia dal disco locale" tra 30 s   ·   ↑↓ scegli, Invio avvia, Esc disco locale'],
+  ];
+  const screen=document.getElementById('screen');
+  const line=([c,t])=>'<span class="'+c+'">'+esc(t)+(t===''?' ':'')+'</span>\n';
+  function render(all){ screen.innerHTML=all.map(line).join(''); }
+  function rest(){ render(boot.concat(menu)); }
+  const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let timer=null;
+  function play(){
+    if(reduce){ rest(); return; }
+    clearTimeout(timer);
+    let i=0, out=[];
+    function step(){
+      if(i<boot.length){ out.push(boot[i++]); render(out.concat([['cur','_']])); timer=setTimeout(step, i===5?900:380); }
+      else { rest(); }
+    }
+    step();
+  }
+  document.getElementById('replay').addEventListener('click',play);
+  rest();
+})();
+</script>

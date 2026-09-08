@@ -1,0 +1,126 @@
+"""Ricette di boot: caricamento di data/recipes.json e rendering dello script iPXE per una ISO."""
+import json
+import os
+import re
+import threading
+
+from .. import config as C
+
+_cache = {"mtime": None, "data": None}
+_lock = threading.Lock()
+
+
+def load():
+    with _lock:
+        try:
+            m = os.stat(C.RECIPES_FILE).st_mtime
+        except OSError:
+            m = None
+        if _cache["data"] is None or _cache["mtime"] != m:
+            with open(C.RECIPES_FILE, encoding="utf-8") as f:
+                _cache["data"] = json.load(f)
+            _cache["mtime"] = m
+        return _cache["data"]
+
+
+def types():
+    """Lista ordinata per priorità dei tipi (id, name, category, platforms, manual_only)."""
+    return sorted(load()["types"], key=lambda t: t.get("priority", 500))
+
+
+def get_type(type_id):
+    for t in load()["types"]:
+        if t["id"] == type_id:
+            return t
+    return None
+
+
+def type_name(type_id):
+    t = get_type(type_id)
+    return t["name"] if t else type_id
+
+
+def builtin(name):
+    return load().get("builtin", {}).get(name)
+
+
+def urls(server_ip, slug):
+    base = f"http://{server_ip}/pxe"
+    return {
+        "http_iso": f"{base}/iso/{slug}",
+        "http_isofile": f"{base}/isofile/{slug}.iso",
+        "http_boot": f"{base}/boot",
+        "http_inject": f"{base}/inject/{slug}",
+        "server_ip": server_ip,
+        "slug": slug,
+    }
+
+
+_PH = re.compile(r"\{(f|fn):([a-z_]+)\}|\{([a-z_]+)\}")
+
+
+def render_lines(lines, ctx, files, flags):
+    """Espande placeholder e condizionali. files: {chiave: percorso relativo}. flags: {nome: bool}."""
+    out = []
+    for raw in lines:
+        line = raw
+        m = re.match(r"^\?(!?)(has:)?([a-z_]+)\s+(.*)$", line)
+        if m:
+            neg, has, name, rest = m.group(1) == "!", bool(m.group(2)), m.group(3), m.group(4)
+            cond = bool(files.get(name)) if has else bool(flags.get(name))
+            if cond == neg:
+                continue
+            line = rest
+
+        def sub(mm):
+            if mm.group(1) == "f":
+                return files.get(mm.group(2), "")
+            if mm.group(1) == "fn":
+                return os.path.basename(files.get(mm.group(2), ""))
+            return str(ctx.get(mm.group(3), mm.group(0)))
+        out.append(_PH.sub(sub, line))
+    return out
+
+
+def render(iso, server_ip, platform, flags=None):
+    """Script iPXE (senza shebang) per la voce `iso` (dict del catalogo) sulla piattaforma 'efi'|'bios'.
+    Ritorna (lines, warnings). lines vuoto se la ricetta non supporta la piattaforma."""
+    flags = flags or {}
+    ctx = urls(server_ip, iso["slug"])
+    files = (iso.get("detect") or {}).get("files") or {}
+    custom = iso.get("custom_recipe")
+    warnings = []
+    if custom:
+        plats = custom.get("platforms") or ["bios", "efi"]
+        if platform not in plats:
+            return [], [f"La ricetta personalizzata non supporta {platform}"]
+        lines = []
+        kernel = (custom.get("kernel") or "").strip()
+        initrds = [i.strip() for i in (custom.get("initrds") or []) if i.strip()]
+        cmdline = (custom.get("cmdline") or "").strip()
+        if not kernel:
+            return [], ["Ricetta personalizzata senza kernel"]
+        lines.append(f"kernel {kernel} {cmdline}".rstrip())
+        for i in initrds:
+            lines.append(f"initrd {i}")
+        lines.append("boot")
+        return render_lines(lines, ctx, files, flags), warnings
+    t = get_type(iso.get("type") or "unknown") or get_type("unknown")
+    if platform not in t.get("platforms", []):
+        return [], [f"Il tipo '{t['name']}' non è avviabile in modalità {platform.upper()}"]
+    key = f"script_{platform}"
+    lines = t.get(key) or t.get("script") or []
+    for k, msg in (t.get("warnings_if") or {}).items():
+        neg = k.startswith("!")
+        name = k.lstrip("!")
+        if bool(flags.get(name)) == (not neg):
+            warnings.append(msg)
+    return render_lines(lines, ctx, files, flags), warnings + list(t.get("warnings") or [])
+
+
+def render_builtin(name, server_ip, platform):
+    b = builtin(name)
+    if not b or platform not in b.get("platforms", []):
+        return []
+    lines = b.get(f"script_{platform}") or b.get("script") or []
+    return render_lines(lines, urls(server_ip, name), {}, {})

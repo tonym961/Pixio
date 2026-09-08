@@ -1,0 +1,17 @@
+#!/bin/bash
+# Strumenti da riga di comando per Pixio (root).
+set -euo pipefail
+cd /opt/pixio
+case "${1:-}" in
+  set-password)
+    read -r -s -p "Nuova password amministratore: " PW; echo
+    sudo -u pixio python3 -c "
+import sys; sys.path.insert(0,'/opt/pixio')
+from pixio import auth; auth.set_password(sys.argv[1]); print('Password aggiornata')" "$PW"
+    ;;
+  apply)      /usr/local/sbin/pixio-helper apply "${2:-all}" ;;
+  status)     systemctl --no-pager status pixio pixio-mounts dnsmasq nginx smbd 2>/dev/null | grep -E "●|Active:" ;;
+  rebuild-ipxe) /opt/pixio/ipxe/build.sh "${2:-$(python3 -c "import sys;sys.path.insert(0,'/opt/pixio');from pixio import settings;print(settings.load()['network']['server_ip'])")}" ;;
+  logs)       journalctl -u pixio -f ;;
+  *) echo "uso: pixio-admin set-password | apply [dnsmasq|nginx|samba|all] | status | rebuild-ipxe [ip] | logs"; exit 1 ;;
+esac

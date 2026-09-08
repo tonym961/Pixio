@@ -26,7 +26,7 @@ cat > config/local/console.h <<'EOH'
 EOH
 NPROC=$(nproc)
 make -j"$NPROC" NO_WERROR=1 EMBED=/opt/pixio/ipxe/embed.built.ipxe \
-  bin/undionly.kpxe bin/ipxe.pxe bin-x86_64-efi/ipxe.efi bin-x86_64-efi/snponly.efi bin-i386-efi/ipxe.efi bin/ipxe.lkrn bin-x86_64-efi/ipxe.usb 2>&1 | tail -5 || true
+  bin/undionly.kpxe bin/ipxe.pxe bin-x86_64-efi/ipxe.efi bin-x86_64-efi/snponly.efi bin-i386-efi/ipxe.efi bin/ipxe.lkrn 2>&1 | tail -5 || true
 mkdir -p "$OUT"
 cp bin/undionly.kpxe "$OUT/undionly.kpxe"
 cp bin/ipxe.pxe "$OUT/ipxe.pxe"

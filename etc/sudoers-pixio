@@ -1,0 +1,3 @@
+# Pixio: l'utente del servizio può eseguire SOLO l'helper privilegiato
+Defaults:pixio !requiretty
+pixio ALL=(root) NOPASSWD: /usr/local/sbin/pixio-helper

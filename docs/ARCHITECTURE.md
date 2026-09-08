@@ -41,3 +41,9 @@ Un server PXE completo, pronto all'uso, con una GUI web (italiano) che permette 
 - `dnsmasq --test`, `nginx -t`, `testparm`.
 - Samba locale di prova (share "testiso" su 127.0.0.1) montata via CIFS per simulare la share Windows.
 - QEMU (TCG, senza KVM): BIOS e UEFI (OVMF) con `-netdev user,tftp=/srv/pixio/tftp,bootfile=...` per verificare che iPXE parta, arrivi al menu HTTP e carichi un kernel.
+
+## Aggiornamento requisiti (8 set 2026, dall'utente)
+- Le ISO arrivano da DUE tipi di sorgente: (a) una o più share Windows/SMB remote, montate via CIFS in sola lettura; (b) una **libreria locale** su Pixio (`/srv/pixio/library`) dove si possono caricare ISO in due modi: **share Samba locale in scrittura** esposta da Pixio (share `pixio-iso`, utente dedicato con password impostata dalla GUI) e **upload dalla web UI** (upload grande a chunk/resumable, con barra di avanzamento).
+- NON ricondividere via Samba le ISO montate in loop. Il supporto "installazione Windows" (WinPE deve leggere install.wim via SMB) è un'opzione disattivata di default, con spiegazione nella GUI.
+- La GUI è una SPA (JS vanilla, nessuna CDN) servita su http://<ip>/ con API JSON Flask; il menu iPXE a http://<ip>/boot.ipxe.
+- Il catalogo unifica le ISO di tutte le sorgenti (colonna "Sorgente": nome share o "Locale").

@@ -1,0 +1,14 @@
+[Unit]
+Description=Pixio - montaggio delle sorgenti ISO (CIFS) all'avvio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/pixio-helper mount-all
+ExecStop=/bin/true
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Pixio - GUI e API del server PXE
+After=network-online.target pixio-mounts.service
+Wants=network-online.target pixio-mounts.service
+
+[Service]
+Type=simple
+User=pixio
+Group=pixio
+WorkingDirectory=/opt/pixio
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/gunicorn --bind 127.0.0.1:8080 --workers 1 --threads 8 --timeout 600 --access-logfile - --error-logfile - wsgi:app
+Restart=always
+RestartSec=3
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
