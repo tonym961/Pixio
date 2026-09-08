@@ -42,8 +42,12 @@ def boot_menu():
     if mac:
         try:
             from ..services import clients
+            take_once = getattr(clients, "take_boot_once", None)
+            once = take_once(mac) if take_once else None
             c = clients.get(mac)
-            if c and c.get("auto_boot"):
+            if once:
+                auto = once                      # valido per questo solo avvio
+            elif c and c.get("auto_boot"):
                 auto = c["auto_boot"]
             rs = getattr(clients, "record_seen", None)
             if rs:

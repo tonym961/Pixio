@@ -10,7 +10,7 @@ from . import config as C
 from . import auth
 
 # Percorsi raggiungibili senza login (i client PXE non hanno sessione)
-PUBLIC_PREFIXES = ("/boot.ipxe", "/boot/", "/api/health", "/api/auth/status", "/api/auth/login", "/static/", "/favicon")
+PUBLIC_PREFIXES = ("/boot.ipxe", "/boot/", "/answers/", "/api/health", "/api/auth/status", "/api/auth/login", "/static/", "/favicon")
 
 
 def create_app():

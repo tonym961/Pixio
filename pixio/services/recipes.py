@@ -93,6 +93,38 @@ def render_lines(lines, ctx, files, flags):
     return out
 
 
+def answer_for(iso, server_ip):
+    """Risposta automatica associata alla ISO: (argomenti kernel, file da iniettare nel WinPE)."""
+    try:
+        from . import answers
+    except ImportError:
+        return "", []
+    try:
+        a = answers.get_for_slug(iso.get("slug"))
+        if not a:
+            return "", []
+        return (answers.kernel_args(a, iso.get("type"), server_ip) or "",
+                answers.winpe_files(a, server_ip) or [])
+    except Exception:  # noqa: BLE001
+        return "", []
+
+
+def _apply_answer(lines, iso, server_ip):
+    """Aggiunge gli argomenti della risposta alla riga kernel e i file iniettati (Windows)."""
+    args, files = answer_for(iso, server_ip)
+    if not args and not files:
+        return lines
+    out = []
+    for line in lines:
+        if args and line.startswith("kernel ") and "wimboot" not in line:
+            line = line.rstrip() + " " + args
+        out.append(line)
+        if files and line.startswith("kernel ") and "wimboot" in line:
+            for name, url in files:
+                out.append(f"initrd {url} {name}")
+    return out
+
+
 def render(iso, server_ip, platform, flags=None):
     """Script iPXE (senza shebang) per la voce `iso` (dict del catalogo) sulla piattaforma 'efi'|'bios'.
     Ritorna (lines, warnings). lines vuoto se la ricetta non supporta la piattaforma."""
@@ -115,7 +147,7 @@ def render(iso, server_ip, platform, flags=None):
         for i in initrds:
             lines.append(f"initrd {i}")
         lines.append("boot")
-        return render_lines(lines, ctx, files, flags), warnings
+        return _apply_answer(render_lines(lines, ctx, files, flags), iso, server_ip), warnings
     t = get_type(iso.get("type") or "unknown") or get_type("unknown")
     if platform not in t.get("platforms", []):
         return [], [f"Il tipo '{t['name']}' non è avviabile in modalità {platform.upper()}"]
@@ -126,7 +158,7 @@ def render(iso, server_ip, platform, flags=None):
         name = k.lstrip("!")
         if bool(flags.get(name)) == (not neg):
             warnings.append(msg)
-    return render_lines(lines, ctx, files, flags), warnings + list(t.get("warnings") or [])
+    return _apply_answer(render_lines(lines, ctx, files, flags), iso, server_ip), warnings + list(t.get("warnings") or [])
 
 
 def render_builtin(name, server_ip, platform):

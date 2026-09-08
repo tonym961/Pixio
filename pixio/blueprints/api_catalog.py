@@ -45,7 +45,7 @@ def patch_iso(slug):
     if not C.SLUG_RE.match(slug):
         return _err("slug non valido")
     data = request.get_json(silent=True) or {}
-    allowed = {"name", "enabled", "group", "order", "type", "custom_recipe", "cache_wanted"}
+    allowed = {"name", "enabled", "group", "order", "type", "custom_recipe", "cache_wanted", "answer_id"}
     patch = {k: v for k, v in data.items() if k in allowed}
     try:
         e = catalog.update(slug, patch)

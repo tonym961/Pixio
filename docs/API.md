@@ -176,3 +176,29 @@ oobeSystem (utente locale, autologon, OOBE saltato, FirstLogonCommands). Le pass
 - `POST /api/winprofiles {name, settings}` → 201; `GET|PUT|DELETE /api/winprofiles/<id>`
 - `POST /api/winprofiles/<id>/preview` → `{xml}` (anteprima del file generato, senza salvare)
 - `POST /api/winprofiles/<id>/save-answer {answer_id?}` → genera l'XML e lo salva come risposta di tipo windows (`services/answers.py`), creandola se manca; risposta `{ok, answer_id, answer_name}`
+
+## 9. Personalizzazione Debian e preset
+Servizio `pixio/services/debprofile.py`, profili in `/var/lib/pixio/debprofiles.json`, stessa struttura dei profili Windows
+(`{id, name, note, updated, settings:{...}}`). Campi di `settings`: `hostname`, `domain`, `locale` (it_IT.UTF-8), `keyboard` (it),
+`timezone` (Europe/Rome), `mirror:{host, directory, proxy}`, `suite` (stable/trixie/...),
+`root:{enabled, password}` (se disattivato: solo utente con sudo), `user:{fullname, username, password, sudo}`,
+`disk:{device (auto|/dev/sda|...), recipe ("atomic"|"home"|"multi"|"lvm"|"crypto"), swap_mb, filesystem (ext4|xfs|btrfs), wipe (bool)}`,
+`tasks` (lista tasksel: standard, ssh-server, web-server, gnome-desktop, xfce-desktop...), `packages` (lista aggiuntiva),
+`popcon` (bool), `grub_device`, `late_command` (comandi eseguiti a fine installazione), `reboot_after` (bool),
+`ssh_keys` (chiavi pubbliche da mettere nell'utente), `network:{mode: dhcp|static, ip, netmask, gateway, dns}`.
+Il generatore produce un `preseed.cfg` valido e commentato in italiano; `kernel_args` della risposta lo aggancia con
+`auto=true priority=critical url=<url>` (già previsto dalla sezione 3).
+- `GET /api/debprofiles` → `{profiles, defaults, tasks, mirrors, timezones}`; `POST` crea; `GET|PUT|DELETE /api/debprofiles/<id>`
+- `POST /api/debprofiles/<id>/preview` → `{preseed}`; `POST /api/debprofiles/<id>/save-answer {answer_id?}` → salva come risposta di tipo debian
+
+### Preset (modelli pronti, selezionabili e modificabili)
+File `data/profile-presets.json`, sola lettura, con preset per `windows` e `debian`.
+Ogni preset: `{id, kind, name, description, settings:{...}}` (le impostazioni sono un profilo completo).
+- `GET /api/presets?kind=windows|debian` → `{presets:[...]}`
+- `POST /api/winprofiles {name, preset:"<id>", settings?}` e `POST /api/debprofiles {...}`: se `preset` è indicato, i valori del preset
+  fanno da base e `settings` li sovrascrive campo per campo. Nella GUI: menu a tendina "Parti da un modello" con descrizione,
+  che riempie il form lasciando tutto modificabile prima del salvataggio.
+Preset richiesti (almeno): Windows -> "Postazione aziendale" (dominio, OOBE saltato, app inutili rimosse), "PC singolo" (utente locale, accesso automatico),
+"Windows Server" (nessun accesso automatico, RDP attivo), "Laboratorio/collaudo" (bypass requisiti, chiave generica, cancellazione disco);
+Debian -> "Server minimo" (solo standard + ssh-server, LVM), "Desktop ufficio" (GNOME, utente non root), "Server web" (ssh + nginx + certbot),
+"Host Proxmox/virtualizzazione" (partizionamento LVM ampio, nessun desktop), "Postazione tecnica" (Xfce, strumenti di rete).

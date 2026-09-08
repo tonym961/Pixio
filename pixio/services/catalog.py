@@ -245,6 +245,13 @@ def _decorate(e, mounted):
     custom = e.get("custom_recipe")
     e["platforms"] = (custom.get("platforms") if custom and custom.get("platforms") else t.get("platforms", []))
     e["mounted"] = e["slug"] in mounted
+    if e.get("answer_id"):
+        try:
+            from . import answers
+            a = answers.get(e["answer_id"])
+            e["answer_name"] = (a or {}).get("name") or e["answer_id"]
+        except Exception:  # noqa: BLE001
+            e["answer_name"] = e["answer_id"]
     e.setdefault("cache", {"status": "none", "path": "", "progress": 0})
     w = list(t.get("warnings") or [])
     if e.get("missing"):
@@ -311,6 +318,9 @@ def update(slug, patch):
         else:
             e["type_override"] = ""
             e["type"] = e.get("detect", {}).get("type", "unknown")
+    if "answer_id" in patch:
+        aid = patch["answer_id"]
+        e["answer_id"] = str(aid)[:64] if aid else None
     if "custom_recipe" in patch:
         cr = patch["custom_recipe"]
         if cr:

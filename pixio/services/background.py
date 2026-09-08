@@ -70,6 +70,17 @@ def _startup():
         _safe("remount ISO abilitate", cat.remount_enabled)
 
 
+def _autocache_tick():
+    """Copia locale automatica delle ISO grandi che stanno su share remote (se attiva nelle impostazioni)."""
+    try:
+        from . import autocache
+    except ImportError:
+        return
+    if not S.load().get("cache", {}).get("auto"):
+        return
+    jobs.start("copy", None, autocache.run, message="Copia locale automatica")
+
+
 def _loop():
     from . import sources, clients, uploads
     _startup()
@@ -91,6 +102,8 @@ def _loop():
         if now - last_cleanup >= CLEANUP_EVERY:
             last_cleanup = now
             _safe("pulizia upload", uploads.cleanup)
+            _safe("copia locale automatica", _autocache_tick)
+            _safe("copia locale automatica", _autocache_tick)
         try:
             scan_cfg = S.load().get("scan", {})
         except Exception:  # noqa: BLE001
