@@ -165,6 +165,11 @@ def status():
         cl = {"today": 0, "total": 0}
     running = jobs.running()
     library_count = count_isos(C.LIBRARY_DIR)
+    try:
+        from . import catalog as _cat
+        library_count = max(library_count, sum(1 for e in _cat.load()["isos"].values() if e.get("source") == "local" and not e.get("missing")))
+    except Exception:  # noqa: BLE001
+        pass
     warnings = []
     if not srv["dnsmasq"]["active"]:
         warnings.append("dnsmasq non attivo: i client PXE non riceveranno risposta")

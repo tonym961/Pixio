@@ -15,7 +15,7 @@ from .. import privileged
 from ..privileged import HelperError
 from ..storage import read_json, update_json
 
-UNC_RE = re.compile(r"^//[A-Za-z0-9._-]+(/[^/\\\x00-\x1f]+)+$")     # stessa regola dell'helper
+UNC_RE = re.compile(r"^//[A-Za-z0-9._-]+(/[^/\\\x00-\x1f\"';`*?<>|:]+)+$")     # stessa regola dell'helper
 VERS_RE = re.compile(r"^(1\.0|2\.0|2\.1|3\.0|3\.02|3\.1\.1|3)$")
 META_FIELDS = ("name", "unc", "domain", "username", "vers", "last_scan", "iso_count", "error")
 

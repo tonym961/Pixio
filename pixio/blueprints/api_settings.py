@@ -96,11 +96,12 @@ def validate(incoming, current):
             if net_in["dhcp_mode"] not in ("proxy", "full"):
                 raise ValueError("Modalità DHCP non valida (proxy o full)")
             n["dhcp_mode"] = net_in["dhcp_mode"]
+        full_mode = merged.get("dhcp_mode") == "full"
         for k, label in (("dhcp_range_start", "Inizio intervallo DHCP"), ("dhcp_range_end", "Fine intervallo DHCP"),
                          ("dhcp_netmask", "Netmask"), ("dhcp_router", "Gateway"), ("dhcp_dns", "DNS")):
-            if k in net_in:
-                n[k] = _ipv4(net_in[k], label)
-        if "dhcp_lease" in net_in:
+            if k in net_in and (full_mode or str(net_in[k] or "").strip()):
+                n[k] = _ipv4(net_in[k], label)       # in modalita' proxy i campi vuoti vengono ignorati
+        if "dhcp_lease" in net_in and (full_mode or str(net_in["dhcp_lease"] or "").strip()):
             lease = _str(net_in["dhcp_lease"], "Durata lease", 8) or "12h"
             if not LEASE_RE.match(lease):
                 raise ValueError("Durata lease non valida (es. 12h, 30m, 1d)")
