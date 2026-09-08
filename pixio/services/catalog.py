@@ -355,6 +355,15 @@ def mount(slug):
         raise FileNotFoundError("File ISO non raggiungibile")
     privileged.call("mount-iso", slug, path, timeout=120)
     write_inject_files(e)
+    if e.get("type") == "esxi":
+        from . import esxi
+        try:
+            ok, msg = esxi.prepare(slug, os.path.join(C.HTTP_ISO_DIR, slug), S.load()["network"]["server_ip"],
+                                   (e.get("detect") or {}).get("files"))
+            if not ok:
+                log.warning("ESXi %s: %s", slug, msg)
+        except Exception as ex:  # noqa
+            log.warning("preparazione ESXi %s: %s", slug, ex)
 
 
 def umount(slug):

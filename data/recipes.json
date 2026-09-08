@@ -1,5 +1,5 @@
 {
-  "_doc": "Ricette di boot Pixio. Ordine di valutazione: priority crescente. 'files' = candidati (case-insensitive) risolti al rilevamento; 'require' = chiavi che devono esistere; 'markers_any'/'markers_all' = percorsi aggiuntivi. Nello script: {http_iso} {http_isofile} {http_boot} {http_inject} {server_ip} {slug} {f:chiave} (percorso risolto) {fn:chiave} (solo nome file). Righe con prefisso '?flag ' o '?!flag ' sono condizionali (flag: smb_export).",
+  "_doc": "Ricette di boot Pixio. Valutate in ordine di priority crescente. 'files' = candidati (case-insensitive, glob '*' ammesso) risolti al rilevamento; 'require' = chiavi che devono esistere; markers_any/all/none = percorsi aggiuntivi. Placeholder: {http_iso} (radice ISO montata, senza slash finale) {http_isofile} (file .iso intero) {http_boot} {http_inject} {server_ip} {slug} {f:chiave} (percorso reale) {fn:chiave} (nome file). Prefissi di riga: '?flag '/'?!flag ' (flag di contesto), '?has:chiave ' (file presente). La riga '{drivers}' diventa un initrd per ogni driver da iniettare nel WinPE. Le cmdline Linux usano 'initrd=initrd.magic': iPXE espone gli initrd concatenati con quel nome (serve ai kernel < 5.7 in UEFI, ignorato altrove).",
   "types": [
     {
       "id": "windows",
@@ -49,9 +49,45 @@
       "warnings_if": {
         "!smb_export": "Senza 'Installazione Windows via rete' attiva (Impostazioni) il setup parte ma non trova install.wim: dovrai mappare una share a mano da WinPE (Shift+F10, net use)."
       },
-      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. winpeshl.ini/install.cmd (generati da Pixio) caricano i driver iniettati con drvload, mappano \\\\server\\pxe e lanciano setup.exe.",
       "warnings": [
         "Secure Boot deve essere disattivato sul PC (iPXE non è firmato). RAM >= 2 GB. Il PC installa in modalità UEFI o BIOS a seconda di come ha fatto il boot PXE."
+      ],
+      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. winpeshl.ini/install.cmd (generati da Pixio) caricano i driver iniettati con drvload, mappano \\\\server\\pxe e lanciano setup.exe."
+    },
+    {
+      "id": "windows-legacy",
+      "name": "Windows XP / 2000 / 2003 (non avviabile via rete)",
+      "category": "os",
+      "platforms": [],
+      "priority": 12,
+      "files": {},
+      "require": [],
+      "markers_any": [
+        "i386/txtsetup.sif",
+        "i386/setupldr.bin",
+        "amd64/txtsetup.sif"
+      ],
+      "script": [],
+      "warnings": [
+        "Le ISO di Windows XP, 2000 e 2003 usano il vecchio avvio da CD (niente boot.wim): non si avviano via rete con iPXE. Servono una chiavetta o un CD, oppure RIS/WDS."
+      ]
+    },
+    {
+      "id": "driver-iso",
+      "name": "ISO di driver (non avviabile)",
+      "category": "tool",
+      "platforms": [],
+      "priority": 13,
+      "files": {},
+      "require": [],
+      "markers_any": [
+        "virtio-win_license.txt",
+        "virtio-win-guest-tools.exe",
+        "guest-agent/qemu-ga-x86_64.msi"
+      ],
+      "script": [],
+      "warnings": [
+        "È una raccolta di driver, non un disco avviabile. Estrai i driver che ti servono e caricali nella pagina Driver di Pixio."
       ]
     },
     {
@@ -91,12 +127,16 @@
       ],
       "script": [
         "kernel {http_boot}/wimboot",
+        "{drivers}",
         "initrd {http_iso}/{f:bcd} BCD",
         "initrd {http_iso}/{f:bootsdi} boot.sdi",
         "initrd {http_iso}/{f:bootwim} boot.wim",
         "boot"
       ],
-      "notes": "Hiren's BootCD PE (completo), Strelec/Medicat (solo PE base: i programmi sono fuori dal wim). Il .wim va tutto in RAM: servono >= 4 GB."
+      "warnings": [
+        "Il .wim viene caricato tutto in RAM: servono almeno 4 GB sul PC (Hiren's ~3 GB, Strelec ~4,5 GB). Secure Boot deve essere disattivato."
+      ],
+      "notes": "Hiren's BootCD PE è completo dentro il .wim. Strelec e Medicat tengono i programmi fuori dal wim: via rete si ottiene solo il WinPE di base."
     },
     {
       "id": "clonezilla",
@@ -124,13 +164,18 @@
         "squashfs"
       ],
       "markers_any": [
+        "live/clonezilla-live-version",
         "clonezilla-live-version"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=live union=overlay username=user config components quiet noswap edd=on nomodeset nodmraid locales=it_IT.UTF-8 keyboard-layouts=it ocs_live_run=\"ocs-live-general\" ocs_live_extra_param=\"\" ocs_live_batch=\"no\" net.ifnames=0 nosplash noprompt ip=dhcp fetch={http_iso}/{f:squashfs}",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic boot=live union=overlay username=user config components loglevel=3 noswap edd=on nomodeset enforcing=0 noeject locales=it_IT.UTF-8 keyboard-layouts=it ocs_live_run=\"ocs-live-general\" ocs_live_extra_param=\"\" ocs_live_batch=\"no\" vga=788 net.ifnames=0 ip=dhcp nosplash fetch={http_iso}/{f:squashfs}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
-      ]
+      ],
+      "warnings": [
+        "Il filesystem live (circa 500 MB) viene scaricato in RAM: servono almeno 1,5 GB sul PC."
+      ],
+      "notes": "Riga di comando presa dal syslinux.cfg della ISO 3.3.3, con lingua e tastiera italiane."
     },
     {
       "id": "gparted",
@@ -158,17 +203,58 @@
         "squashfs"
       ],
       "markers_any": [
+        "live/gparted-live-version",
         "gparted-live-version"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=live union=overlay username=user config components noswap noeject ip=dhcp locales=it_IT.UTF-8 keyboard-layouts=it fetch={http_iso}/{f:squashfs}",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic boot=live union=overlay username=user config components loglevel=3 noswap net.ifnames=0 nosplash ip=dhcp keyboard-layouts=it fetch={http_iso}/{f:squashfs}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
+      ],
+      "warnings": [
+        "Il filesystem live viene scaricato in RAM: serve almeno 1 GB sul PC."
+      ]
+    },
+    {
+      "id": "truenas",
+      "name": "TrueNAS SCALE installer (sperimentale)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 25,
+      "files": {
+        "kernel": [
+          "vmlinuz"
+        ],
+        "initrd": [
+          "initrd.img"
+        ],
+        "squashfs": [
+          "live/filesystem.squashfs"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "squashfs"
+      ],
+      "markers_any": [
+        "truenas-scale.update"
+      ],
+      "script": [
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic boot=live ip=dhcp fetch={http_isofile} gfxpayload=text quiet nomodeset console=tty0",
+        "initrd {http_iso}/{f:initrd}",
+        "boot"
+      ],
+      "warnings": [
+        "Sperimentale: l'installer si avvia ma può fermarsi cercando TrueNAS-SCALE.update. Servono almeno 8 GB di RAM (la ISO intera viene scaricata in memoria)."
       ]
     },
     {
       "id": "debian-live",
-      "name": "Debian live (e derivate: Kali, Rescuezilla…)",
+      "name": "Debian live (e derivate: Kali, openmediavault, Rescuezilla…)",
       "category": "os",
       "platforms": [
         "bios",
@@ -193,8 +279,13 @@
         "initrd",
         "squashfs"
       ],
+      "markers_none": [
+        "live/tails.module",
+        "truenas-scale.update",
+        "casper"
+      ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=live components ip=dhcp fetch={http_iso}/{f:squashfs}",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic boot=live components ip=dhcp fetch={http_iso}/{f:squashfs}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
@@ -204,7 +295,7 @@
     },
     {
       "id": "ubuntu-casper",
-      "name": "Ubuntu e derivate (casper)",
+      "name": "Ubuntu e derivate (casper: Mint, Zorin, Pop!_OS, elementary)",
       "category": "os",
       "platforms": [
         "bios",
@@ -215,13 +306,16 @@
         "kernel": [
           "casper/vmlinuz",
           "casper/vmlinuz.efi",
-          "casper/hwe-vmlinuz"
+          "casper/hwe-vmlinuz",
+          "casper/vmlinuz*"
         ],
         "initrd": [
           "casper/initrd",
           "casper/initrd.lz",
           "casper/initrd.gz",
-          "casper/hwe-initrd"
+          "casper/initrd.lz4",
+          "casper/hwe-initrd",
+          "casper/initrd*"
         ]
       },
       "require": [
@@ -229,13 +323,14 @@
         "initrd"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=casper netboot=url url={http_isofile} ip=dhcp ---",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic boot=casper netboot=url url={http_isofile} ip=dhcp ---",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
       "warnings": [
-        "La ISO intera viene scaricata in RAM dal client: serve RAM >= dimensione ISO + 1,5 GB."
-      ]
+        "La ISO intera viene scaricata nella RAM del PC: servono almeno dimensione ISO + 1,5 GB (Ubuntu Desktop 24.04 = 6,6 GB, quindi 8 GB di RAM)."
+      ],
+      "notes": "casper accetta url= solo se termina in .iso (per questo si usa il file ISO intero)."
     },
     {
       "id": "debian-installer",
@@ -255,7 +350,10 @@
         "initrd": [
           "install.amd/initrd.gz",
           "install/initrd.gz",
-          "install.386/initrd.gz"
+          "install.386/initrd.gz",
+          "install.amd/initrd",
+          "install/initrd",
+          "install.386/initrd"
         ]
       },
       "require": [
@@ -263,12 +361,12 @@
         "initrd"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} vga=788 --- quiet",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic vga=788 --- quiet",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
       "warnings": [
-        "L'initrd della ISO cerca un CD-ROM: se l'installer si ferma su 'rilevamento CD', usa la ricetta netboot (Pixio scarica kernel e initrd netboot ufficiali se c'è internet)."
+        "L'initrd della ISO cerca un CD-ROM: se l'installazione si ferma su \"rilevamento del CD\", scegli \"nessun CD\" e prosegui con un mirror di rete."
       ]
     },
     {
@@ -286,22 +384,26 @@
         ],
         "initrd": [
           "images/pxeboot/initrd.img"
+        ],
+        "stage2": [
+          "images/install.img"
         ]
       },
       "require": [
         "kernel",
-        "initrd"
-      ],
-      "markers_any": [
-        ".treeinfo"
+        "initrd",
+        "stage2"
       ],
       "markers_none": [
         "liveos/squashfs.img"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} inst.stage2={http_iso} inst.repo={http_iso} ip=dhcp",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic inst.stage2={http_iso} inst.repo={http_iso} ip=dhcp",
         "initrd {http_iso}/{f:initrd}",
         "boot"
+      ],
+      "warnings": [
+        "Le ISO \"boot\" minimali non contengono i pacchetti: dopo l'avvio indica un mirror di rete come sorgente di installazione. Servono almeno 2 GB di RAM."
       ]
     },
     {
@@ -316,10 +418,12 @@
       "files": {
         "kernel": [
           "images/pxeboot/vmlinuz",
+          "boot/x86_64/loader/linux",
           "isolinux/vmlinuz"
         ],
         "initrd": [
           "images/pxeboot/initrd.img",
+          "boot/x86_64/loader/initrd",
           "isolinux/initrd.img"
         ],
         "squashfs": [
@@ -331,13 +435,55 @@
         "initrd",
         "squashfs"
       ],
+      "markers_any": [
+        "efi/fedora",
+        "boot/grub2/grub.cfg",
+        "images/pxeboot/vmlinuz"
+      ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} root=live:{http_iso}/{f:squashfs} rd.live.image ip=dhcp",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic root=live:{http_iso}/{f:squashfs} rd.live.image ip=dhcp rd.neednet=1 quiet",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
       "warnings": [
-        "L'immagine live viene scaricata in RAM: serve RAM >= dimensione squashfs + 1 GB."
+        "L'immagine live viene scaricata in RAM: per Fedora Workstation servono almeno 4 GB."
+      ]
+    },
+    {
+      "id": "opensuse-live",
+      "name": "openSUSE Live",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 43,
+      "files": {
+        "kernel": [
+          "boot/x86_64/loader/linux"
+        ],
+        "initrd": [
+          "boot/x86_64/loader/initrd"
+        ],
+        "squashfs": [
+          "liveos/squashfs.img"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "squashfs"
+      ],
+      "markers_none": [
+        "efi/fedora"
+      ],
+      "script": [
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic root=live:{http_isofile} rd.live.image ip=dhcp splash=silent quiet",
+        "initrd {http_iso}/{f:initrd}",
+        "boot"
+      ],
+      "warnings": [
+        "La ISO intera viene messa in un ramdisk: servono almeno 3 GB di RAM."
       ]
     },
     {
@@ -351,10 +497,12 @@
       "priority": 50,
       "files": {
         "kernel": [
-          "sysresccd/boot/x86_64/vmlinuz"
+          "sysresccd/boot/x86_64/vmlinuz",
+          "sysresccd/boot/i686/vmlinuz"
         ],
         "initrd": [
-          "sysresccd/boot/x86_64/sysresccd.img"
+          "sysresccd/boot/x86_64/sysresccd.img",
+          "sysresccd/boot/i686/sysresccd.img"
         ],
         "ucode_intel": [
           "sysresccd/boot/intel_ucode.img"
@@ -368,16 +516,19 @@
         "initrd"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} archisobasedir=sysresccd archiso_http_srv={http_iso}/ ip=dhcp",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic archisobasedir=sysresccd archiso_http_srv={http_iso}/ ip=dhcp iomem=relaxed checksum",
         "?has:ucode_intel initrd {http_iso}/{f:ucode_intel}",
         "?has:ucode_amd initrd {http_iso}/{f:ucode_amd}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
+      ],
+      "warnings": [
+        "Il sistema (circa 1 GB) viene scaricato in RAM: servono almeno 2 GB sul PC."
       ]
     },
     {
       "id": "archiso",
-      "name": "Arch Linux (archiso)",
+      "name": "Arch Linux (archiso: EndeavourOS, BlackArch, Garuda)",
       "category": "os",
       "platforms": [
         "bios",
@@ -405,11 +556,14 @@
         "initrd"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} archisobasedir=arch archiso_http_srv={http_iso}/ ip=dhcp",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic archisobasedir=arch archiso_http_srv={http_iso}/ ip=dhcp net.ifnames=0",
         "?has:ucode_intel initrd {http_iso}/{f:ucode_intel}",
         "?has:ucode_amd initrd {http_iso}/{f:ucode_amd}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
+      ],
+      "warnings": [
+        "Il sistema live viene scaricato in RAM: servono almeno 2,5 GB sul PC."
       ]
     },
     {
@@ -440,11 +594,51 @@
         "initrd"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} misobasedir=manjaro miso_http_srv={http_iso}/ ip=dhcp",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic misobasedir=manjaro miso_http_srv={http_iso}/ ip=dhcp",
         "?has:ucode_intel initrd {http_iso}/{f:ucode_intel}",
         "?has:ucode_amd initrd {http_iso}/{f:ucode_amd}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
+      ]
+    },
+    {
+      "id": "acronis",
+      "name": "Acronis / bootwiz (sperimentale)",
+      "category": "tool",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 55,
+      "files": {
+        "kernel": [
+          "recovery manager/kernel64.dat",
+          "recovery manager/kernel.dat",
+          "kernel64.dat",
+          "kernel.dat"
+        ],
+        "initrd": [
+          "recovery manager/ramdisk_merged64.dat",
+          "recovery manager/ramdisk_merged.dat",
+          "ramdisk_merged64.dat",
+          "ramdisk.dat"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
+      "markers_any": [
+        "bootwiz.cfg",
+        "bootmenu.exe"
+      ],
+      "script": [
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic quiet noapic vga=791",
+        "initrd {http_iso}/{f:initrd}",
+        "boot"
+      ],
+      "warnings": [
+        "Sperimentale: i supporti Acronis non sono pensati per l'avvio da rete. Se non parte, usa una chiavetta creata con Acronis Media Builder."
       ]
     },
     {
@@ -479,14 +673,14 @@
         "modloop"
       ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} ip=dhcp modules=loop,squashfs,sd-mod,usb-storage modloop={http_iso}/{f:modloop} alpine_repo={http_iso}/apks quiet",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic modules=loop,squashfs,sd-mod,usb-storage quiet ip=dhcp modloop={http_iso}/{f:modloop} alpine_repo={http_iso}/apks",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ]
     },
     {
       "id": "opensuse",
-      "name": "openSUSE installer",
+      "name": "openSUSE / SLES installer",
       "category": "os",
       "platforms": [
         "bios",
@@ -505,15 +699,62 @@
         "kernel",
         "initrd"
       ],
+      "markers_any": [
+        "media.1/media",
+        ".treeinfo",
+        "boot/x86_64/root"
+      ],
+      "markers_none": [
+        "liveos/squashfs.img"
+      ],
       "script": [
-        "kernel {http_iso}/{f:kernel} initrd={fn:initrd} install={http_iso}/ netsetup=dhcp",
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic install={http_iso}/ netsetup=dhcp splash=silent showopts",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ]
     },
     {
+      "id": "proxmox",
+      "name": "Proxmox VE installer",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 65,
+      "files": {
+        "kernel": [
+          "boot/linux26"
+        ],
+        "initrd": [
+          "boot/initrd.img"
+        ],
+        "squashfs": [
+          "pve-installer.squashfs"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
+      "markers_any": [
+        "pve-installer.squashfs",
+        ".pve-cd-id.txt",
+        "proxmox"
+      ],
+      "script": [
+        "kernel {http_iso}/{f:kernel} initrd=initrd.magic ro ramdisk_size=16777216 rw quiet splash=silent",
+        "initrd {http_iso}/{f:initrd}",
+        "initrd {http_isofile} proxmox.iso",
+        "boot"
+      ],
+      "warnings": [
+        "L'installer cerca la ISO dentro il proprio ramdisk: Pixio gliela passa come secondo initrd. Servono almeno 4 GB di RAM sul PC."
+      ]
+    },
+    {
       "id": "esxi",
-      "name": "VMware ESXi installer",
+      "name": "VMware ESXi installer (solo UEFI)",
       "category": "os",
       "platforms": [
         "efi"
@@ -524,7 +765,11 @@
           "efi/boot/bootx64.efi"
         ],
         "bootcfg": [
+          "boot.cfg",
           "efi/boot/boot.cfg"
+        ],
+        "mbootc32": [
+          "mboot.c32"
         ]
       },
       "require": [
@@ -532,15 +777,57 @@
         "bootcfg"
       ],
       "markers_any": [
+        "mboot.c32",
         "upgrade/metadata.zip",
-        "mboot.c32"
+        "imagedd.bz2"
       ],
       "script": [
-        "kernel {http_iso}/{f:mboot} -c {http_iso}/{f:bootcfg}",
+        "kernel {http_inject}/mboot.efi -c {http_inject}/boot.cfg",
         "boot"
       ],
       "warnings": [
-        "Boot ESXi via HTTP: serve un boot.cfg con prefix impostato; Pixio non lo modifica (funziona con ESXi >= 7 e UEFI)."
+        "Solo UEFI (in BIOS il boot di ESXi via iPXE non è possibile). Pixio prepara mboot.efi e un boot.cfg adattato quando abiliti la voce. Servono almeno 8 GB di RAM."
+      ]
+    },
+    {
+      "id": "freedos",
+      "name": "FreeDOS / DOS (ISO in RAM, solo BIOS)",
+      "category": "tool",
+      "platforms": [
+        "bios"
+      ],
+      "priority": 80,
+      "files": {},
+      "require": [],
+      "markers_any": [
+        "fdsetup",
+        "freedos",
+        "kernel.sys",
+        "fdauto.bat"
+      ],
+      "script": [
+        "kernel {http_boot}/memdisk iso raw",
+        "initrd {http_isofile}",
+        "boot"
+      ],
+      "warnings": [
+        "Solo BIOS: la ISO viene caricata tutta in RAM."
+      ]
+    },
+    {
+      "id": "tails",
+      "name": "Tails (non avviabile via rete)",
+      "category": "os",
+      "platforms": [],
+      "priority": 85,
+      "files": {},
+      "require": [],
+      "markers_any": [
+        "live/tails.module"
+      ],
+      "script": [],
+      "warnings": [
+        "Tails non supporta l'avvio da rete: va usata da chiavetta USB o DVD."
       ]
     },
     {
@@ -560,7 +847,7 @@
         "boot"
       ],
       "warnings": [
-        "Solo BIOS. La ISO intera va in RAM. Funziona con piccole ISO di utilità (DOS, diagnostica); non con installer Linux/Windows."
+        "Solo BIOS, ISO sotto i 2 GB, tutta in RAM. Va bene per strumenti DOS e diagnostica; con gli installer Linux o Windows non funziona."
       ]
     },
     {
@@ -579,7 +866,7 @@
         "sanboot --no-describe --drive 0x80 {http_isofile}"
       ],
       "warnings": [
-        "Sperimentale: il sistema avviato deve saper continuare a leggere la ISO da solo. Raramente funziona con installer completi."
+        "Sperimentale: il disco virtuale sparisce appena il sistema carica i propri driver, quindi con gli installer completi quasi sempre fallisce."
       ]
     },
     {
