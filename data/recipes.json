@@ -2,9 +2,36 @@
   "_doc": "Ricette di boot Pixio. Ordine di valutazione: priority crescente. 'files' = candidati (case-insensitive) risolti al rilevamento; 'require' = chiavi che devono esistere; 'markers_any'/'markers_all' = percorsi aggiuntivi. Nello script: {http_iso} {http_isofile} {http_boot} {http_inject} {server_ip} {slug} {f:chiave} (percorso risolto) {fn:chiave} (solo nome file). Righe con prefisso '?flag ' o '?!flag ' sono condizionali (flag: smb_export).",
   "types": [
     {
-      "id": "windows", "name": "Installazione Windows", "category": "os", "platforms": ["bios", "efi"], "priority": 10,
-      "files": {"bootwim": ["sources/boot.wim"], "bcd": ["boot/bcd"], "bootsdi": ["boot/boot.sdi"], "install": ["sources/install.wim", "sources/install.esd"]},
-      "require": ["bootwim", "bcd", "bootsdi", "install"],
+      "id": "windows",
+      "name": "Installazione Windows",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 10,
+      "files": {
+        "bootwim": [
+          "sources/boot.wim"
+        ],
+        "bcd": [
+          "boot/bcd"
+        ],
+        "bootsdi": [
+          "boot/boot.sdi"
+        ],
+        "install": [
+          "sources/install.wim",
+          "sources/install.esd",
+          "sources/install*.swm"
+        ]
+      },
+      "require": [
+        "bootwim",
+        "bcd",
+        "bootsdi",
+        "install"
+      ],
       "script": [
         "kernel {http_boot}/wimboot",
         "?smb_export initrd {http_inject}/winpeshl.ini winpeshl.ini",
@@ -14,13 +41,49 @@
         "initrd {http_iso}/{f:bootwim} boot.wim",
         "boot"
       ],
-      "warnings_if": {"!smb_export": "Senza 'Installazione Windows via rete' attiva (Impostazioni) il setup parte ma non trova install.wim: dovrai mappare una share a mano da WinPE (Shift+F10, net use)."},
-      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. Con l'opzione SMB attiva, winpeshl.ini + install.cmd mappano \\\\server\\pxe\\<slug> e lanciano setup.exe."
+      "warnings_if": {
+        "!smb_export": "Senza 'Installazione Windows via rete' attiva (Impostazioni) il setup parte ma non trova install.wim: dovrai mappare una share a mano da WinPE (Shift+F10, net use)."
+      },
+      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. Con l'opzione SMB attiva, winpeshl.ini + install.cmd mappano \\\\server\\pxe\\<slug> e lanciano setup.exe.",
+      "warnings": [
+        "Secure Boot deve essere disattivato sul PC (iPXE non è firmato). RAM >= 2 GB. Il PC installa in modalità UEFI o BIOS a seconda di come ha fatto il boot PXE."
+      ]
     },
     {
-      "id": "winpe-tool", "name": "WinPE (strumento)", "category": "tool", "platforms": ["bios", "efi"], "priority": 15,
-      "files": {"bootwim": ["sources/boot.wim", "boot.wim", "hbcd_pe_x64.wim", "hbcd_pe.wim", "strelec64.wim", "medicat.wim"], "bcd": ["boot/bcd", "efi/microsoft/boot/bcd"], "bootsdi": ["boot/boot.sdi", "efi/microsoft/boot/boot.sdi"]},
-      "require": ["bootwim", "bcd", "bootsdi"],
+      "id": "winpe-tool",
+      "name": "WinPE (strumento)",
+      "category": "tool",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 15,
+      "files": {
+        "bootwim": [
+          "sources/boot.wim",
+          "boot.wim",
+          "sstr/strelec*.wim",
+          "hbcd_pe_x64.wim",
+          "hbcd_pe.wim",
+          "medicat.wim",
+          "*.wim"
+        ],
+        "bcd": [
+          "boot/bcd",
+          "sstr/bcd",
+          "efi/microsoft/boot/bcd"
+        ],
+        "bootsdi": [
+          "boot/boot.sdi",
+          "sstr/boot.sdi",
+          "efi/microsoft/boot/boot.sdi"
+        ]
+      },
+      "require": [
+        "bootwim",
+        "bcd",
+        "bootsdi"
+      ],
       "script": [
         "kernel {http_boot}/wimboot",
         "initrd {http_iso}/{f:bcd} BCD",
@@ -28,12 +91,36 @@
         "initrd {http_iso}/{f:bootwim} boot.wim",
         "boot"
       ],
-      "notes": "Hiren's BootCD PE, Strelec, Medicat e simili: WinPE caricato in RAM via wimboot (serve RAM >= dimensione del .wim + 1 GB)."
+      "notes": "Hiren's BootCD PE (completo), Strelec/Medicat (solo PE base: i programmi sono fuori dal wim). Il .wim va tutto in RAM: servono >= 4 GB."
     },
     {
-      "id": "clonezilla", "name": "Clonezilla live", "category": "tool", "platforms": ["bios", "efi"], "priority": 20,
-      "files": {"kernel": ["live/vmlinuz"], "initrd": ["live/initrd.img"], "squashfs": ["live/filesystem.squashfs"]},
-      "require": ["kernel", "initrd", "squashfs"], "markers_any": ["clonezilla-live-version"],
+      "id": "clonezilla",
+      "name": "Clonezilla live",
+      "category": "tool",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 20,
+      "files": {
+        "kernel": [
+          "live/vmlinuz"
+        ],
+        "initrd": [
+          "live/initrd.img"
+        ],
+        "squashfs": [
+          "live/filesystem.squashfs"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "squashfs"
+      ],
+      "markers_any": [
+        "clonezilla-live-version"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=live union=overlay username=user config components quiet noswap edd=on nomodeset nodmraid locales=it_IT.UTF-8 keyboard-layouts=it ocs_live_run=\"ocs-live-general\" ocs_live_extra_param=\"\" ocs_live_batch=\"no\" net.ifnames=0 nosplash noprompt ip=dhcp fetch={http_iso}/{f:squashfs}",
         "initrd {http_iso}/{f:initrd}",
@@ -41,9 +128,33 @@
       ]
     },
     {
-      "id": "gparted", "name": "GParted live", "category": "tool", "platforms": ["bios", "efi"], "priority": 21,
-      "files": {"kernel": ["live/vmlinuz"], "initrd": ["live/initrd.img"], "squashfs": ["live/filesystem.squashfs"]},
-      "require": ["kernel", "initrd", "squashfs"], "markers_any": ["gparted-live-version"],
+      "id": "gparted",
+      "name": "GParted live",
+      "category": "tool",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 21,
+      "files": {
+        "kernel": [
+          "live/vmlinuz"
+        ],
+        "initrd": [
+          "live/initrd.img"
+        ],
+        "squashfs": [
+          "live/filesystem.squashfs"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "squashfs"
+      ],
+      "markers_any": [
+        "gparted-live-version"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=live union=overlay username=user config components noswap noeject ip=dhcp locales=it_IT.UTF-8 keyboard-layouts=it fetch={http_iso}/{f:squashfs}",
         "initrd {http_iso}/{f:initrd}",
@@ -51,42 +162,137 @@
       ]
     },
     {
-      "id": "debian-live", "name": "Debian live (e derivate: Kali, Rescuezilla…)", "category": "os", "platforms": ["bios", "efi"], "priority": 30,
-      "files": {"kernel": ["live/vmlinuz", "live/vmlinuz-*"], "initrd": ["live/initrd.img", "live/initrd.img-*"], "squashfs": ["live/filesystem.squashfs"]},
-      "require": ["kernel", "initrd", "squashfs"],
+      "id": "debian-live",
+      "name": "Debian live (e derivate: Kali, Rescuezilla…)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 30,
+      "files": {
+        "kernel": [
+          "live/vmlinuz",
+          "live/vmlinuz-*"
+        ],
+        "initrd": [
+          "live/initrd.img",
+          "live/initrd.img-*"
+        ],
+        "squashfs": [
+          "live/filesystem.squashfs"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "squashfs"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=live components ip=dhcp fetch={http_iso}/{f:squashfs}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
-      "warnings": ["Il filesystem live viene scaricato in RAM: serve RAM >= dimensione di filesystem.squashfs + 1 GB."]
+      "warnings": [
+        "Il filesystem live viene scaricato in RAM: serve RAM >= dimensione di filesystem.squashfs + 1 GB."
+      ]
     },
     {
-      "id": "ubuntu-casper", "name": "Ubuntu e derivate (casper)", "category": "os", "platforms": ["bios", "efi"], "priority": 31,
-      "files": {"kernel": ["casper/vmlinuz", "casper/vmlinuz.efi", "casper/hwe-vmlinuz"], "initrd": ["casper/initrd", "casper/initrd.lz", "casper/initrd.gz", "casper/hwe-initrd"]},
-      "require": ["kernel", "initrd"],
+      "id": "ubuntu-casper",
+      "name": "Ubuntu e derivate (casper)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 31,
+      "files": {
+        "kernel": [
+          "casper/vmlinuz",
+          "casper/vmlinuz.efi",
+          "casper/hwe-vmlinuz"
+        ],
+        "initrd": [
+          "casper/initrd",
+          "casper/initrd.lz",
+          "casper/initrd.gz",
+          "casper/hwe-initrd"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} boot=casper netboot=url url={http_isofile} ip=dhcp ---",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
-      "warnings": ["La ISO intera viene scaricata in RAM dal client: serve RAM >= dimensione ISO + 1,5 GB."]
+      "warnings": [
+        "La ISO intera viene scaricata in RAM dal client: serve RAM >= dimensione ISO + 1,5 GB."
+      ]
     },
     {
-      "id": "debian-installer", "name": "Debian installer (netinst/DVD)", "category": "os", "platforms": ["bios", "efi"], "priority": 40,
-      "files": {"kernel": ["install.amd/vmlinuz", "install/vmlinuz", "install.386/vmlinuz"], "initrd": ["install.amd/initrd.gz", "install/initrd.gz", "install.386/initrd.gz"]},
-      "require": ["kernel", "initrd"],
+      "id": "debian-installer",
+      "name": "Debian installer (netinst/DVD)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 40,
+      "files": {
+        "kernel": [
+          "install.amd/vmlinuz",
+          "install/vmlinuz",
+          "install.386/vmlinuz"
+        ],
+        "initrd": [
+          "install.amd/initrd.gz",
+          "install/initrd.gz",
+          "install.386/initrd.gz"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} vga=788 --- quiet",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
-      "warnings": ["L'initrd della ISO cerca un CD-ROM: se l'installer si ferma su 'rilevamento CD', usa la ricetta netboot (Pixio scarica kernel e initrd netboot ufficiali se c'è internet)."]
+      "warnings": [
+        "L'initrd della ISO cerca un CD-ROM: se l'installer si ferma su 'rilevamento CD', usa la ricetta netboot (Pixio scarica kernel e initrd netboot ufficiali se c'è internet)."
+      ]
     },
     {
-      "id": "redhat-installer", "name": "Fedora / RHEL / Rocky / Alma installer", "category": "os", "platforms": ["bios", "efi"], "priority": 41,
-      "files": {"kernel": ["images/pxeboot/vmlinuz"], "initrd": ["images/pxeboot/initrd.img"]},
-      "require": ["kernel", "initrd"], "markers_any": [".treeinfo"], "markers_none": ["liveos/squashfs.img"],
+      "id": "redhat-installer",
+      "name": "Fedora / RHEL / Rocky / Alma installer",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 41,
+      "files": {
+        "kernel": [
+          "images/pxeboot/vmlinuz"
+        ],
+        "initrd": [
+          "images/pxeboot/initrd.img"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
+      "markers_any": [
+        ".treeinfo"
+      ],
+      "markers_none": [
+        "liveos/squashfs.img"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} inst.stage2={http_iso} inst.repo={http_iso} ip=dhcp",
         "initrd {http_iso}/{f:initrd}",
@@ -94,20 +300,68 @@
       ]
     },
     {
-      "id": "fedora-live", "name": "Fedora live (e spin)", "category": "os", "platforms": ["bios", "efi"], "priority": 42,
-      "files": {"kernel": ["images/pxeboot/vmlinuz", "isolinux/vmlinuz"], "initrd": ["images/pxeboot/initrd.img", "isolinux/initrd.img"], "squashfs": ["liveos/squashfs.img"]},
-      "require": ["kernel", "initrd", "squashfs"],
+      "id": "fedora-live",
+      "name": "Fedora live (e spin)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 42,
+      "files": {
+        "kernel": [
+          "images/pxeboot/vmlinuz",
+          "isolinux/vmlinuz"
+        ],
+        "initrd": [
+          "images/pxeboot/initrd.img",
+          "isolinux/initrd.img"
+        ],
+        "squashfs": [
+          "liveos/squashfs.img"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "squashfs"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} root=live:{http_iso}/{f:squashfs} rd.live.image ip=dhcp",
         "initrd {http_iso}/{f:initrd}",
         "boot"
       ],
-      "warnings": ["L'immagine live viene scaricata in RAM: serve RAM >= dimensione squashfs + 1 GB."]
+      "warnings": [
+        "L'immagine live viene scaricata in RAM: serve RAM >= dimensione squashfs + 1 GB."
+      ]
     },
     {
-      "id": "sysresccd", "name": "SystemRescue", "category": "tool", "platforms": ["bios", "efi"], "priority": 50,
-      "files": {"kernel": ["sysresccd/boot/x86_64/vmlinuz"], "initrd": ["sysresccd/boot/x86_64/sysresccd.img"], "ucode_intel": ["sysresccd/boot/intel_ucode.img"], "ucode_amd": ["sysresccd/boot/amd_ucode.img"]},
-      "require": ["kernel", "initrd"],
+      "id": "sysresccd",
+      "name": "SystemRescue",
+      "category": "tool",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 50,
+      "files": {
+        "kernel": [
+          "sysresccd/boot/x86_64/vmlinuz"
+        ],
+        "initrd": [
+          "sysresccd/boot/x86_64/sysresccd.img"
+        ],
+        "ucode_intel": [
+          "sysresccd/boot/intel_ucode.img"
+        ],
+        "ucode_amd": [
+          "sysresccd/boot/amd_ucode.img"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} archisobasedir=sysresccd archiso_http_srv={http_iso}/ ip=dhcp",
         "?has:ucode_intel initrd {http_iso}/{f:ucode_intel}",
@@ -117,9 +371,34 @@
       ]
     },
     {
-      "id": "archiso", "name": "Arch Linux (archiso)", "category": "os", "platforms": ["bios", "efi"], "priority": 51,
-      "files": {"kernel": ["arch/boot/x86_64/vmlinuz-linux"], "initrd": ["arch/boot/x86_64/initramfs-linux.img"], "ucode_intel": ["arch/boot/intel-ucode.img", "arch/boot/x86_64/intel-ucode.img"], "ucode_amd": ["arch/boot/amd-ucode.img", "arch/boot/x86_64/amd-ucode.img"]},
-      "require": ["kernel", "initrd"],
+      "id": "archiso",
+      "name": "Arch Linux (archiso)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 51,
+      "files": {
+        "kernel": [
+          "arch/boot/x86_64/vmlinuz-linux"
+        ],
+        "initrd": [
+          "arch/boot/x86_64/initramfs-linux.img"
+        ],
+        "ucode_intel": [
+          "arch/boot/intel-ucode.img",
+          "arch/boot/x86_64/intel-ucode.img"
+        ],
+        "ucode_amd": [
+          "arch/boot/amd-ucode.img",
+          "arch/boot/x86_64/amd-ucode.img"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} archisobasedir=arch archiso_http_srv={http_iso}/ ip=dhcp",
         "?has:ucode_intel initrd {http_iso}/{f:ucode_intel}",
@@ -129,9 +408,32 @@
       ]
     },
     {
-      "id": "manjaro", "name": "Manjaro (miso)", "category": "os", "platforms": ["bios", "efi"], "priority": 52,
-      "files": {"kernel": ["manjaro/boot/x86_64/vmlinuz-x86_64"], "initrd": ["manjaro/boot/x86_64/initramfs-x86_64.img"], "ucode_intel": ["manjaro/boot/intel_ucode.img"], "ucode_amd": ["manjaro/boot/amd_ucode.img"]},
-      "require": ["kernel", "initrd"],
+      "id": "manjaro",
+      "name": "Manjaro (miso)",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 52,
+      "files": {
+        "kernel": [
+          "manjaro/boot/x86_64/vmlinuz-x86_64"
+        ],
+        "initrd": [
+          "manjaro/boot/x86_64/initramfs-x86_64.img"
+        ],
+        "ucode_intel": [
+          "manjaro/boot/intel_ucode.img"
+        ],
+        "ucode_amd": [
+          "manjaro/boot/amd_ucode.img"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} misobasedir=manjaro miso_http_srv={http_iso}/ ip=dhcp",
         "?has:ucode_intel initrd {http_iso}/{f:ucode_intel}",
@@ -141,9 +443,36 @@
       ]
     },
     {
-      "id": "alpine", "name": "Alpine Linux", "category": "os", "platforms": ["bios", "efi"], "priority": 60,
-      "files": {"kernel": ["boot/vmlinuz-lts", "boot/vmlinuz-virt"], "initrd": ["boot/initramfs-lts", "boot/initramfs-virt"], "modloop": ["boot/modloop-lts", "boot/modloop-virt"], "apks": ["apks"]},
-      "require": ["kernel", "initrd", "modloop"],
+      "id": "alpine",
+      "name": "Alpine Linux",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 60,
+      "files": {
+        "kernel": [
+          "boot/vmlinuz-lts",
+          "boot/vmlinuz-virt"
+        ],
+        "initrd": [
+          "boot/initramfs-lts",
+          "boot/initramfs-virt"
+        ],
+        "modloop": [
+          "boot/modloop-lts",
+          "boot/modloop-virt"
+        ],
+        "apks": [
+          "apks"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd",
+        "modloop"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} ip=dhcp modules=loop,squashfs,sd-mod,usb-storage modloop={http_iso}/{f:modloop} alpine_repo={http_iso}/apks quiet",
         "initrd {http_iso}/{f:initrd}",
@@ -151,9 +480,26 @@
       ]
     },
     {
-      "id": "opensuse", "name": "openSUSE installer", "category": "os", "platforms": ["bios", "efi"], "priority": 61,
-      "files": {"kernel": ["boot/x86_64/loader/linux"], "initrd": ["boot/x86_64/loader/initrd"]},
-      "require": ["kernel", "initrd"],
+      "id": "opensuse",
+      "name": "openSUSE installer",
+      "category": "os",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 61,
+      "files": {
+        "kernel": [
+          "boot/x86_64/loader/linux"
+        ],
+        "initrd": [
+          "boot/x86_64/loader/initrd"
+        ]
+      },
+      "require": [
+        "kernel",
+        "initrd"
+      ],
       "script": [
         "kernel {http_iso}/{f:kernel} initrd={fn:initrd} install={http_iso}/ netsetup=dhcp",
         "initrd {http_iso}/{f:initrd}",
@@ -161,43 +507,102 @@
       ]
     },
     {
-      "id": "esxi", "name": "VMware ESXi installer", "category": "os", "platforms": ["efi"], "priority": 70,
-      "files": {"mboot": ["efi/boot/bootx64.efi"], "bootcfg": ["efi/boot/boot.cfg"]},
-      "require": ["mboot", "bootcfg"], "markers_any": ["upgrade/metadata.zip", "mboot.c32"],
+      "id": "esxi",
+      "name": "VMware ESXi installer",
+      "category": "os",
+      "platforms": [
+        "efi"
+      ],
+      "priority": 70,
+      "files": {
+        "mboot": [
+          "efi/boot/bootx64.efi"
+        ],
+        "bootcfg": [
+          "efi/boot/boot.cfg"
+        ]
+      },
+      "require": [
+        "mboot",
+        "bootcfg"
+      ],
+      "markers_any": [
+        "upgrade/metadata.zip",
+        "mboot.c32"
+      ],
       "script": [
         "kernel {http_iso}/{f:mboot} -c {http_iso}/{f:bootcfg}",
         "boot"
       ],
-      "warnings": ["Boot ESXi via HTTP: serve un boot.cfg con prefix impostato; Pixio non lo modifica (funziona con ESXi >= 7 e UEFI)."]
+      "warnings": [
+        "Boot ESXi via HTTP: serve un boot.cfg con prefix impostato; Pixio non lo modifica (funziona con ESXi >= 7 e UEFI)."
+      ]
     },
     {
-      "id": "memdisk", "name": "Generico: ISO in RAM (memdisk, solo BIOS)", "category": "tool", "platforms": ["bios"], "priority": 900,
-      "files": {}, "require": [], "manual_only": true,
+      "id": "memdisk",
+      "name": "Generico: ISO in RAM (memdisk, solo BIOS)",
+      "category": "tool",
+      "platforms": [
+        "bios"
+      ],
+      "priority": 900,
+      "files": {},
+      "require": [],
+      "manual_only": true,
       "script": [
         "kernel {http_boot}/memdisk iso raw",
         "initrd {http_isofile}",
         "boot"
       ],
-      "warnings": ["Solo BIOS. La ISO intera va in RAM. Funziona con piccole ISO di utilità (DOS, diagnostica); non con installer Linux/Windows."]
+      "warnings": [
+        "Solo BIOS. La ISO intera va in RAM. Funziona con piccole ISO di utilità (DOS, diagnostica); non con installer Linux/Windows."
+      ]
     },
     {
-      "id": "sanboot", "name": "Generico: sanboot HTTP (sperimentale)", "category": "tool", "platforms": ["bios", "efi"], "priority": 901,
-      "files": {}, "require": [], "manual_only": true,
+      "id": "sanboot",
+      "name": "Generico: sanboot HTTP (sperimentale)",
+      "category": "tool",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "priority": 901,
+      "files": {},
+      "require": [],
+      "manual_only": true,
       "script": [
         "sanboot --no-describe --drive 0x80 {http_isofile}"
       ],
-      "warnings": ["Sperimentale: il sistema avviato deve saper continuare a leggere la ISO da solo. Raramente funziona con installer completi."]
+      "warnings": [
+        "Sperimentale: il sistema avviato deve saper continuare a leggere la ISO da solo. Raramente funziona con installer completi."
+      ]
     },
     {
-      "id": "unknown", "name": "Sconosciuto (nessuna ricetta)", "category": "unknown", "platforms": [], "priority": 9999,
-      "files": {}, "require": [], "manual_only": true, "script": []
+      "id": "unknown",
+      "name": "Sconosciuto (nessuna ricetta)",
+      "category": "unknown",
+      "platforms": [],
+      "priority": 9999,
+      "files": {},
+      "require": [],
+      "manual_only": true,
+      "script": []
     }
   ],
   "builtin": {
     "memtest": {
-      "name": "Memtest86+", "platforms": ["bios", "efi"],
-      "script_bios": ["kernel {http_boot}/memtest86+x64.bin", "boot"],
-      "script_efi": ["chain {http_boot}/memtest86+x64.efi"]
+      "name": "Memtest86+",
+      "platforms": [
+        "bios",
+        "efi"
+      ],
+      "script_bios": [
+        "kernel {http_boot}/memtest86+x64.bin",
+        "boot"
+      ],
+      "script_efi": [
+        "chain {http_boot}/memtest86+x64.efi"
+      ]
     }
   }
 }

@@ -180,6 +180,15 @@ def detect_file(slug, path):
         res["type"] = t["id"]
         res["files"] = files
         res.update(describe(index, root, t, files, label))
+        if t["id"] == "unknown":
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            if 0 < size <= 100 * 1024 * 1024:
+                # mini-ISO (DOS, diagnostica, firmware): memdisk in BIOS e' quasi sempre la scelta giusta
+                res["type"] = "memdisk"
+                res["name"] = res.get("name") or label
         res["top"] = sorted({k.split("/")[0] for k in index})[:40]
     except Exception as e:  # noqa
         log.exception("rilevamento %s", path)

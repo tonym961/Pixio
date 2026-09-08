@@ -386,18 +386,18 @@ def write_inject_files(e):
         shutil.rmtree(d, ignore_errors=True)
         return
     ip = cfg["network"]["server_ip"]
+    wuser = cfg["windows"].get("smb_user") or "pxe"
+    wpass = cfg["windows"].get("smb_password") or ""
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "winpeshl.ini"), "w", newline="\r\n") as f:
         f.write("[LaunchApps]\n\"install.cmd\"\n")
     cmd = f"""@echo off
 title Pixio - installazione Windows
 wpeinit
-echo Abilito l'accesso guest SMB in WinPE...
-reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters /v AllowInsecureGuestAuth /t REG_DWORD /d 1 /f >nul
 set /a tries=0
 :retry
 set /a tries+=1
-net use S: \\\\{ip}\\pxe\\{slug} /persistent:no >nul 2>&1 && goto ok
+net use S: \\\\{ip}\\pxe\\{slug} {wpass} /user:{wuser} /persistent:no >nul 2>&1 && goto ok
 if %tries% GEQ 30 goto fail
 echo In attesa della rete (%tries%/30)...
 ping -n 3 127.0.0.1 >nul

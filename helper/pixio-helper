@@ -240,6 +240,40 @@ def resolve_iso_path(path):
     return rp
 
 
+def has_udf(path):
+    """True se il file ha un descrittore UDF (Windows ISO: install.wim > 4 GB esiste solo nella vista UDF)."""
+    try:
+        with open(path, "rb") as f:
+            for i in range(16, 64):
+                f.seek(i * 2048)
+                blk = f.read(7)
+                if not blk:
+                    break
+                if blk[1:6] in (b"BEA01", b"NSR02", b"NSR03"):
+                    return True
+                if blk[1:6] == b"CD001" and blk[0:1] == b"\xff":
+                    break
+    except OSError:
+        pass
+    return False
+
+
+def mount_iso_ro(rp, mp):
+    """Loop mount in sola lettura, leggibile da tutti; prova udf (se presente), poi automatico."""
+    attempts = []
+    if has_udf(rp):
+        attempts.append(["mount", "-t", "udf", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp])
+    attempts.append(["mount", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp])
+    attempts.append(["mount", "-o", "loop,ro", rp, mp])
+    err = ""
+    for cmd in attempts:
+        p = run(cmd, check=False, timeout=60)
+        if p.returncode == 0:
+            return
+        err = p.stderr.strip() or p.stdout.strip()
+    raise HelperError(f"mount ISO fallito: {err}")
+
+
 def cmd_mount_detect(a):
     """Mount temporaneo (sola lettura) per il rilevamento del tipo, fuori dalla radice HTTP."""
     slug = check_slug(a.slug)
@@ -248,11 +282,7 @@ def cmd_mount_detect(a):
     os.makedirs(mp, exist_ok=True)
     if is_mounted(mp):
         run(["umount", "-l", mp], check=False, timeout=30)
-    p = run(["mount", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp], check=False, timeout=60)
-    if p.returncode != 0:
-        p = run(["mount", "-o", "loop,ro", rp, mp], check=False, timeout=60)
-        if p.returncode != 0:
-            raise HelperError(f"mount ISO fallito: {p.stderr.strip()}")
+    mount_iso_ro(rp, mp)
     out({"ok": True, "mountpoint": mp})
 
 
@@ -277,12 +307,7 @@ def cmd_mount_iso(a):
     os.makedirs(mp, exist_ok=True)
     if is_mounted(mp):
         umount_iso(slug)
-    # iso9660/udf: mode/dmode rendono tutto leggibile da www-data
-    p = run(["mount", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp], check=False, timeout=60)
-    if p.returncode != 0:
-        p = run(["mount", "-o", "loop,ro", rp, mp], check=False, timeout=60)
-        if p.returncode != 0:
-            raise HelperError(f"mount ISO fallito: {p.stderr.strip()}")
+    mount_iso_ro(rp, mp)
     os.makedirs(HTTP_ISOFILE, exist_ok=True)
     link = f"{HTTP_ISOFILE}/{slug}.iso"
     try:
@@ -482,13 +507,17 @@ def render_smb(cfg):
             "",
         ]
     if win.get("smb_export_enabled", False):
+        wuser = win.get("smb_user") or "pxe"
+        if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", wuser):
+            raise HelperError("nome utente share Windows non valido")
         lines += [
             "[pxe]",
             "   comment = ISO montate per il setup di Windows (sola lettura)",
             f"   path = {HTTP_ISO}",
             "   browseable = no",
             "   read only = yes",
-            "   guest ok = yes",
+            "   guest ok = no",
+            f"   valid users = {wuser}",
             "   force user = nobody",
             "",
         ]
@@ -595,6 +624,25 @@ def cmd_samba_password(a):
     out({"ok": True})
 
 
+def cmd_windows_share_password(a):
+    """Crea (se manca) l'utente di sistema/Samba per la share [pxe] e ne imposta la password (da stdin)."""
+    cfg = load_config()
+    wuser = (cfg.get("windows", {}).get("smb_user") or "pxe")
+    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", wuser):
+        raise HelperError("nome utente non valido")
+    pw = sys.stdin.readline().rstrip("\n")
+    if len(pw) < 8 or "\x00" in pw:
+        raise HelperError("password troppo corta")
+    import pwd
+    try:
+        pwd.getpwnam(wuser)
+    except KeyError:
+        run(["useradd", "--system", "-M", "-s", "/usr/sbin/nologin", "-d", "/nonexistent", wuser])
+    run(["smbpasswd", "-a", "-s", wuser], input_text=f"{pw}\n{pw}\n")
+    run(["smbpasswd", "-e", wuser], check=False)
+    out({"ok": True, "user": wuser})
+
+
 def cmd_service(a):
     unit = SERVICES.get(a.name)
     if not unit:
@@ -665,6 +713,7 @@ def main():
     p = sp.add_parser("apply"); p.add_argument("what"); p.set_defaults(fn=cmd_apply)
     p = sp.add_parser("render"); p.add_argument("what"); p.set_defaults(fn=cmd_render)
     p = sp.add_parser("samba-password"); p.set_defaults(fn=cmd_samba_password)
+    p = sp.add_parser("windows-share-password"); p.set_defaults(fn=cmd_windows_share_password)
     p = sp.add_parser("service"); p.add_argument("name"); p.add_argument("action"); p.set_defaults(fn=cmd_service)
     p = sp.add_parser("rebuild-ipxe"); p.add_argument("ip"); p.set_defaults(fn=cmd_rebuild_ipxe)
     p = sp.add_parser("chown-library"); p.set_defaults(fn=cmd_chown_library)

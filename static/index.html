@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<title>Pixio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B7285'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='%23fff' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Schermata di login: visibile finché /api/auth/status non risponde, così non compare mai contenuto non autenticato -->
+<div id="login" class="login">
+  <form id="login-form" class="card login-card" autocomplete="off" novalidate>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">P</div>
+      <div><div class="name">PIXIO</div><div class="host" id="login-host">server PXE</div></div>
+    </div>
+    <h2 id="login-title">Accesso</h2>
+    <p class="hint" id="login-hint">Verifica della sessione in corso…</p>
+    <div class="field">
+      <label for="login-pw">Password</label>
+      <input id="login-pw" type="password" autocomplete="current-password" required disabled>
+    </div>
+    <div class="field" id="login-confirm-field" hidden>
+      <label for="login-pw2">Conferma password</label>
+      <input id="login-pw2" type="password" autocomplete="new-password">
+    </div>
+    <div class="alert bad" id="login-error" hidden role="alert"></div>
+    <button class="btn primary wide" id="login-btn" type="submit" disabled>Accedi</button>
+  </form>
+</div>
+
+<!-- Applicazione -->
+<div id="app" class="app" hidden>
+  <aside class="side">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">P</div>
+      <div><div class="name">PIXIO</div><div class="host" id="side-host">…</div></div>
+    </div>
+    <nav class="navlist" aria-label="Sezioni">
+      <a class="nav" href="#/dashboard" data-route="dashboard">Dashboard</a>
+      <a class="nav" href="#/iso" data-route="iso"><span>ISO</span><span class="n" id="n-iso"></span></a>
+      <a class="nav" href="#/menu" data-route="menu"><span>Menu di boot</span><span class="n" id="n-menu"></span></a>
+      <a class="nav" href="#/impostazioni" data-route="impostazioni">Impostazioni</a>
+      <a class="nav" href="#/client" data-route="client"><span>Client</span><span class="n" id="n-client"></span></a>
+      <a class="nav" href="#/log" data-route="log">Log</a>
+    </nav>
+    <div class="foot">admin · <span class="mono" id="side-version">v1.0</span> · <a href="#" id="logout-link">Esci</a></div>
+  </aside>
+  <main class="main" id="main" tabindex="-1"></main>
+</div>
+
+<!-- Pannello laterale (dettagli ISO) -->
+<div id="drawer-overlay" class="drawer-overlay" hidden></div>
+<aside id="drawer" class="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+  <div class="drawer-hd">
+    <h3 id="drawer-title">Dettagli</h3>
+    <button class="icon-btn" type="button" id="drawer-close" aria-label="Chiudi pannello">×</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<!-- Finestre modali, area di rilascio file, notifiche -->
+<div id="modal" class="modal-overlay" hidden></div>
+<div id="dropzone" class="dropzone" hidden aria-hidden="true"><div class="dz-box">Rilascia qui i file ISO per caricarli nella libreria locale</div></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/static/app.js"></script>
+<script src="/static/catalog.js"></script>
+<script src="/static/menu.js"></script>
+<script src="/static/settings.js"></script>
+<script src="/static/clients.js"></script>
+<script src="/static/logs.js"></script>
+</body>
+</html>

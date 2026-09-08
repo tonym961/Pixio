@@ -74,6 +74,8 @@ DEFAULT_CONFIG = {
     },
     "windows": {
         "smb_export_enabled": False,   # ri-esporta le ISO Windows montate per il setup (OFF di default)
+        "smb_user": "pxe",             # utente Samba dedicato (i guest SMB sono bloccati da WinPE)
+        "smb_password": "",            # generata quando si attiva l'opzione
     },
     "scan": {"auto": True, "interval_min": 10},
     "auth": {"password_hash": "", "session_hours": 12},
