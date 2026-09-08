@@ -5,7 +5,121 @@
   const P = window.Pixio;
   const esc = P.esc; const $ = P.$; const $$ = P.$$;
 
-  const M = { data: null, root: null, platform: 'efi', dragging: null, saving: false };
+  const M = { data: null, root: null, platform: 'efi', dragging: null, saving: false, bgStamp: Date.now() };
+
+  // ---------------------------------------------------------------- tema (aspetto del menu iPXE)
+  const THEME_DEFAULT = { bg: '#0B1220', accent: '#3FC1CF', fg: '#E6ECF2', muted: '#7C8A99', logo_text: 'PIXIO', subtitle: 'Avvio da rete' };
+  const THEME_COLORS = [['bg', 'Sfondo', 'Colore di fondo del menu'], ['accent', 'Accento', 'Titoli dei gruppi e voce selezionata'], ['fg', 'Testo', 'Voci normali'], ['muted', 'Testo attenuato', 'Note e piè di pagina']];
+  const HEX_RE = /^#?([0-9a-fA-F]{6})$/;
+  const BG_URL = '/pxe/inject/theme/bg.png';
+
+  function normHex(v, fallback) {
+    const m = HEX_RE.exec(String(v || '').trim());
+    return m ? ('#' + m[1]).toUpperCase() : fallback;
+  }
+
+  function currentTheme() {
+    const t = Object.assign({}, THEME_DEFAULT, (M.data && M.data.settings && M.data.settings.theme) || {});
+    THEME_COLORS.forEach(([k]) => { t[k] = normHex(t[k], THEME_DEFAULT[k]); });
+    return t;
+  }
+
+  function themeHtml(s, entries, groups) {
+    const t = currentTheme();
+    const swatches = THEME_COLORS.map(([k, label, hint]) => `
+      <div class="field swatch">
+        <label for="m-th-${k}">${esc(label)}</label>
+        <div class="swatch-row">
+          <input type="color" id="m-th-${k}" data-th-color="${k}" value="${esc(t[k])}" aria-label="${esc(label)} (selettore)">
+          <input type="text" class="mono" data-th-hex="${k}" value="${esc(t[k])}" maxlength="7" spellcheck="false" autocomplete="off" pattern="#[0-9a-fA-F]{6}" aria-label="${esc(label)} (esadecimale)">
+        </div>
+        <div class="hint">${esc(hint)}</div>
+      </div>`).join('');
+    // finto menu: primo gruppo + prime voci reali (o segnaposto), una voce selezionata
+    const g = groups[0] || 'Sistemi';
+    const items = entries.filter((e) => (e.group || 'Altro') === g).slice(0, 3).map((e) => e.name);
+    while (items.length < 3) items.push(['Installazione', 'Strumenti di ripristino', 'Memtest86+'][items.length]);
+    const sel = s.default && s.default !== 'local' && s.default !== 'shell' ? (entries.find((e) => e.slug === s.default) || {}).name : null;
+    const selIdx = Math.max(0, items.indexOf(sel));
+    const rows = items.map((n, i) => `<div class="${i === selIdx ? 'sel' : 'it'}">${esc(n)}</div>`).join('');
+    return `
+      <div class="card theme-card">
+        <div class="theme-hd"><div><h3>Aspetto del menu</h3><div class="hint">Colori, logo e sottotitolo dello sfondo grafico. L'anteprima è indicativa: si applica con "Salva".</div></div>
+          <button class="btn small" type="button" id="m-th-reset">Ripristina predefiniti</button></div>
+        <div class="theme-grid">
+          <div>
+            <div class="swatches">${swatches}</div>
+            <div class="row2">
+              <div class="field"><label for="m-th-logo">Logo (testo)</label><input id="m-th-logo" data-th-text="logo_text" value="${esc(t.logo_text)}" maxlength="16"><div class="hint">Max 16 caratteri.</div></div>
+              <div class="field"><label for="m-th-sub">Sottotitolo</label><input id="m-th-sub" data-th-text="subtitle" value="${esc(t.subtitle)}" maxlength="40"><div class="hint">Max 40 caratteri.</div></div>
+            </div>
+          </div>
+          <div class="tprev-wrap">
+            <div class="tprev" id="m-th-prev" aria-label="Anteprima del menu di boot" style="--t-bg:${esc(t.bg)};--t-accent:${esc(t.accent)};--t-fg:${esc(t.fg)};--t-muted:${esc(t.muted)}">
+              <img id="m-th-img" src="${BG_URL}?t=${M.bgStamp}" alt="" width="512" height="384" draggable="false">
+              <div class="tprev-logo"><span class="tl" data-tp="logo_text">${esc(t.logo_text)}</span><span class="ts" data-tp="subtitle">${esc(t.subtitle)}</span></div>
+              <div class="tprev-menu mono">
+                <div class="ttl">${esc(s.title || 'PIXIO - Avvio da rete')}</div>
+                <div class="grp">${esc(g)}</div>
+                ${rows}
+                <div class="grp">Sistema</div>
+                <div class="it">Avvia dal disco locale</div>
+                <div class="dim">Avvio automatico tra ${esc(s.timeout != null ? s.timeout : 30)} s…</div>
+              </div>
+            </div>
+            <div class="hint">Anteprima in scala 1:2 (1024×768). L'immagine di sfondo viene rigenerata dal server a ogni salvataggio.</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function bindTheme() {
+    const r = M.root; const prev = $('#m-th-prev', r); if (!prev) return;
+    const img = $('#m-th-img', r);
+    img.addEventListener('error', () => { img.hidden = true; });
+    const apply = (k, v) => { prev.style.setProperty('--t-' + k, v); };
+    $$('[data-th-color]', r).forEach((c) => c.addEventListener('input', () => {
+      const k = c.dataset.thColor; const v = normHex(c.value, THEME_DEFAULT[k]);
+      const h = $(`[data-th-hex="${k}"]`, r); h.value = v; h.classList.remove('invalid');
+      apply(k, v);
+    }));
+    $$('[data-th-hex]', r).forEach((h) => {
+      const sync = () => {
+        const k = h.dataset.thHex; const m = HEX_RE.exec(h.value.trim());
+        if (!m) { h.classList.add('invalid'); return; }
+        const v = ('#' + m[1]).toUpperCase();
+        h.classList.remove('invalid'); $(`[data-th-color="${k}"]`, r).value = v; apply(k, v);
+      };
+      h.addEventListener('input', sync);
+      h.addEventListener('blur', () => { const m = HEX_RE.exec(h.value.trim()); if (m) h.value = ('#' + m[1]).toUpperCase(); });
+    });
+    $$('[data-th-text]', r).forEach((i) => i.addEventListener('input', () => {
+      const el = $(`[data-tp="${i.dataset.thText}"]`, r); if (el) el.textContent = i.value;
+    }));
+    $('#m-th-reset', r).addEventListener('click', () => {
+      THEME_COLORS.forEach(([k]) => {
+        $(`[data-th-color="${k}"]`, r).value = THEME_DEFAULT[k];
+        const h = $(`[data-th-hex="${k}"]`, r); h.value = THEME_DEFAULT[k]; h.classList.remove('invalid');
+        apply(k, THEME_DEFAULT[k]);
+      });
+      $$('[data-th-text]', r).forEach((i) => { i.value = THEME_DEFAULT[i.dataset.thText]; const el = $(`[data-tp="${i.dataset.thText}"]`, r); if (el) el.textContent = i.value; });
+      P.toast('Valori predefiniti ripristinati: premi "Salva" per applicarli', 'info');
+    });
+  }
+
+  /** Legge il tema dal form; ritorna null (e mette a fuoco il campo) se un colore non è valido. */
+  function readTheme() {
+    const r = M.root; const t = {};
+    for (const [k, label] of THEME_COLORS) {
+      const h = $(`[data-th-hex="${k}"]`, r); if (!h) return currentTheme();
+      const m = HEX_RE.exec(h.value.trim());
+      if (!m) { P.toast(`Colore "${label}" non valido: usa il formato #RRGGBB`, 'bad'); h.focus(); return null; }
+      t[k] = ('#' + m[1]).toUpperCase();
+    }
+    t.logo_text = ($('#m-th-logo', r).value.trim() || 'PIXIO').slice(0, 16);
+    t.subtitle = $('#m-th-sub', r).value.trim().slice(0, 40);
+    return t;
+  }
 
   async function load() {
     if (!M.root) return;
@@ -64,6 +178,7 @@
             </div></div>
             <div class="field"><label for="m-groups">Gruppi del menu (uno per riga, nell'ordine di visualizzazione)</label><textarea id="m-groups">${esc((s.groups || []).join('\n'))}</textarea></div>
           </form>
+          ${themeHtml(s, entries, groups)}
           <div class="eyebrow" style="margin:6px 0 8px">Ordine delle voci</div>
           ${entries.length
             ? `<ul class="mlist" id="mlist" aria-label="Voci del menu, trascina per riordinare">${listHtml}${sysHtml}</ul><p class="hint" style="margin-top:8px">Trascina una voce (o usa le frecce) per cambiare posizione o gruppo. L'ordine viene salvato subito.</p>`
@@ -86,6 +201,7 @@
       const a = $('a[href^="/boot.ipxe"]', M.root); if (a) a.href = '/boot.ipxe?platform=' + (M.platform === 'efi' ? 'efi' : 'pcbios');
     }));
     bindList();
+    bindTheme();
   }
 
   // ---------------------------------------------------------------- riordino
@@ -153,6 +269,7 @@
     const r = M.root; const btn = $('#menu-save', r);
     const timeout = parseInt($('#m-timeout', r).value, 10);
     if (isNaN(timeout) || timeout < 0) { P.toast('Timeout non valido', 'bad'); $('#m-timeout', r).focus(); return; }
+    const theme = readTheme(); if (!theme) return;
     const settings = {
       title: $('#m-title', r).value.trim() || 'PIXIO - Avvio da rete',
       timeout,
@@ -162,11 +279,14 @@
       show_reboot: $('#m-show_reboot', r).checked,
       show_memtest: $('#m-show_memtest', r).checked,
       groups: $('#m-groups', r).value.split('\n').map((s) => s.trim()).filter(Boolean),
+      theme,
     };
     P.setBusy(btn, true, 'Salvataggio…');
     try {
-      await P.api('PUT', '/api/menu', { settings });
+      const res = await P.api('PUT', '/api/menu', { settings });
+      M.bgStamp = Date.now();                       // forza il ricaricamento dello sfondo rigenerato
       P.toast('Menu salvato e rigenerato');
+      ((res && res.warnings) || []).forEach((w) => P.toast(w, 'warn', 8000));
       await load();
       P.refreshStatus().catch(() => {});
     } catch (e) { P.fail(e); }
