@@ -174,11 +174,25 @@ def _detect_one(slug):
         if d.get("name") and (x.get("name_auto", True)):
             x["name"] = d["name"]
             x["name_auto"] = True
-        if not x.get("group"):
-            t = recipes.get_type(x["type"]) or {}
-            x["group"] = "Strumenti" if t.get("category") == "tool" else "Sistemi operativi"
+        if not x.get("group") or x.get("group_auto", True):
+            x["group"] = auto_group(x)
+            x["group_auto"] = True
         return c
     update_json(C.CATALOG_FILE, upd)
+
+
+SERVER_RE = re.compile(r"\bserver\b|\bsbs\b|small business|\bhyper-v\b", re.I)
+
+
+def auto_group(e):
+    """Gruppo predefinito per una ISO: dal tipo di ricetta, separando Windows client e Windows Server."""
+    t = e.get("type") or "unknown"
+    g = recipes.type_group(t)
+    if t in ("windows", "windows-legacy"):
+        d = e.get("detect") or {}
+        text = " ".join([str(d.get("name") or ""), " ".join(d.get("editions") or []), str(e.get("file") or "")])
+        return "Windows Server" if SERVER_RE.search(text) else "Windows"
+    return g
 
 
 def redetect(slug):
@@ -284,6 +298,7 @@ def update(slug, patch):
         e["name_auto"] = False
     if "group" in patch:
         e["group"] = str(patch["group"]).strip()[:60]
+        e["group_auto"] = False        # scelta dell'utente: le scansioni successive non la toccano
     if "order" in patch:
         e["order"] = int(patch["order"])
     if "type" in patch:

@@ -40,6 +40,12 @@ def type_name(type_id):
     return t["name"] if t else type_id
 
 
+def type_group(type_id):
+    """Gruppo predefinito del menu per questo tipo di ISO."""
+    t = get_type(type_id)
+    return (t or {}).get("group", "")
+
+
 def builtin(name):
     return load().get("builtin", {}).get(name)
 

@@ -52,7 +52,8 @@
       "warnings": [
         "Secure Boot deve essere disattivato sul PC (iPXE non è firmato). RAM >= 2 GB. Il PC installa in modalità UEFI o BIOS a seconda di come ha fatto il boot PXE."
       ],
-      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. winpeshl.ini/install.cmd (generati da Pixio) caricano i driver iniettati con drvload, mappano \\\\server\\pxe e lanciano setup.exe."
+      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. winpeshl.ini/install.cmd (generati da Pixio) caricano i driver iniettati con drvload, mappano \\\\server\\pxe e lanciano setup.exe.",
+      "group": "Windows"
     },
     {
       "id": "windows-legacy",
@@ -70,7 +71,8 @@
       "script": [],
       "warnings": [
         "Le ISO di Windows XP, 2000 e 2003 usano il vecchio avvio da CD (niente boot.wim): non si avviano via rete con iPXE. Servono una chiavetta o un CD, oppure RIS/WDS."
-      ]
+      ],
+      "group": "Windows"
     },
     {
       "id": "driver-iso",
@@ -88,7 +90,8 @@
       "script": [],
       "warnings": [
         "È una raccolta di driver, non un disco avviabile. Estrai i driver che ti servono e caricali nella pagina Driver di Pixio."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "winpe-tool",
@@ -136,7 +139,8 @@
       "warnings": [
         "Il .wim viene caricato tutto in RAM: servono almeno 4 GB sul PC (Hiren's ~3 GB, Strelec ~4,5 GB). Secure Boot deve essere disattivato."
       ],
-      "notes": "Hiren's BootCD PE è completo dentro il .wim. Strelec e Medicat tengono i programmi fuori dal wim: via rete si ottiene solo il WinPE di base."
+      "notes": "Hiren's BootCD PE è completo dentro il .wim. Strelec e Medicat tengono i programmi fuori dal wim: via rete si ottiene solo il WinPE di base.",
+      "group": "Strumenti"
     },
     {
       "id": "clonezilla",
@@ -175,7 +179,8 @@
       "warnings": [
         "Il filesystem live (circa 500 MB) viene scaricato in RAM: servono almeno 1,5 GB sul PC."
       ],
-      "notes": "Riga di comando presa dal syslinux.cfg della ISO 3.3.3, con lingua e tastiera italiane."
+      "notes": "Riga di comando presa dal syslinux.cfg della ISO 3.3.3, con lingua e tastiera italiane.",
+      "group": "Strumenti"
     },
     {
       "id": "gparted",
@@ -213,7 +218,8 @@
       ],
       "warnings": [
         "Il filesystem live viene scaricato in RAM: serve almeno 1 GB sul PC."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "truenas",
@@ -250,7 +256,8 @@
       ],
       "warnings": [
         "Sperimentale: l'installer si avvia ma può fermarsi cercando TrueNAS-SCALE.update. Servono almeno 8 GB di RAM (la ISO intera viene scaricata in memoria)."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "debian-live",
@@ -291,7 +298,8 @@
       ],
       "warnings": [
         "Il filesystem live viene scaricato in RAM: serve RAM >= dimensione di filesystem.squashfs + 1 GB."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "ubuntu-casper",
@@ -330,7 +338,8 @@
       "warnings": [
         "La ISO intera viene scaricata nella RAM del PC: servono almeno dimensione ISO + 1,5 GB (Ubuntu Desktop 24.04 = 6,6 GB, quindi 8 GB di RAM)."
       ],
-      "notes": "casper accetta url= solo se termina in .iso (per questo si usa il file ISO intero)."
+      "notes": "casper accetta url= solo se termina in .iso (per questo si usa il file ISO intero).",
+      "group": "Linux"
     },
     {
       "id": "debian-installer",
@@ -367,7 +376,8 @@
       ],
       "warnings": [
         "L'initrd della ISO cerca un CD-ROM: se l'installazione si ferma su \"rilevamento del CD\", scegli \"nessun CD\" e prosegui con un mirror di rete."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "redhat-installer",
@@ -404,7 +414,8 @@
       ],
       "warnings": [
         "Le ISO \"boot\" minimali non contengono i pacchetti: dopo l'avvio indica un mirror di rete come sorgente di installazione. Servono almeno 2 GB di RAM."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "fedora-live",
@@ -447,7 +458,8 @@
       ],
       "warnings": [
         "L'immagine live viene scaricata in RAM: per Fedora Workstation servono almeno 4 GB."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "opensuse-live",
@@ -484,7 +496,8 @@
       ],
       "warnings": [
         "La ISO intera viene messa in un ramdisk: servono almeno 3 GB di RAM."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "sysresccd",
@@ -524,7 +537,8 @@
       ],
       "warnings": [
         "Il sistema (circa 1 GB) viene scaricato in RAM: servono almeno 2 GB sul PC."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "archiso",
@@ -564,7 +578,8 @@
       ],
       "warnings": [
         "Il sistema live viene scaricato in RAM: servono almeno 2,5 GB sul PC."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "manjaro",
@@ -599,7 +614,8 @@
         "?has:ucode_amd initrd {http_iso}/{f:ucode_amd}",
         "initrd {http_iso}/{f:initrd}",
         "boot"
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "acronis",
@@ -639,7 +655,8 @@
       ],
       "warnings": [
         "Sperimentale: i supporti Acronis non sono pensati per l'avvio da rete. Se non parte, usa una chiavetta creata con Acronis Media Builder."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "alpine",
@@ -676,7 +693,8 @@
         "kernel {http_iso}/{f:kernel} initrd=initrd.magic modules=loop,squashfs,sd-mod,usb-storage quiet ip=dhcp modloop={http_iso}/{f:modloop} alpine_repo={http_iso}/apks",
         "initrd {http_iso}/{f:initrd}",
         "boot"
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "opensuse",
@@ -711,7 +729,8 @@
         "kernel {http_iso}/{f:kernel} initrd=initrd.magic install={http_iso}/ netsetup=dhcp splash=silent showopts",
         "initrd {http_iso}/{f:initrd}",
         "boot"
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "proxmox",
@@ -750,7 +769,8 @@
       ],
       "warnings": [
         "L'installer cerca la ISO dentro il proprio ramdisk: Pixio gliela passa come secondo initrd. Servono almeno 4 GB di RAM sul PC."
-      ]
+      ],
+      "group": "Hypervisor"
     },
     {
       "id": "esxi",
@@ -787,7 +807,8 @@
       ],
       "warnings": [
         "Solo UEFI (in BIOS il boot di ESXi via iPXE non è possibile). Pixio prepara mboot.efi e un boot.cfg adattato quando abiliti la voce. Servono almeno 8 GB di RAM."
-      ]
+      ],
+      "group": "Hypervisor"
     },
     {
       "id": "freedos",
@@ -812,7 +833,8 @@
       ],
       "warnings": [
         "Solo BIOS: la ISO viene caricata tutta in RAM."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "tails",
@@ -828,7 +850,8 @@
       "script": [],
       "warnings": [
         "Tails non supporta l'avvio da rete: va usata da chiavetta USB o DVD."
-      ]
+      ],
+      "group": "Linux"
     },
     {
       "id": "memdisk",
@@ -848,7 +871,8 @@
       ],
       "warnings": [
         "Solo BIOS, ISO sotto i 2 GB, tutta in RAM. Va bene per strumenti DOS e diagnostica; con gli installer Linux o Windows non funziona."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "sanboot",
@@ -867,7 +891,8 @@
       ],
       "warnings": [
         "Sperimentale: il disco virtuale sparisce appena il sistema carica i propri driver, quindi con gli installer completi quasi sempre fallisce."
-      ]
+      ],
+      "group": "Strumenti"
     },
     {
       "id": "unknown",
@@ -896,5 +921,6 @@
         "chain {http_boot}/memtest86+x64.efi"
       ]
     }
-  }
+  },
+  "_groups_doc": "Ogni tipo ha un gruppo predefinito nel menu. Ordine dei gruppi in config menu.groups. Le ISO Windows con edizione 'Server' finiscono in 'Windows Server'."
 }

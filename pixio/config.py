@@ -67,7 +67,7 @@ DEFAULT_CONFIG = {
         "show_shell": True,
         "show_reboot": True,
         "show_memtest": True,
-        "groups": ["Sistemi operativi", "Strumenti"],
+        "groups": ["Strumenti", "Windows", "Windows Server", "Linux", "Hypervisor"],
         "theme": {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99", "logo_text": "PIXIO", "subtitle": "Avvio da rete"},
     },
     "library": {
