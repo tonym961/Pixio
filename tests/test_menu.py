@@ -285,7 +285,7 @@ class MenuTest(unittest.TestCase):
         self.assertIn("-x 1024 -y 768", console[0])
         self.assertNotIn("--picture", console[0])
         self.assertTrue(console[0].endswith("||"), console[0])
-        self.assertLess(script.index("console "), script.index("colour --rgb"))   # console, poi colori
+        self.assertLess(script.index("console "), script.index("colour --basic"))   # console, poi colori
         self.assertLess(script.index("console "), script.index("\n:menu"))        # entrambi prima del menu
 
     def test_13_stile_grafico_ripiega_sul_framebuffer(self):
@@ -321,7 +321,7 @@ class MenuTest(unittest.TestCase):
     def test_15_stile_compatibile_lascia_la_console_del_firmware(self):
         script, console = self.tema(style="compatibile")
         self.assertEqual(console, [], "in compatibilita' non si tocca la console")
-        self.assertIn("colour --rgb", script)          # i colori si impostano comunque
+        self.assertIn("colour --basic", script)          # i colori si impostano comunque
         self.assertIn("cpair --foreground 0 --background 6 2 ||", script)
 
     def test_16_valori_non_validi_tornano_al_predefinito(self):
