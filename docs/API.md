@@ -254,3 +254,31 @@ Nel profilo Windows arriva il campo `settings.target`: `"client"` (predefinito) 
 - Nella GUI: selettore "Tipo di Windows" (Client oppure Server) nella sezione Lingua e area; cambiandolo la sezione Ottimizzazioni
   mostra solo le voci compatibili e avvisa se il profilo ne aveva di incompatibili, offrendo di toglierle.
 - I preset dichiarano `settings.target` coerente (`win-server` è server, gli altri client) e contengono solo voci compatibili.
+
+## 12. Preset dedicati per edizione (Server, 10 LTSC, 11 Pro, 11 LTSC)
+Il campo `editions` del catalogo si estende con due valori: `"10-ltsc"` e `"11-ltsc"`.
+Regola: una voce vale per l'edizione LTSC solo se il componente esiste in quell'edizione. Nelle edizioni Enterprise LTSC
+(Windows 10 LTSC 2019/2021 e Windows 11 LTSC 2024) NON sono presenti Microsoft Store e le app che ne dipendono, Cortana,
+Copilot, widget e notizie, Teams/Chat, Xbox e Game Bar, esperienze consumer, contenuti consigliati del menu Start;
+restano invece telemetria, Windows Search, Defender, SmartScreen, UAC, Windows Update, servizi, rete, effetti visivi,
+energia e componenti opzionali. Su Windows 11 LTSC valgono anche le voci specifiche di Windows 11 che non riguardano i
+componenti assenti (per esempio allineamento della barra applicazioni e menu contestuale classico).
+`settings.target` accetta quindi: `"client"` (10 e 11 con Store), `"10-ltsc"`, `"11-ltsc"`, `"server"`.
+Il filtro vale sia in validazione sia in generazione sia nella GUI; con i target LTSC e server la rimozione delle app dello Store è disattivata.
+
+### Preset richiesti
+Quattro preset Windows tarati per edizione, con `target`, `edition_index`, chiave generica di installazione documentata da Microsoft
+(chiave KMS client pubblica, che non attiva nulla da sola: va indicata nella descrizione) e selezione di ottimizzazioni coerente:
+- `win11-pro`: Windows 11 Pro. `edition_index` "Windows 11 Pro", chiave `W269N-WFGWX-YVC9B-4J6C9-T83GX`, target client.
+  Ottimizzazioni: privacy e telemetria, niente Copilot, widget, contenuti consigliati e app consigliate, Store ripulito
+  (rimozione app consumer), Esplora file da tecnico, prestazioni moderate. Niente bypass requisiti.
+- `win11-ltsc`: Windows 11 Enterprise LTSC 2024. `edition_index` "Windows 11 Enterprise LTSC 2024", chiave `M7XTQ-FN8P6-TTKYV-9D4CC-J462D`,
+  target 11-ltsc, nessuna app da rimuovere, niente voci su Store/Copilot/widget/Teams. Bypass requisiti attivo (le LTSC finiscono spesso
+  su macchine più vecchie) e spiegato nella descrizione.
+- `win10-ltsc`: Windows 10 Enterprise LTSC 2021. `edition_index` "Windows 10 Enterprise LTSC 2021", chiave `M7XTQ-FN8P6-TTKYV-9D4CC-J462D`,
+  target 10-ltsc, nessuna app da rimuovere, nessuna voce solo-Windows-11.
+- `winserver`: Windows Server 2022/2025 Standard con interfaccia grafica. `edition_index` "Windows Server 2022 SERVERSTANDARD",
+  chiave `VDYBN-27WPP-V4HQT-9VMD4-VMK7H`, target server, desktop remoto attivo, spooler senza connessioni remote, SMB1 disattivato,
+  piano prestazioni elevate, niente sospensione, aggiornamenti senza riavvio automatico.
+I preset generici esistenti (`win-postazione-aziendale`, `win-pc-singolo`, `win-laboratorio`, `win-minimale`, `win-privacy`, `win-prestazioni`)
+restano, con `target` coerente. Nella GUI i preset vanno mostrati raggruppati: prima quelli per edizione, poi quelli generici.
