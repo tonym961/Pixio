@@ -426,3 +426,31 @@ raggruppate come stanno nella sorgente, usando `rel_path` (il percorso relativo 
 - Le colonne e le azioni delle righe restano quelle di oggi, compreso l'interruttore "Nel menu" e il pulsante Dettagli.
 - Sopra l'elenco resta la riga dei riepiloghi (totale, nel menu, per sorgente) già presente.
 La modifica riguarda solo `static/catalog.js` e `static/style.css`: nessuna API nuova, `rel_path` e `source_name` sono già esposti.
+
+## 17. Più risposte per la stessa ISO, con scelta al boot
+Oggi una ISO ha una sola risposta collegata (`answer_id`). Serve poterne collegare più di una e scegliere al momento
+dell'avvio, con una predefinita che parte da sola allo scadere del timeout.
+
+### Dati
+Nell'oggetto ISO del catalogo:
+- `answers`: elenco ordinato di id di risposta collegati (lista di stringhe, massimo 8);
+- `answer_id`: la predefinita, che deve stare dentro `answers` (se `answers` è vuoto vale come oggi: nessuna installazione automatica);
+- `answer_manual` (bool, predefinito vero): mostra anche la voce "Installazione guidata a mano", cioè avvio senza risposta.
+`PATCH /api/catalog/<slug>` accetta `answers`, `answer_id` e `answer_manual` con validazione (id esistenti, predefinita coerente).
+In lettura ogni ISO espone anche `answers_info: [{id, name, kind}]` per la GUI.
+
+### Comportamento al boot
+- `GET /boot/<slug>.ipxe` (senza parametri): se la ISO ha meno di due voci fra risposte e avvio manuale, si comporta come oggi.
+  Con due o più, restituisce un piccolo menu iPXE: una voce per ogni risposta (nome della risposta), più "Installazione guidata a mano"
+  se `answer_manual`, con `choose --default <predefinita> --timeout <menu.answer_timeout, predefinito 10 s>`; ogni voce fa
+  `chain http://<ip>/boot/<slug>.ipxe?answer=<id>` (oppure `?answer=` vuoto per l'avvio senza risposta) e torna al menu principale in caso di errore.
+- `GET /boot/<slug>.ipxe?answer=<id>`: genera lo script vero usando quella risposta (o nessuna se il parametro è vuoto),
+  ignorando la predefinita. `answer` non valido o non collegato alla ISO: si usa la predefinita.
+- `menu.answer_timeout` (intero 0-120, predefinito 10) è una nuova impostazione del menu, con 0 = attendi la scelta.
+
+### GUI
+- Pannello dettagli della ISO: al posto del menu a tendina singolo, un elenco delle risposte collegate con il segno di spunta
+  per la predefinita, pulsante per aggiungerne una (dalle risposte esistenti o generandola da un profilo, come oggi),
+  pulsante per toglierla, e l'interruttore "Mostra anche l'installazione guidata a mano".
+- Nella tabella, il badge mostra il numero di installazioni automatiche disponibili quando sono più di una.
+- Pagina "Menu di boot": campo per `answer_timeout` con spiegazione.
