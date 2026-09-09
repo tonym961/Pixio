@@ -521,3 +521,37 @@ td.drv-skip{color:var(--warn);font-weight:600}
 .drv-inc input{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--accent)}
 tr.drv-excluded td .mono{opacity:.6}
 @media (max-width:700px){.drv-apply-head .actions{width:100%}}
+
+/* ---- Catalogo ISO: vista a cartelle (docs/API.md, sezione 16) ---- */
+.cat-viewbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.cat-viewbar .hint{flex:1 1 auto;min-width:0}
+.cat-treebtns{display:flex;gap:6px;flex:none;margin-left:auto}
+/* contain:paint tiene lo scorrimento orizzontale dentro il riquadro: senza, con le colonne a
+   larghezza fissa la pagina intera scorreva di lato sugli schermi stretti */
+.cat-tree-wrap{overflow-x:auto;contain:paint;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.cat-tree{min-width:1110px}
+/* larghezze fisse: le tabelle delle varie cartelle restano incolonnate con l'intestazione in cima */
+.cat-tbl{width:100%;table-layout:fixed}
+.cat-tbl col.c-sw{width:90px}.cat-tbl col.c-src{width:124px}.cat-tbl col.c-tipo{width:140px}
+.cat-tbl col.c-dim{width:104px}.cat-tbl col.c-plat{width:112px}.cat-tbl col.c-stato{width:214px}.cat-tbl col.c-az{width:106px}
+.cat-tbl td{overflow-wrap:anywhere}
+/* colonne a larghezza fissa: un badge lungo (es. la risposta automatica collegata) va a capo dentro
+   la sua pillola invece di sbordare sulla colonna dei pulsanti */
+.cat-tbl td .pill{max-width:100%;white-space:normal}
+.cat-cols th{background:var(--surface)}
+.cat-src{border-top:1px solid var(--line)}
+.cat-src>summary,.cat-dir>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;padding:8px 12px;font-size:13.5px;font-weight:600;user-select:none}
+.cat-src>summary::-webkit-details-marker,.cat-dir>summary::-webkit-details-marker{display:none}
+.cat-src>summary::before,.cat-dir>summary::before{content:"\25B8";color:var(--muted);font-size:11px;flex:none;transition:transform .12s}
+.cat-src[open]>summary::before,.cat-dir[open]>summary::before{transform:rotate(90deg)}
+.cat-src>summary{background:var(--surface-2)}
+.cat-src>summary:hover,.cat-dir>summary:hover{background:var(--surface)}
+.cat-src>summary .nm,.cat-dir>summary .nm{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.cat-src>summary .cnt,.cat-dir>summary .cnt{flex:none;display:flex;align-items:center;gap:8px}
+.cat-dir{border-top:1px solid var(--line)}
+.cat-dir>summary{font-weight:500;padding-left:28px;background:var(--surface)}
+.cat-dir>summary .nm{font-family:var(--mono);font-size:12.5px}
+.cat-rows{border-top:1px solid var(--line)}
+.cat-tree .empty{margin:14px}
+@media (prefers-reduced-motion:reduce){.cat-src>summary::before,.cat-dir>summary::before{transition:none}}
+@media (max-width:700px){.cat-treebtns{width:100%;margin-left:0}.cat-treebtns .btn{flex:1}}

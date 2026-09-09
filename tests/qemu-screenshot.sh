@@ -7,10 +7,10 @@ if [ "$MODE" = "uefi" ]; then
   VARS=$(mktemp /tmp/ovmf-vars.XXXX); cp /usr/share/OVMF/OVMF_VARS_4M.fd "$VARS"
   qemu-system-x86_64 -m 1024 -smp 2 -display none -vga std -monitor unix:$SOCK,server,nowait -device virtio-rng-pci \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd -drive if=pflash,format=raw,file="$VARS" \
-    -netdev user,id=n0,tftp=$TFTP,bootfile=ipxe.efi -device virtio-net-pci,netdev=n0,romfile=,bootindex=1 -no-reboot >/dev/null 2>&1 &
+    -netdev user,id=n0,tftp=$TFTP,bootfile=ipxe-debug.efi -device virtio-net-pci,netdev=n0,romfile=,bootindex=1 -no-reboot >/dev/null 2>&1 &
 else
   qemu-system-x86_64 -m 1024 -smp 2 -display none -vga std -monitor unix:$SOCK,server,nowait \
-    -netdev user,id=n0,tftp=$TFTP,bootfile=undionly.kpxe -device e1000,netdev=n0 -boot n -no-reboot >/dev/null 2>&1 &
+    -netdev user,id=n0,tftp=$TFTP,bootfile=undionly-debug.kpxe -device e1000,netdev=n0 -boot n -no-reboot >/dev/null 2>&1 &
 fi
 QPID=$!
 sleep "$WAIT"

@@ -20,8 +20,10 @@ cat > config/local/general.h <<'EOH'
 #define VLAN_CMD
 #define PARAM_CMD
 EOH
+# Console: niente seriale nella build di produzione. Su molti PC la porta seriale non esiste e ogni
+# carattere scritto costa attese lunghissime: il menu diventa lento a rispondere ai tasti.
+# La variante con seriale serve solo alle prove in QEMU e viene creata a parte (vedi in fondo).
 cat > config/local/console.h <<'EOH'
-#define CONSOLE_SERIAL
 #define CONSOLE_FRAMEBUFFER
 EOH
 NPROC=$(nproc)
@@ -36,3 +38,21 @@ cp bin-i386-efi/ipxe.efi "$OUT/ipxe32.efi"
 cp bin/ipxe.lkrn "$OUT/ipxe.lkrn"
 echo "BUILD_OK $(date -Is)" > "$OUT/.ipxe-build"
 ls -la "$OUT"
+
+# --- variante per le prove in QEMU: identica ma con l'output anche su seriale
+cat > config/local/console.h <<'EOH'
+#define CONSOLE_FRAMEBUFFER
+#define CONSOLE_SERIAL
+EOH
+make -j"$NPROC" NO_WERROR=1 EMBED=/opt/pixio/ipxe/embed.built.ipxe bin/undionly.kpxe bin-x86_64-efi/ipxe.efi 2>&1 | tail -3 || true
+cp bin/undionly.kpxe "$OUT/undionly-debug.kpxe" 2>/dev/null || true
+cp bin-x86_64-efi/ipxe.efi "$OUT/ipxe-debug.efi" 2>/dev/null || true
+# ripristina la configurazione di produzione per la prossima build
+cat > config/local/console.h <<'EOH'
+#define CONSOLE_FRAMEBUFFER
+EOH
+echo "varianti di prova: $OUT/undionly-debug.kpxe, $OUT/ipxe-debug.efi"
+
+# dnsmasq tiene in cache i file gia' inviati via TFTP: senza riavvio continuerebbe a servire i binari vecchi
+systemctl restart dnsmasq 2>/dev/null || true
+echo "dnsmasq riavviato: i client riceveranno i binari appena compilati"

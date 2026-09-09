@@ -12,7 +12,14 @@
     ['archiso', 'Arch live'], ['alpine', 'Alpine'], ['opensuse', 'openSUSE'], ['memdisk', 'Generico (memdisk)'], ['unknown', 'Sconosciuto'],
   ];
 
-  const CAT = { data: null, filters: { q: '', source: '', type: '', menu: '' }, root: null, timer: null, scanJob: null, busy: new Set(), groups: null };
+  const CAT = {
+    data: null, filters: { q: '', source: '', type: '', menu: '' }, root: null, timer: null, scanJob: null,
+    busy: new Set(), groups: null,
+    view: 'folders',   // "folders" (albero per sorgente/cartella) oppure "list" (elenco piatto)
+    open: {},          // stato di apertura di ogni intestazione, ricordato in localStorage
+    sig: null,         // firma dell'ultimo disegno: se non cambia nulla il polling non ridisegna
+    optSig: null,      // firma delle opzioni dei menu a tendina dei filtri
+  };
 
   // ---------------------------------------------------------------- caricamento file (chunked, riprendibile)
   const CHUNK_DEFAULT = 8 * 1024 * 1024;
@@ -209,6 +216,187 @@
   };
   const sourcePill = (iso) => (iso.source === 'local' ? P.pill('Locale', 'acc') : P.pill(iso.source_name || iso.source, 'neutral'));
 
+  // ---------------------------------------------------------------- vista a cartelle (docs/API.md, sezione 16)
+  const VIEW_KEY = 'pixio.iso.view';
+  const OPEN_KEY = 'pixio.iso.folders';
+  const ROOT_LABEL = '(radice)';
+
+  function loadView() { try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'folders'; } catch (e) { return 'folders'; } }
+  function saveView() { try { localStorage.setItem(VIEW_KEY, CAT.view); } catch (e) { /* storage non disponibile */ } }
+  function loadOpen() {
+    try {
+      const o = JSON.parse(localStorage.getItem(OPEN_KEY) || '{}');
+      return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+    } catch (e) { return {}; }
+  }
+  let openTimer = null;
+  function saveOpen() {
+    try {
+      const keys = Object.keys(CAT.open);
+      if (keys.length > 600) { const tenute = {}; keys.slice(-300).forEach((k) => { tenute[k] = CAT.open[k]; }); CAT.open = tenute; }
+      localStorage.setItem(OPEN_KEY, JSON.stringify(CAT.open));
+    } catch (e) { /* storage non disponibile */ }
+  }
+  function saveOpenSoon() { clearTimeout(openTimer); openTimer = setTimeout(saveOpen, 150); }
+
+  /** Cartella dell'immagine dentro la sorgente: "" per le ISO nella radice. */
+  function isoDir(iso) {
+    const rel = String(iso.rel_path || iso.file || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const i = rel.lastIndexOf('/');
+    return i > 0 ? rel.slice(0, i) : '';
+  }
+  const srcLabel = (iso) => (iso.source === 'local' ? 'Locale' : (iso.source_name || iso.source || 'Sorgente'));
+  const cmpNome = (a, b) => String(a || '').localeCompare(String(b || ''), 'it', { numeric: true, sensitivity: 'base' });
+  const filtriAttivi = () => { const f = CAT.filters; return !!(f.q.trim() || f.source || f.type || f.menu); };
+
+  /** Albero a due livelli: sorgente -> cartella. Conserva sia le immagini totali sia quelle che passano i filtri. */
+  function buildTree(all, viste) {
+    const vis = new Set(viste.map((i) => i.slug));
+    const srcs = new Map();
+    all.forEach((iso) => {
+      const sid = iso.source || 'local';
+      let s = srcs.get(sid);
+      if (!s) { s = { id: sid, name: srcLabel(iso), dirs: new Map() }; srcs.set(sid, s); }
+      const dir = isoDir(iso);
+      let d = s.dirs.get(dir);
+      if (!d) { d = { path: dir, tutte: [], viste: [] }; s.dirs.set(dir, d); }
+      d.tutte.push(iso);
+      if (vis.has(iso.slug)) d.viste.push(iso);
+    });
+    return Array.from(srcs.values()).map((s) => {
+      const dirs = Array.from(s.dirs.values()).sort((a, b) => {
+        if (!a.path !== !b.path) return a.path ? 1 : -1;      // "(radice)" sempre per prima
+        return cmpNome(a.path, b.path);
+      });
+      const nome = (x) => x.name || x.file || '';
+      dirs.forEach((d) => {
+        d.tutte.sort((x, y) => cmpNome(nome(x), nome(y)));
+        d.viste.sort((x, y) => cmpNome(nome(x), nome(y)));
+        d.menu = d.viste.filter((i) => i.enabled).length;
+      });
+      return {
+        id: s.id, name: s.name, dirs,
+        tutte: dirs.reduce((n, d) => n + d.tutte.length, 0),
+        viste: dirs.reduce((n, d) => n + d.viste.length, 0),
+        menu: dirs.reduce((n, d) => n + d.menu, 0),
+      };
+    }).sort((a, b) => {
+      if ((a.id === 'local') !== (b.id === 'local')) return a.id === 'local' ? -1 : 1;
+      return cmpNome(a.name, b.name);
+    });
+  }
+
+  function contoHtml(nviste, ntutte, nmenu, filtro) {
+    const testo = (filtro && nviste < ntutte) ? `${nviste} di ${ntutte}` : `${ntutte} ${ntutte === 1 ? 'immagine' : 'immagini'}`;
+    return `<span class="cnt">${nmenu ? `<span class="hint">${nmenu} nel menu</span>` : ''}<span class="pill neutral">${esc(testo)}</span></span>`;
+  }
+
+  // colonne identiche in tutte le cartelle: larghezze fisse, così le tabelle restano allineate fra loro
+  const COLGROUP = '<colgroup><col class="c-sw"><col class="c-nome"><col class="c-src"><col class="c-tipo">'
+    + '<col class="c-dim"><col class="c-plat"><col class="c-stato"><col class="c-az"></colgroup>';
+  const THEAD_ROW = '<tr><th>Nel menu</th><th>Nome</th><th>Sorgente</th><th>Tipo rilevato</th><th>Dimensione</th>'
+    + '<th>BIOS / UEFI</th><th>Stato</th><th><span class="sr-only">Azioni</span></th></tr>';
+
+  /* breve = vista a cartelle: sotto il nome basta il file, il percorso è già nell'intestazione della cartella. */
+  function rowHtml(iso, breve) {
+    const busy = CAT.busy.has(iso.slug);
+    const noRecipe = (!iso.type || iso.type === 'unknown') && !iso.custom_recipe;
+    return `<tr data-slug="${esc(iso.slug)}" class="${iso.missing ? 'missing' : ''}">
+      <td>${P.switchHtml(!!iso.enabled, `data-act="toggle" aria-label="Nel menu: ${esc(iso.name)}" ${busy ? 'disabled' : ''} ${iso.missing ? 'disabled title="File mancante"' : ''}`)}</td>
+      <td><div class="iso-name">${esc(iso.name || iso.file)}</div><div class="iso-file mono">${esc((breve ? iso.file : iso.rel_path) || iso.rel_path || iso.file || '')}</div></td>
+      <td>${sourcePill(iso)}</td><td>${esc(iso.type_name || typeName(iso.type))}${iso.group ? `<div class="hint">${esc(iso.group)}</div>` : ''}</td>
+      <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}${iso.answer_id ? ' ' + P.pill('automatica: ' + (iso.answer_name || iso.answer_id), 'acc') : ''}</td>
+      <td class="actions-cell"><button class="btn small" type="button" data-act="details">Dettagli${noRecipe ? ' \u26a0' : ''}</button></td></tr>`;
+  }
+
+  function listHtml(rows) {
+    return `<div class="tbl-wrap"><table><thead>${THEAD_ROW}</thead><tbody>${rows.map((iso) => rowHtml(iso, false)).join('')}</tbody></table></div>`;
+  }
+
+  function treeHtml(all, rows) {
+    const filtro = filtriAttivi();
+    const blocchi = buildTree(all, rows).map((s) => {
+      const dirs = s.dirs.filter((d) => d.viste.length);
+      if (!dirs.length) return '';
+      const ks = 'src|' + s.id;
+      const apertaS = filtro ? true : (CAT.open[ks] !== undefined ? !!CAT.open[ks] : true);
+      const inner = dirs.map((d) => {
+        const kd = 'dir|' + s.id + '|' + d.path;
+        const aperta = filtro ? true : (CAT.open[kd] !== undefined ? !!CAT.open[kd] : false);
+        return `<details class="cat-dir" data-k="${esc(kd)}"${aperta ? ' open' : ''}>
+          <summary><span class="nm">${esc(d.path || ROOT_LABEL)}</span>${contoHtml(d.viste.length, d.tutte.length, d.menu, filtro)}</summary>
+          <div class="cat-rows"><table class="cat-tbl">${COLGROUP}<tbody>${d.viste.map((iso) => rowHtml(iso, true)).join('')}</tbody></table></div>
+        </details>`;
+      }).join('');
+      return `<details class="cat-src" data-k="${esc(ks)}"${apertaS ? ' open' : ''}>
+        <summary><span class="nm">${esc(s.name)}</span>${contoHtml(s.viste, s.tutte, s.menu, filtro)}</summary>
+        <div class="cat-dirs">${inner}</div></details>`;
+    }).join('');
+    return `<div class="cat-tree-wrap"><div class="cat-tree">
+      <div class="cat-cols"><table class="cat-tbl">${COLGROUP}<thead>${THEAD_ROW}</thead></table></div>
+      ${blocchi}</div></div>`;
+  }
+
+  /* Chromium emette un evento "toggle" anche per i <details> inseriti già aperti, e lo consegna
+     in ritardo (anche dopo che il ridisegno ha sostituito l'elemento). Senza questi due controlli
+     un filtro, che apre le cartelle da solo, finirebbe per salvarle tutte come "aperte". */
+  function onToggle(e) {
+    const d = e.currentTarget;
+    if (d._pxOpen === d.open) return;      // stato uguale a quello disegnato: evento del disegno, non un clic
+    d._pxOpen = d.open;
+    if (!d.isConnected) return;            // elemento già sostituito da un ridisegno: evento vecchio
+    CAT.open[d.dataset.k] = d.open;
+    saveOpenSoon();
+  }
+
+  function attachToggles(box) {
+    $$('details[data-k]', box).forEach((d) => { d._pxOpen = d.open; d.addEventListener('toggle', onToggle); });
+  }
+
+  function setAllOpen(v) {
+    const box = $('#cat-table', CAT.root); if (!box) return;
+    $$('details[data-k]', box).forEach((d) => { CAT.open[d.dataset.k] = v; if (d.open !== v) { d._pxOpen = v; d.open = v; } });
+    saveOpenSoon();
+  }
+
+  /** Firma dei dati che finiscono nella tabella: se non cambia, il polling non ridisegna nulla
+      (con 163 righe ricostruire l'albero ogni 5 s farebbe saltare cartelle aperte e scorrimento). */
+  function tableSig(all, rows) {
+    const parts = [CAT.view, CAT.filters.q, CAT.filters.source, CAT.filters.type, CAT.filters.menu,
+      Array.from(CAT.busy).sort().join(','), String(rows.length)];
+    all.forEach((i) => {
+      const c = i.cache || {};
+      parts.push([i.slug, i.name, i.file, i.rel_path, i.source, i.source_name, i.enabled ? 1 : 0, i.mounted ? 1 : 0,
+        i.missing ? 1 : 0, i.type, i.type_name, i.group, i.size, (i.platforms || []).join('+'),
+        i.custom_recipe ? 1 : 0, c.status || '', c.progress != null ? Math.floor(c.progress) : '',
+        i.answer_id || '', i.answer_name || ''].join('\u0001'));
+    });
+    return parts.join('\u0002');
+  }
+
+  /** Ricorda che cosa era a fuoco, così il ridisegno non fa perdere il punto a chi usa la tastiera. */
+  function focusKey(box) {
+    const a = document.activeElement;
+    if (!a || !box.contains(a)) return null;
+    if (a.tagName === 'SUMMARY') { const d = a.closest('details[data-k]'); return d ? 'k|' + d.dataset.k : null; }
+    const tr = a.closest('tr[data-slug]');
+    return tr ? 's|' + tr.dataset.slug + '|' + (a.dataset.act || '') : null;
+  }
+  function restoreFocus(box, key) {
+    if (!key || !window.CSS || !CSS.escape) return;
+    try {
+      if (key.slice(0, 2) === 'k|') {
+        const d = box.querySelector('details[data-k="' + CSS.escape(key.slice(2)) + '"]');
+        const sm = d && d.querySelector('summary'); if (sm) sm.focus();
+        return;
+      }
+      const p = key.slice(2).split('|');
+      const tr = box.querySelector('tr[data-slug="' + CSS.escape(p[0]) + '"]');
+      const el = tr && p[1] ? tr.querySelector('[data-act="' + CSS.escape(p[1]) + '"]') : null;
+      if (el) el.focus();
+    } catch (e) { /* ignora */ }
+  }
+
   function filtered() {
     const f = CAT.filters; const q = f.q.trim().toLowerCase();
     return ((CAT.data && CAT.data.isos) || []).filter((i) => {
@@ -242,7 +430,7 @@
 
   // ---------------------------------------------------------------- rendering
   function renderAll() {
-    renderHeader(); renderFilters(); renderTable();
+    renderHeader(); renderFilters(); renderViewbar(); renderTable();
     const up = $('#cat-uploads', CAT.root); if (up) up.innerHTML = uploadsHtml();
   }
   function renderHeader() {
@@ -259,21 +447,43 @@
   }
   function renderFilters() {
     const srcSel = $('#f-source', CAT.root); const typeSel = $('#f-type', CAT.root);
+    if (!srcSel || !typeSel) return;
     const isos = (CAT.data && CAT.data.isos) || [];
     const count = (fn) => isos.filter(fn).length;
-    srcSel.innerHTML = '<option value="">Tutte le sorgenti</option>' + sourceList().map((s) => `<option value="${esc(s.id)}">${esc(s.name)} (${count((i) => i.source === s.id)})</option>`).join('');
-    srcSel.value = CAT.filters.source;
-    if (srcSel.value !== CAT.filters.source) { CAT.filters.source = ''; srcSel.value = ''; }
+    const srcs = sourceList();
     const present = new Map(); isos.forEach((i) => { const t = i.type || 'unknown'; present.set(t, (present.get(t) || 0) + 1); });
-    typeSel.innerHTML = '<option value="">Tutti i tipi</option>' + typeList().filter((t) => present.has(t.id)).map((t) => `<option value="${esc(t.id)}">${esc(t.name)} (${present.get(t.id)})</option>`).join('');
-    typeSel.value = CAT.filters.type;
-    if (typeSel.value !== CAT.filters.type) { CAT.filters.type = ''; typeSel.value = ''; }
+    const tipi = typeList().filter((t) => present.has(t.id));
+    // le tendine si ricostruiscono solo se cambiano davvero: altrimenti il polling chiuderebbe
+    // un menu a tendina aperto mentre il tecnico lo sta usando
+    const optSig = srcs.map((x) => x.id + '~' + x.name + '~' + count((i) => i.source === x.id)).join('|')
+      + '#' + tipi.map((t) => t.id + '~' + t.name + '~' + present.get(t.id)).join('|');
+    if (optSig !== CAT.optSig) {
+      CAT.optSig = optSig;
+      srcSel.innerHTML = '<option value="">Tutte le sorgenti</option>' + srcs.map((s) => `<option value="${esc(s.id)}">${esc(s.name)} (${count((i) => i.source === s.id)})</option>`).join('');
+      srcSel.value = CAT.filters.source;
+      if (srcSel.value !== CAT.filters.source) { CAT.filters.source = ''; srcSel.value = ''; }
+      typeSel.innerHTML = '<option value="">Tutti i tipi</option>' + tipi.map((t) => `<option value="${esc(t.id)}">${esc(t.name)} (${present.get(t.id)})</option>`).join('');
+      typeSel.value = CAT.filters.type;
+      if (typeSel.value !== CAT.filters.type) { CAT.filters.type = ''; typeSel.value = ''; }
+    }
     $('#f-count', CAT.root).innerHTML = `${P.pill('Tutte ' + isos.length, 'acc')} ${P.pill('Nel menu ' + count((i) => i.enabled), 'neutral')} ${P.pill('Montate ' + count((i) => i.mounted), 'neutral')}`;
   }
+
+  function renderViewbar() {
+    const bar = $('#cat-viewbar', CAT.root); if (!bar) return;
+    const n = ((CAT.data && CAT.data.isos) || []).length;
+    bar.hidden = !n;
+    $$('[data-view]', bar).forEach((b) => b.setAttribute('aria-pressed', b.dataset.view === CAT.view ? 'true' : 'false'));
+    const btns = $('#cat-treebtns', bar);
+    if (btns) btns.hidden = CAT.view !== 'folders';
+    const nota = $('#cat-viewnote', bar);
+    if (nota) nota.hidden = CAT.view !== 'folders' || !filtriAttivi();
+  }
   function renderTable() {
-    const box = $('#cat-table', CAT.root);
+    const box = $('#cat-table', CAT.root); if (!box) return;
     const all = (CAT.data && CAT.data.isos) || [];
     if (!all.length) {
+      CAT.sig = null;
       const st = P.state.status || {}; const lib = st.library || {};
       box.innerHTML = `<div class="empty"><h3>Il catalogo è vuoto</h3>
         <p>Nessuna ISO trovata. Aggiungi una share Windows nelle <a href="#/impostazioni">Impostazioni</a>, copia una ISO in <span class="mono">${esc(lib.samba_path || '\\\\' + (st.server_ip || 'pixio') + '\\iso')}</span> oppure caricala da qui trascinandola nella pagina.</p>
@@ -281,17 +491,20 @@
       return;
     }
     const rows = filtered();
-    if (!rows.length) { box.innerHTML = '<div class="empty"><h3>Nessuna ISO corrisponde ai filtri</h3><p>Prova a cambiare il testo cercato o a togliere un filtro.</p><button class="btn" type="button" data-act="clear-filters">Azzera i filtri</button></div>'; return; }
-    box.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>Nel menu</th><th>Nome</th><th>Sorgente</th><th>Tipo rilevato</th><th>Dimensione</th><th>BIOS / UEFI</th><th>Stato</th><th><span class="sr-only">Azioni</span></th></tr></thead><tbody>${rows.map((iso) => {
-      const busy = CAT.busy.has(iso.slug);
-      const noRecipe = (!iso.type || iso.type === 'unknown') && !iso.custom_recipe;
-      return `<tr data-slug="${esc(iso.slug)}" class="${iso.missing ? 'missing' : ''}">
-        <td>${P.switchHtml(!!iso.enabled, `data-act="toggle" aria-label="Nel menu: ${esc(iso.name)}" ${busy ? 'disabled' : ''} ${iso.missing ? 'disabled title="File mancante"' : ''}`)}</td>
-        <td><div class="iso-name">${esc(iso.name || iso.file)}</div><div class="iso-file mono">${esc(iso.rel_path || iso.file || '')}</div></td>
-        <td>${sourcePill(iso)}</td><td>${esc(iso.type_name || typeName(iso.type))}${iso.group ? `<div class="hint">${esc(iso.group)}</div>` : ''}</td>
-        <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}${iso.answer_id ? ' ' + P.pill('automatica: ' + (iso.answer_name || iso.answer_id), 'acc') : ''}</td>
-        <td class="actions-cell"><button class="btn small" type="button" data-act="details">Dettagli${noRecipe ? ' ⚠' : ''}</button></td></tr>`;
-    }).join('')}</tbody></table></div>`;
+    const sig = tableSig(all, rows);
+    if (sig === CAT.sig) return;      // niente è cambiato: non tocco il DOM (cartelle aperte e scorrimento restano)
+    CAT.sig = sig;
+    const y = window.scrollY;
+    const fk = focusKey(box);
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty"><h3>Nessuna ISO corrisponde ai filtri</h3><p>Prova a cambiare il testo cercato o a togliere un filtro.</p><button class="btn" type="button" data-act="clear-filters">Azzera i filtri</button></div>';
+      return;
+    }
+    box.innerHTML = CAT.view === 'folders' ? treeHtml(all, rows) : listHtml(rows);
+    // l'evento toggle di <details> non risale: si aggancia a ogni intestazione dopo il disegno
+    if (CAT.view === 'folders') attachToggles(box);
+    restoreFocus(box, fk);
+    if (window.scrollY !== y) window.scrollTo(0, y);
   }
 
   // ---------------------------------------------------------------- azioni sulla tabella
@@ -514,6 +727,7 @@
     title: 'Catalogo ISO',
     mount(root) {
       CAT.root = root; CAT.groups = null;
+      CAT.view = loadView(); CAT.open = loadOpen(); CAT.sig = null; CAT.optSig = null;
       root.innerHTML = `
         <div class="ph"><div><h2>Catalogo ISO</h2><div class="sub" id="cat-sub">Caricamento…</div></div>
           <div class="actions"><button class="btn" type="button" id="cat-scan">Riscansiona</button><button class="btn primary" type="button" id="cat-upload">Carica ISO</button></div></div>
@@ -526,14 +740,29 @@
           <select id="f-menu" aria-label="Filtra per presenza nel menu"><option value="">Nel menu e non</option><option value="yes">Solo nel menu</option><option value="no">Solo fuori dal menu</option></select>
           <span id="f-count"></span>
         </div>
+        <div class="cat-viewbar" id="cat-viewbar" hidden>
+          <div class="seg" role="group" aria-label="Vista del catalogo">
+            <button type="button" data-view="folders" aria-pressed="true">Cartelle</button>
+            <button type="button" data-view="list" aria-pressed="false">Elenco</button>
+          </div>
+          <span class="hint" id="cat-viewnote" hidden>Con un filtro attivo le cartelle si aprono da sole.</span>
+          <span class="cat-treebtns" id="cat-treebtns">
+            <button class="btn small" type="button" data-act="expand">Espandi tutto</button>
+            <button class="btn small" type="button" data-act="collapse">Comprimi tutto</button>
+          </span>
+        </div>
         <div id="cat-table"><div class="loading">Caricamento del catalogo…</div></div>`;
       $('#f-menu', root).value = CAT.filters.menu;
       $('#cat-scan', root).addEventListener('click', scan);
       $('#cat-upload', root).addEventListener('click', () => uploads.pick());
-      $('#f-q', root).addEventListener('input', (e) => { CAT.filters.q = e.target.value; renderTable(); });
-      ['source', 'type', 'menu'].forEach((k) => $('#f-' + k, root).addEventListener('change', (e) => { CAT.filters[k] = e.target.value; renderTable(); }));
+      $('#f-q', root).addEventListener('input', (e) => { CAT.filters.q = e.target.value; renderViewbar(); renderTable(); });
+      ['source', 'type', 'menu'].forEach((k) => $('#f-' + k, root).addEventListener('change', (e) => { CAT.filters[k] = e.target.value; renderViewbar(); renderTable(); }));
       root.addEventListener('click', (e) => {
-        const b = e.target.closest('[data-act],[data-up],[data-pending]'); if (!b) return;
+        const b = e.target.closest('[data-act],[data-up],[data-pending],[data-view]'); if (!b) return;
+        if (b.dataset.view) {
+          if (CAT.view !== b.dataset.view) { CAT.view = b.dataset.view; saveView(); renderViewbar(); renderTable(); }
+          return;
+        }
         if (b.dataset.up) {
           const u = uploads.list[Number(b.dataset.i)]; if (!u) return;
           if (b.dataset.up === 'cancel') u.cancel(); else if (b.dataset.up === 'retry') u.run();
@@ -555,7 +784,13 @@
         else if (act === 'details' && slug) openDetails(slug);
         else if (act === 'scan') scan();
         else if (act === 'upload') uploads.pick();
-        else if (act === 'clear-filters') { CAT.filters = { q: '', source: '', type: '', menu: '' }; $('#f-q', root).value = ''; renderFilters(); $('#f-menu', root).value = ''; renderTable(); }
+        else if (act === 'expand') setAllOpen(true);
+        else if (act === 'collapse') setAllOpen(false);
+        else if (act === 'clear-filters') {
+          CAT.filters = { q: '', source: '', type: '', menu: '' };
+          ['q', 'source', 'type', 'menu'].forEach((k) => { const el = $('#f-' + k, root); if (el) el.value = ''; });
+          renderFilters(); renderViewbar(); renderTable();
+        }
       });
       this._onUp = () => { const up = $('#cat-uploads', root); if (up) up.innerHTML = uploadsHtml(); };
       uploads.on(this._onUp);
