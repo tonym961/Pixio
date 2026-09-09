@@ -290,7 +290,7 @@
         <td><div class="iso-name">${esc(iso.name || iso.file)}</div><div class="iso-file mono">${esc(iso.rel_path || iso.file || '')}</div></td>
         <td>${sourcePill(iso)}</td><td>${esc(iso.type_name || typeName(iso.type))}${iso.group ? `<div class="hint">${esc(iso.group)}</div>` : ''}</td>
         <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}${iso.answer_id ? ' ' + P.pill('automatica: ' + (iso.answer_name || iso.answer_id), 'acc') : ''}</td>
-        <td class="actions-cell"><button class="btn small" type="button" data-act="details">${noRecipe ? 'Ricetta manuale' : 'Dettagli'}</button></td></tr>`;
+        <td class="actions-cell"><button class="btn small" type="button" data-act="details">Dettagli${noRecipe ? ' ⚠' : ''}</button></td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
 

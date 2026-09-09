@@ -547,7 +547,6 @@
     if (f.winpe_inject && !f.winpe_files) w.push(`"${FLAGS.winpe_inject.label}" è attivo ma nella cartella non ci sono file .inf/.sys/.cat/.dll al primo livello: metti i file del driver direttamente nella cartella, non in sottocartelle.`);
     if (f.setup_load && !f.inf_count) w.push(`"${FLAGS.setup_load.label}" è attivo ma nella cartella non c'è nessun file .inf.`);
     if (active(f) && applyEmpty(f)) w.push(`"Si applica a" è su "${APPLY[applyOf(f).mode].label}" ma non hai scelto niente: questa cartella non verrà usata da nessuna immagine. Scegli almeno una voce o torna a "${APPLY.all.label}".`);
-    if (active(f) && f.winpe_inject && f.excluded_files) w.push(`${plural(f.excluded_files, 'file escluso a mano', 'file esclusi a mano')} dall'iniezione nel WinPE: aprila con "Apri" per rivedere l'elenco.`);
     if (!f.valid_name) w.push('Nome cartella non valido (ammessi lettere, numeri, spazi, . _ - ( ) +, max 64): rinominala dalla share, altrimenti non viene usata dal setup.');
     return w.map((t) => `<div class="alert warn">${esc(t)}</div>`).join('');
   }
@@ -928,7 +927,7 @@
       const box = isCand
         ? `<label class="drv-inc" title="Togli la spunta per lasciare questo file fuori dal WinPE"><input type="checkbox" data-inc="${esc(x.name)}" ${x.excluded ? '' : 'checked'} aria-label="Metti ${esc(x.name)} nel WinPE"></label>`
         : '<span class="hint">—</span>';
-      const tag = !isCand ? ''
+      const tag = !isCand ? (WINPE_RE.test(x.name) ? ' <span class="pill neutral" title="Sta in una sottocartella di un\'altra architettura (x86, arm…): nel WinPE a 64 bit non serve">altra architettura</span>' : '')
         : (x.excluded ? ' <span class="pill warn" title="Escluso a mano: non viene iniettato nel WinPE">escluso</span>'
           : (inWinpe ? ' ' + P.pill('WinPE', 'acc')
             : ' <span class="pill neutral" title="Un altro file con lo stesso nome ha la precedenza: nel WinPE i nomi sono tutti nella stessa cartella">doppione</span>'));

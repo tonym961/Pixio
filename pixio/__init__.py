@@ -66,7 +66,24 @@ def create_app():
     @app.route("/")
     @app.route("/index.html")
     def index():
-        return send_from_directory(C.STATIC_DIR, "index.html")
+        """La pagina viene servita con la versione dei file statici nell'indirizzo: così dopo un
+        aggiornamento il browser non tiene in memoria i vecchi script."""
+        import re as _re
+        path = os.path.join(C.STATIC_DIR, "index.html")
+        try:
+            html = open(path, encoding="utf-8").read()
+        except OSError:
+            return send_from_directory(C.STATIC_DIR, "index.html")
+
+        def stamp(m):
+            rel = m.group(2)
+            try:
+                v = int(os.stat(os.path.join(C.STATIC_DIR, rel)).st_mtime)
+            except OSError:
+                return m.group(0)
+            return f'{m.group(1)}="/static/{rel}?v={v}"'
+        html = _re.sub(r'(src|href)="/static/([A-Za-z0-9_.-]+)"', stamp, html)
+        return app.response_class(html, mimetype="text/html", headers={"Cache-Control": "no-cache"})
 
     @app.route("/static/<path:name>")
     def static_files(name):

@@ -359,14 +359,24 @@ di quei gruppi (per esempio "Windows Server"); con `isos` solo per le immagini i
   (utile per l'anteprima generica).
 - `services/winpe.flags(cfg, iso=None)` e la generazione dello script iPXE passano la ISO corrente, così ogni voce del menu
   riceve i propri driver. L'anteprima nella pagina ISO mostra i driver che quella voce riceverà davvero.
-- `GET /api/drivers` espone `apply_to` per ogni cartella e l'elenco delle scelte possibili
-  (`groups` dal menu, `isos` con slug e nome delle ISO Windows presenti nel catalogo).
+- `GET /api/drivers` espone `apply_to` per ogni cartella e l'elenco delle scelte possibili in
+  `apply_choices:{groups:[nome], isos:[{slug,name,group,type,enabled}]}` (ripetuto per comodità in `groups`
+  e `isos` al primo livello), più `apply_modes:["all","groups","isos"]`. I gruppi sono quelli del menu di boot
+  (Impostazioni) più quelli già usati dal catalogo; le ISO sono quelle di tipo `windows`, `windows-legacy`,
+  `winpe-tool`, le uniche che avviano un WinPE e quindi ricevono driver.
 - `PATCH /api/drivers/folders/<name>` accetta `apply_to`; la PATCH multipla lo accetta allo stesso modo.
+  L'oggetto si sostituisce per intero (la SPA rimanda sempre tutti e tre i campi, così cambiando modalità
+  non si perde l'elenco già scelto). Validazione: `mode` fra i tre valori, massimo 50 gruppi di 60 caratteri,
+  massimo 500 slug validi secondo `config.SLUG_RE`. Un elenco vuoto è ammesso e vuol dire "nessuna immagine":
+  la GUI lo segnala con un avviso sulla scheda invece di rifiutare la modifica.
 
 ### Scelta dei singoli file (già implementata, da mostrare nella GUI)
 `PATCH /api/drivers/folders/<name>/files/<path:file>` con `{excluded: true|false}` esclude o rimette un file
 nell'iniezione WinPE; l'elenco degli esclusi sta in `apply_to`-fratello `excluded` della cartella e ogni file
-dell'elenco espone `excluded`.
+dell'elenco espone `excluded`. Ogni file espone anche `winpe_cand` (potrebbe essere iniettato: estensione
+`.inf/.sys/.cat/.dll` fuori dalle sottocartelle di altre architetture) e `winpe` (ci finisce davvero: non è
+escluso e nessun altro file con lo stesso nome ha la precedenza). La cartella espone `winpe_files` (quanti ci
+finiscono davvero, esclusioni comprese), `winpe_candidates` ed `excluded_files`.
 
 ### GUI
 - Sulla scheda della cartella: riga "Si applica a" con le tre modalità; scegliendo gruppi o ISO compare l'elenco con caselle,
