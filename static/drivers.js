@@ -28,12 +28,10 @@
   const FLAGS = {
     winpe_inject: {
       label: "Carica in WinPE all'avvio",
-      short: 'in WinPE',
       help: 'I file .inf/.sys/.cat/.dll al primo livello della cartella vengono iniettati nel WinPE via wimboot e caricati con drvload prima della rete. Serve per schede di rete o controller storage che WinPE non riconosce (max 256 MB totali).',
     },
     setup_load: {
       label: 'Carica prima del setup di Windows',
-      short: 'prima del setup',
       help: 'Dopo aver mappato la share, drvload ricorsivo di tutti i .inf della cartella prima di setup.exe (richiede "Installazione Windows via rete" attiva).',
     },
   };
