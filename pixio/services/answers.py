@@ -156,13 +156,13 @@ def _files(answer_id):
 
 
 def _used_by(answer_id):
-    """Slug delle ISO associate a questa risposta (campo answer_id del catalogo)."""
+    """Slug delle ISO che la usano: una ISO puo' averne piu' di una collegata (docs/API.md sezione 17)."""
     try:
         from . import catalog
         isos = (catalog.load() or {}).get("isos") or {}
+        return sorted(s for s, e in isos.items() if isinstance(e, dict) and answer_id in catalog.answers_of(e))
     except Exception:  # noqa: BLE001
         return []
-    return sorted(s for s, e in isos.items() if isinstance(e, dict) and e.get("answer_id") == answer_id)
 
 
 def _public(answer_id, m):
@@ -177,6 +177,18 @@ def _public(answer_id, m):
         "created": m.get("created"), "main_file": main, "files": files,
         "size": sum(f["size"] for f in files), "used_by": _used_by(answer_id),
     }
+
+
+def index():
+    """{id: {id, name, kind}} di tutte le risposte, senza leggere le cartelle.
+
+    Serve al catalogo, che deve controllare le risposte collegate di ogni ISO senza una lettura per voce."""
+    out = {}
+    for i, m in _meta()["answers"].items():
+        if isinstance(m, dict) and ANSWER_ID_RE.match(i):
+            k = m.get("kind") if m.get("kind") in KIND_IDS else "generic"
+            out[i] = {"id": i, "name": m.get("name") or i, "kind": k}
+    return out
 
 
 def list_answers():
@@ -334,11 +346,10 @@ def delete(answer_id):
         d.setdefault("answers", {}).pop(answer_id, None)
         return d
     update_json(C.ANSWERS_FILE, upd, default={})
-    # le ISO che la usavano restano senza risposta
+    # le ISO che la usavano perdono quella voce; se era la predefinita passano alla prima rimasta
     try:
         from . import catalog
-        for slug in a["used_by"]:
-            catalog.update(slug, {"answer_id": None})
+        catalog.detach_answer(answer_id)
     except Exception:  # noqa: BLE001
         pass
 
@@ -364,16 +375,20 @@ def folder_url(server_ip, answer_id):
     return f"http://{server_ip}/answers/{quote(check_id(answer_id))}/"
 
 
-def get_for_slug(slug):
-    """Risposta associata a una ISO del catalogo, oppure None."""
+def get_for_slug(slug, answer_id=None):
+    """Risposta da usare per una ISO del catalogo, oppure None.
+
+    Senza `answer_id` vale la predefinita della ISO; con `answer_id` quella scelta al boot, che
+    deve essere fra quelle collegate (altrimenti si torna alla predefinita)."""
     try:
         from . import catalog
         e = (catalog.load() or {}).get("isos", {}).get(slug)
+        if not isinstance(e, dict):
+            return None
+        aid = catalog.resolve_answer(e, answer_id)
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(e, dict) or not e.get("answer_id"):
-        return None
-    return get(e["answer_id"])
+    return get(aid) if aid else None
 
 
 def _family(answer, iso_type):

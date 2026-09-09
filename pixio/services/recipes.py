@@ -100,14 +100,23 @@ def render_lines(lines, ctx, files, flags):
     return out
 
 
-def answer_for(iso, server_ip):
-    """Risposta automatica associata alla ISO: (argomenti kernel, file da iniettare nel WinPE)."""
+AUTO = object()      # "usa la risposta predefinita della ISO": diverso da None, che vuol dire "nessuna"
+
+
+def answer_for(iso, server_ip, answer=AUTO):
+    """Risposta automatica da agganciare: (argomenti kernel, file da iniettare nel WinPE).
+
+    answer: AUTO = la predefinita della ISO (come prima della sezione 17); None = nessuna, cioe'
+    installazione guidata a mano; altrimenti l'id scelto al boot, gia' risolto da chi chiama."""
     try:
         from . import answers
     except ImportError:
         return "", []
     try:
-        a = answers.get_for_slug(iso.get("slug"))
+        if answer is AUTO:
+            a = answers.get_for_slug(iso.get("slug"))
+        else:
+            a = answers.get(answer) if answer else None
         if not a:
             return "", []
         return (answers.kernel_args(a, iso.get("type"), server_ip) or "",
@@ -116,9 +125,9 @@ def answer_for(iso, server_ip):
         return "", []
 
 
-def _apply_answer(lines, iso, server_ip):
+def _apply_answer(lines, iso, server_ip, answer=AUTO):
     """Aggiunge gli argomenti della risposta alla riga kernel e i file iniettati (Windows)."""
-    args, files = answer_for(iso, server_ip)
+    args, files = answer_for(iso, server_ip, answer)
     if not args and not files:
         return lines
     out = []
@@ -141,12 +150,13 @@ def flags_for(iso):
         return {}
 
 
-def render(iso, server_ip, platform, flags=None):
+def render(iso, server_ip, platform, flags=None, answer=AUTO):
     """Script iPXE (senza shebang) per la voce `iso` (dict del catalogo) sulla piattaforma 'efi'|'bios'.
     Ritorna (lines, warnings). lines vuoto se la ricetta non supporta la piattaforma.
 
     flags: quelli di services/winpe.flags(cfg, iso). Se non passati vengono calcolati per questa ISO,
-    così il segnaposto {drivers} elenca solo i driver abbinati a questa immagine."""
+    così il segnaposto {drivers} elenca solo i driver abbinati a questa immagine.
+    answer: risposta da usare (AUTO = la predefinita della ISO, None = nessuna, id = quella scelta)."""
     flags = flags_for(iso) if flags is None else (flags or {})
     ctx = urls(server_ip, iso["slug"])
     files = (iso.get("detect") or {}).get("files") or {}
@@ -166,7 +176,7 @@ def render(iso, server_ip, platform, flags=None):
         for i in initrds:
             lines.append(f"initrd {i}")
         lines.append("boot")
-        return _apply_answer(render_lines(lines, ctx, files, flags), iso, server_ip), warnings
+        return _apply_answer(render_lines(lines, ctx, files, flags), iso, server_ip, answer), warnings
     t = get_type(iso.get("type") or "unknown") or get_type("unknown")
     if platform not in t.get("platforms", []):
         return [], [f"Il tipo '{t['name']}' non è avviabile in modalità {platform.upper()}"]
@@ -177,7 +187,7 @@ def render(iso, server_ip, platform, flags=None):
         name = k.lstrip("!")
         if bool(flags.get(name)) == (not neg):
             warnings.append(msg)
-    return _apply_answer(render_lines(lines, ctx, files, flags), iso, server_ip), warnings + list(t.get("warnings") or [])
+    return _apply_answer(render_lines(lines, ctx, files, flags), iso, server_ip, answer), warnings + list(t.get("warnings") or [])
 
 
 def render_builtin(name, server_ip, platform):

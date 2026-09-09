@@ -237,7 +237,7 @@ def _mounted_slugs():
     return out
 
 
-def _decorate(e, mounted):
+def _decorate(e, mounted, idx=None):
     t = recipes.get_type(e.get("type") or "unknown") or {}
     e = dict(e)
     e["type_name"] = t.get("name", e.get("type"))
@@ -245,13 +245,13 @@ def _decorate(e, mounted):
     custom = e.get("custom_recipe")
     e["platforms"] = (custom.get("platforms") if custom and custom.get("platforms") else t.get("platforms", []))
     e["mounted"] = e["slug"] in mounted
-    if e.get("answer_id"):
-        try:
-            from . import answers
-            a = answers.get(e["answer_id"])
-            e["answer_name"] = (a or {}).get("name") or e["answer_id"]
-        except Exception:  # noqa: BLE001
-            e["answer_name"] = e["answer_id"]
+    info = answers_info(e, answers_index() if idx is None else idx)
+    e["answers"] = [i["id"] for i in info]        # solo quelle ancora esistenti
+    e["answers_info"] = info
+    e["answer_manual"] = answer_manual(e)
+    e["answer_id"] = default_answer(e, info)
+    if e["answer_id"]:
+        e["answer_name"] = next(i["name"] for i in info if i["id"] == e["answer_id"])
     e.setdefault("cache", {"status": "none", "path": "", "progress": 0})
     w = list(t.get("warnings") or [])
     if e.get("missing"):
@@ -267,7 +267,8 @@ def _decorate(e, mounted):
 def list_isos():
     cat = load()
     mounted = _mounted_slugs()
-    out = [_decorate(e, mounted) for e in cat["isos"].values()]
+    idx = answers_index()                          # una lettura sola per tutto il catalogo
+    out = [_decorate(e, mounted, idx) for e in cat["isos"].values()]
     out.sort(key=lambda x: (x.get("group") or "", x.get("order", 0), (x.get("name") or "").lower()))
     return out, cat.get("last_scan")
 
@@ -291,6 +292,136 @@ def summary():
 
 def types_list():
     return [{"id": t["id"], "name": t["name"], "category": t.get("category"), "platforms": t.get("platforms", [])} for t in recipes.types()]
+
+
+# ---------------------------------------------------------------- risposte collegate (docs/API.md sezione 17)
+MAX_ANSWERS = 8          # quante risposte si possono collegare alla stessa ISO
+
+
+def answers_of(e):
+    """Id delle risposte collegate alla ISO, in ordine e senza doppioni.
+
+    Migrazione implicita: un catalogo scritto prima della sezione 17 ha solo `answer_id`, che vale
+    come elenco di una sola risposta. Nessuna riscrittura del file: la conversione avviene in lettura."""
+    ids = []
+    for a in (e.get("answers") or []):
+        a = str(a or "").strip()
+        if a and a not in ids:
+            ids.append(a)
+    if not ids and e.get("answer_id"):
+        ids = [str(e["answer_id"]).strip()]
+    return ids[:MAX_ANSWERS]
+
+
+def answers_index():
+    """{id: {id, name, kind}} di tutte le risposte esistenti. Letto una volta sola per tutto il catalogo."""
+    try:
+        from . import answers as A
+        return A.index()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def answers_info(e, idx=None):
+    """Risposte collegate che esistono ancora: [{id, name, kind}] nell'ordine scelto.
+
+    Se una risposta viene cancellata dalla pagina Risposte la voce sparisce e basta: la ISO resta avviabile."""
+    idx = answers_index() if idx is None else idx
+    return [idx[a] for a in answers_of(e) if a in idx]
+
+
+def default_answer(e, info=None, idx=None):
+    """Id della predefinita: `answer_id` se ancora collegato ed esistente, altrimenti la prima disponibile."""
+    info = answers_info(e, idx) if info is None else info
+    ids = [i["id"] for i in info]
+    aid = str(e.get("answer_id") or "").strip()
+    if aid and aid in ids:
+        return aid
+    return ids[0] if ids else None
+
+
+def answer_manual(e):
+    """Vero se al boot va offerta anche l'installazione guidata a mano (avvio senza risposta)."""
+    return bool(e.get("answer_manual", True))
+
+
+def resolve_answer(e, requested=None, idx=None):
+    """Risposta da usare per questo avvio.
+
+    requested None = la predefinita; "" = nessuna (installazione a mano);
+    id non collegato alla ISO o cancellato = si ripiega sulla predefinita."""
+    info = answers_info(e, idx)
+    if requested is None:
+        return default_answer(e, info)
+    requested = str(requested).strip()
+    if not requested:
+        return None
+    if any(i["id"] == requested for i in info):
+        return requested
+    return default_answer(e, info)
+
+
+def detach_answer(answer_id):
+    """Toglie una risposta cancellata da tutte le ISO che la usavano, sistemando la predefinita."""
+    aid = str(answer_id or "").strip()
+    if not aid:
+        return
+    cat = load()
+    changed = False
+    for e in cat["isos"].values():
+        if not isinstance(e, dict):
+            continue
+        prima = answers_of(e)
+        dopo = [a for a in prima if a != aid]
+        if dopo == prima and e.get("answer_id") != aid:
+            continue
+        e["answers"] = dopo
+        if e.get("answer_id") == aid or (e.get("answer_id") and e["answer_id"] not in dopo):
+            e["answer_id"] = dopo[0] if dopo else None
+        changed = True
+    if changed:
+        save(cat)
+
+
+def _check_answer_ids(ids):
+    """Valida un elenco di id di risposta: esistenti, senza doppioni, entro il massimo."""
+    idx = answers_index()
+    out = []
+    for a in ids:
+        aid = str(a or "").strip()[:64]
+        if not aid or aid in out:
+            continue
+        if aid not in idx:
+            raise ValueError(f"Risposta non trovata: {aid}")
+        out.append(aid)
+    if len(out) > MAX_ANSWERS:
+        raise ValueError(f"Al massimo {MAX_ANSWERS} risposte per la stessa ISO")
+    return out
+
+
+def _apply_answers_patch(e, patch):
+    """Applica answers / answer_id / answer_manual all'entry, con la predefinita sempre coerente."""
+    if "answer_manual" in patch:
+        e["answer_manual"] = bool(patch["answer_manual"])
+    if "answers" not in patch and "answer_id" not in patch:
+        return
+    if "answers" in patch:
+        if not isinstance(patch["answers"], list):
+            raise ValueError("Le risposte collegate devono essere un elenco di identificativi")
+        e["answers"] = _check_answer_ids(patch["answers"])
+    else:
+        e["answers"] = answers_of(e)          # migrazione implicita prima di toccare la predefinita
+    if "answer_id" in patch:
+        aid = str(patch["answer_id"] or "").strip()[:64] or None
+        if aid:
+            _check_answer_ids([aid])
+        if aid and "answers" in patch and aid not in e["answers"]:
+            raise ValueError("La risposta predefinita deve essere fra quelle collegate")
+        if aid and aid not in e["answers"]:
+            e["answers"] = ([aid] + e["answers"])[:MAX_ANSWERS]     # PATCH del solo answer_id: la collega
+        e["answer_id"] = aid
+    if e.get("answer_id") not in e["answers"]:
+        e["answer_id"] = e["answers"][0] if e["answers"] else None
 
 
 # ---------------------------------------------------------------- modifiche
@@ -318,9 +449,7 @@ def update(slug, patch):
         else:
             e["type_override"] = ""
             e["type"] = e.get("detect", {}).get("type", "unknown")
-    if "answer_id" in patch:
-        aid = patch["answer_id"]
-        e["answer_id"] = str(aid)[:64] if aid else None
+    _apply_answers_patch(e, patch)
     if "custom_recipe" in patch:
         cr = patch["custom_recipe"]
         if cr:

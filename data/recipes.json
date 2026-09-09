@@ -41,8 +41,6 @@
         "?inject initrd http://{server_ip}/boot/inject/{slug}/winpeshl.ini winpeshl.ini",
         "?inject initrd http://{server_ip}/boot/inject/{slug}/install.cmd install.cmd",
         "{drivers}",
-        "initrd {http_iso}/{f:bcd} BCD",
-        "initrd {http_iso}/{f:bootsdi} boot.sdi",
         "initrd {http_iso}/{f:bootwim} boot.wim",
         "boot"
       ],
@@ -52,7 +50,7 @@
       "warnings": [
         "Secure Boot deve essere disattivato sul PC (iPXE non è firmato). RAM >= 2 GB. Il PC installa in modalità UEFI o BIOS a seconda di come ha fatto il boot PXE."
       ],
-      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. winpeshl.ini/install.cmd (generati da Pixio) caricano i driver iniettati con drvload, mappano \\\\server\\pxe e lanciano setup.exe.",
+      "notes": "wimboot carica BCD, boot.sdi e boot.wim via HTTP. winpeshl.ini/install.cmd (generati da Pixio) caricano i driver iniettati con drvload, mappano \\\\server\\pxe e lanciano setup.exe. BCD e boot.sdi non vengono passati: li estrae wimboot dal boot.wim, nella variante giusta per BIOS o UEFI.",
       "group": "Windows"
     },
     {
@@ -131,15 +129,13 @@
       "script": [
         "kernel {http_boot}/wimboot",
         "{drivers}",
-        "initrd {http_iso}/{f:bcd} BCD",
-        "initrd {http_iso}/{f:bootsdi} boot.sdi",
         "initrd {http_iso}/{f:bootwim} boot.wim",
         "boot"
       ],
       "warnings": [
         "Il .wim viene caricato tutto in RAM: servono almeno 4 GB sul PC (Hiren's ~3 GB, Strelec ~4,5 GB). Secure Boot deve essere disattivato."
       ],
-      "notes": "Hiren's BootCD PE è completo dentro il .wim. Strelec e Medicat tengono i programmi fuori dal wim: via rete si ottiene solo il WinPE di base.",
+      "notes": "Hiren's BootCD PE è completo dentro il .wim. Strelec e Medicat tengono i programmi fuori dal wim: via rete si ottiene solo il WinPE di base. BCD e boot.sdi non vengono passati: li estrae wimboot dal boot.wim, nella variante giusta per BIOS o UEFI.",
       "group": "Strumenti"
     },
     {
