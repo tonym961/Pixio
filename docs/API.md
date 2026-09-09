@@ -310,3 +310,33 @@ Nella GUI: riquadro "Lingua da installare" nella sezione Lingua e area, con inte
 scelta della sorgente e campo per l'indirizzo del pacchetto, e una nota che spiega quando serve (ISO in una lingua diversa
 da quella voluta) e che con Windows Update il server deve poter raggiungere internet.
 Il preset `winserver` deve avere questa funzione già attiva su `it-IT` con sorgente Windows Update.
+
+## 14. Caricamento di cartelle driver e scarto dei file inutili
+Motivo: caricando un pacchetto driver arrivano anche eseguibili di installazione, file di lingua e documentazione,
+che non servono e sporcano l'elenco; e le cartelle vanno create a mano una per una.
+
+### Upload di cartelle (anche più di una alla volta)
+- Il selettore file della pagina Driver usa `webkitdirectory` e `multiple`, e il trascinamento accetta cartelle
+  (`DataTransferItem.webkitGetAsEntry`, lettura ricorsiva). Per ogni cartella radice trascinata o scelta,
+  Pixio crea la cartella corrispondente (`POST /api/drivers/folders`, nome ripulito, se esiste si riusa) e vi carica dentro i file,
+  mantenendo le sottocartelle.
+- `POST /api/upload/init` accetta per `kind:"driver"` il campo facoltativo `path`: sottopercorso relativo dentro la cartella
+  (per esempio `x64/rt.inf`). Validazione: nessun percorso assoluto, nessun `..`, nessun nome nascosto, massimo 6 livelli,
+  ogni segmento con i caratteri ammessi per i nomi file; il file finisce in `DRIVERS_DIR/<folder>/<path>`.
+- La barra di avanzamento mostra il totale dei file della coda e la cartella in corso.
+
+### Scarto dei file che non sono driver
+- Estensioni utili: `inf sys cat dll bin dat cab sepolicy`. Tutto il resto (in particolare `exe msi zip 7z txt ini pdf htm html chm ico jpg png xml json`)
+  viene saltato durante il caricamento di una cartella, con un riepilogo del tipo "12 file ignorati perché non sono driver".
+  Casella "carica tutti i file" per forzare l'invio anche del resto (serve quando il pacchetto richiede file accessori).
+  Il caricamento del singolo file scelto a mano resta libero come oggi (comprese le estensioni non driver e gli archivi `.zip` che vengono estratti).
+- `GET /api/drivers` aggiunge per ogni cartella `useful_files` (numero di file con estensione utile) e `ignored_files`
+  (numero di file presenti ma non usati per l'iniezione), e per ogni file il campo `useful` (booleano).
+  La GUI mostra i file non utili in grigio con la dicitura "non usato", e nel riepilogo della cartella indica quanti file servono davvero.
+- L'iniezione nel WinPE resta limitata a `.inf .sys .cat .dll` al primo livello, come già documentato.
+
+### Azioni su più cartelle insieme
+- Casella di selezione su ogni scheda cartella, con barra delle azioni: attiva o disattiva "Carica in WinPE all'avvio"
+  e "Carica prima del setup di Windows" sulle cartelle selezionate, oppure eliminale (con conferma che elenca i nomi).
+- `PATCH /api/drivers/folders` (senza nome) accetta `{names:[...], winpe_inject?, setup_load?}` e applica la stessa modifica a tutte,
+  restituendo `{ok, updated:[nomi], errors:{nome:messaggio}}`.

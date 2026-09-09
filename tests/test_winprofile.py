@@ -571,9 +571,10 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(any(p["settings"].get("tweaks") for p in modelli))
 
     def test_targets_nell_elenco(self):
-        """GET /api/winprofiles espone targets e le editions di ogni voce (docs/API.md, sez. 11)."""
+        """GET /api/winprofiles espone targets e le editions di ogni voce (docs/API.md, sez. 11 e 12)."""
         d = self.client.get("/api/winprofiles").get_json()
-        self.assertEqual([t["id"] for t in d["targets"]], ["client", "server"])
+        self.assertEqual([t["id"] for t in d["targets"]],
+                         ["client", "10-ltsc", "11-ltsc", "server"])
         self.assertTrue(all(t.get("name") for t in d["targets"]))
         self.assertEqual(d["defaults"]["target"], "client")
         for t in d["tweaks"]["items"]:
@@ -1121,15 +1122,25 @@ class PresetWindowsTest(unittest.TestCase):
             self.assertIn(atteso, prestazioni["tweaks"])
 
     def test_target_dei_modelli(self):
-        """Ogni modello windows dichiara il tipo di Windows e non contiene voci incompatibili
-        (docs/API.md, sezione 11): win-server è server, tutti gli altri client."""
+        """Ogni modello windows dichiara un tipo di Windows valido e non contiene voci
+        incompatibili (docs/API.md, sezioni 11 e 12): win-server è server, i modelli generici sono
+        client, quelli per edizione dichiarano il proprio (10-ltsc, 11-ltsc, server)."""
+        generici = ("win-postazione-aziendale", "win-pc-singolo", "win-laboratorio",
+                    "win-minimale", "win-privacy", "win-prestazioni")
         indice = {t["id"]: t for t in catalogo()["items"]}
         if not indice:
             self.skipTest("catalogo delle ottimizzazioni non installato")
         for pid in self.ids:
             s = WP.load_preset(pid)["settings"]
-            atteso = "server" if pid == "win-server" else "client"
-            self.assertEqual(s.get("target"), atteso, pid + ": tipo di Windows sbagliato")
+            atteso = s.get("target")
+            self.assertIn(atteso, WP.TARGETS, pid + ": tipo di Windows sbagliato")
+            if pid in generici:
+                self.assertEqual(atteso, "client", pid + ": i modelli generici sono per i client")
+            if pid == "win-server":
+                self.assertEqual(atteso, "server", pid + ": tipo di Windows sbagliato")
+            if not WP.target_ha_store(atteso):
+                self.assertEqual(s.get("remove_apps") or [], [],
+                                 pid + ": senza Microsoft Store non si rimuovono app")
             fuori = [t for t in (s.get("tweaks") or [])
                      if t in indice and not WP.tweak_compatibile(indice[t], atteso)]
             self.assertEqual(fuori, [], f"{pid}: voci incompatibili con il tipo {atteso}: {fuori}")
@@ -1186,7 +1197,7 @@ class TargetClientServerTest(unittest.TestCase):
         self.assertEqual(WP.defaults()["target"], "client")
         self.assertEqual(WP.validate(base_settings())["target"], "client")
         elenco = WP.targets_list()
-        self.assertEqual([t["id"] for t in elenco], ["client", "server"])
+        self.assertEqual([t["id"] for t in elenco], ["client", "10-ltsc", "11-ltsc", "server"])
         for t in elenco:
             self.assertTrue(t["name"])
         self.assertEqual(WP.validate(base_settings(target="server"))["target"], "server")
@@ -1287,6 +1298,596 @@ class TargetClientServerTest(unittest.TestCase):
         xml = WP.render_autounattend({"name": "Vecchio", "settings": st}, "10.10.0.254",
                                      cfg=CFG_FINTA)
         minidom.parseString(xml)
+
+
+# ------------------------------------------------- edizioni Enterprise LTSC (docs/API.md, sez. 12)
+
+# Voci che toccano componenti che nelle LTSC non ci sono: niente "10-ltsc" né "11-ltsc"
+SENZA_LTSC = (
+    "disattiva-cortana", "disattiva-copilot", "disattiva-widget", "disattiva-notizie-interessi",
+    "disattiva-chat-teams", "disattiva-servizi-xbox", "niente-esperienze-consumer",
+    "niente-contenuti-consigliati", "start-senza-consigliati", "niente-spotlight",
+    "niente-app-automatiche", "schermata-blocco-pulita", "niente-suggerimenti-windows",
+    "store-senza-aggiornamenti-automatici", "niente-ricerca-app-nello-store",
+    "disattiva-onedrive", "rimuovi-onedrive", "disattiva-id-pubblicita",
+    "niente-notifiche-feedback", "niente-esperienze-personalizzate",
+    "niente-evidenziazioni-ricerca", "rinvia-aggiornamenti-funzionalita",
+)
+# Voci di sistema che nelle LTSC restano valide (telemetria, ricerca, Defender, UAC, rete...)
+CON_LTSC = (
+    "telemetria-minima", "servizi-telemetria", "ricerca-solo-locale", "disattiva-indicizzazione",
+    "disattiva-smartscreen", "disattiva-defender", "disattiva-uac", "attiva-desktop-remoto",
+    "niente-riavvio-automatico", "disattiva-smb1", "effetti-visivi-ridotti",
+    "piano-prestazioni-elevate", "disattiva-llmnr", "attiva-net-35", "mostra-estensioni-file",
+)
+# Voci proprie di Windows 11 che non toccano componenti assenti: valgono anche su 11 LTSC
+SOLO_11_MA_LTSC = ("barra-applicazioni-a-sinistra", "menu-contestuale-classico", "ricerca-solo-icona")
+
+
+def voci_solo_11():
+    """Voci del catalogo valide solo su Windows 11 con Store (niente 10, niente 11-ltsc)."""
+    return [t for t in catalogo()["items"] if t["editions"] == ["11"]]
+
+
+class LtscTest(unittest.TestCase):
+    """Piattaforme "10-ltsc" e "11-ltsc" nel catalogo, nei target e nella generazione."""
+
+    def setUp(self):
+        self.cat = catalogo()
+        if not self.cat["items"]:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        self.indice = {t["id"]: t for t in self.cat["items"]}
+
+    def test_ogni_voce_ha_almeno_una_piattaforma(self):
+        """Nessuna voce può restare senza piattaforme valide né fuori da tutti i tipi di Windows."""
+        for t in self.cat["items"]:
+            piattaforme = set(t["editions"]) & set(WP.PLATFORMS)
+            self.assertTrue(piattaforme, t["id"] + ": nessuna piattaforma valida in editions")
+            self.assertEqual(set(t["editions"]) - set(WP.PLATFORMS), set(),
+                             t["id"] + ": piattaforme sconosciute in editions")
+            compatibili = [x for x in WP.TARGETS if WP.tweak_compatibile(t, x)]
+            self.assertTrue(compatibili, t["id"] + ": non è compatibile con nessun tipo di Windows")
+
+    def test_catalogo_diviso_per_ltsc(self):
+        """La distinzione LTSC deve esistere sul serio, nei due sensi."""
+        con = [t["id"] for t in self.cat["items"]
+               if {"10-ltsc", "11-ltsc"} & set(t["editions"])]
+        senza = [t["id"] for t in self.cat["items"]
+                 if not {"10-ltsc", "11-ltsc"} & set(t["editions"])]
+        self.assertTrue(con, "nessuna voce valida sulle edizioni LTSC")
+        self.assertTrue(senza, "nessuna voce esclusa dalle edizioni LTSC")
+        for tid in SENZA_LTSC:
+            v = self.indice.get(tid)
+            if v:
+                self.assertNotIn("10-ltsc", v["editions"], tid + ": non esiste nelle LTSC")
+                self.assertNotIn("11-ltsc", v["editions"], tid + ": non esiste nelle LTSC")
+        for tid in CON_LTSC:
+            v = self.indice.get(tid)
+            if v:
+                self.assertIn("10-ltsc", v["editions"], tid + ": vale anche su Windows 10 LTSC")
+                self.assertIn("11-ltsc", v["editions"], tid + ": vale anche su Windows 11 LTSC")
+        for tid in SOLO_11_MA_LTSC:
+            v = self.indice.get(tid)
+            if v:
+                self.assertEqual(["11", "11-ltsc"], v["editions"],
+                                 tid + ": voce di Windows 11 valida anche sulla LTSC")
+
+    def test_ltsc_implica_la_versione_base(self):
+        """Una LTSC è pur sempre quel Windows: "10-ltsc" senza "10" (o "11-ltsc" senza "11")
+        sarebbe un errore di battitura. Se un giorno servisse una voce solo-LTSC, questa prova va
+        cambiata insieme al catalogo."""
+        for t in self.cat["items"]:
+            if "10-ltsc" in t["editions"]:
+                self.assertIn("10", t["editions"], t["id"] + ": 10-ltsc senza 10")
+            if "11-ltsc" in t["editions"]:
+                self.assertIn("11", t["editions"], t["id"] + ": 11-ltsc senza 11")
+
+    def test_target_ltsc_validi(self):
+        elenco = WP.targets_list()
+        self.assertEqual([t["id"] for t in elenco], ["client", "10-ltsc", "11-ltsc", "server"])
+        for t in elenco:
+            self.assertTrue(t["name"])
+            self.assertIn("LTSC" if "ltsc" in t["id"] else "Windows", t["name"])
+        for t in ("10-ltsc", "11-ltsc"):
+            self.assertEqual(WP.validate(base_settings(target=t))["target"], t)
+        # i tipi senza Microsoft Store
+        self.assertFalse(WP.target_ha_store("10-ltsc"))
+        self.assertFalse(WP.target_ha_store("11-ltsc"))
+        self.assertFalse(WP.target_ha_store("server"))
+        self.assertTrue(WP.target_ha_store("client"))
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(target="ltsc"))
+        self.assertIn("tipo di windows non valido", str(ctx.exception).lower())
+
+    def test_voce_solo_11_rifiutata_con_target_10_ltsc(self):
+        """Una voce valida solo su Windows 11 non passa con il target 10-ltsc."""
+        solo11 = voci_solo_11()
+        self.assertTrue(solo11, "il catalogo non ha voci valide solo su Windows 11")
+        t = solo11[0]
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(target="10-ltsc", tweaks=[t["id"]]))
+        msg = str(ctx.exception)
+        self.assertIn(t["id"], msg)                        # quale voce
+        self.assertIn("non è compatibile", msg.lower())    # e perché
+        self.assertIn("Windows 10 Enterprise LTSC", msg)
+        self.assertIn("vale solo su Windows 11", msg)
+        # la stessa voce con il target client passa senza problemi
+        self.assertEqual(WP.validate(base_settings(target="client", tweaks=[t["id"]]))["tweaks"],
+                         [t["id"]])
+        # e una voce di sistema passa con tutti e due i target LTSC
+        for target in ("10-ltsc", "11-ltsc"):
+            self.assertEqual(
+                WP.validate(base_settings(target=target, tweaks=["telemetria-minima"]))["tweaks"],
+                ["telemetria-minima"])
+        # su 11-ltsc passano anche le voci proprie di Windows 11 che restano nella LTSC
+        for tid in SOLO_11_MA_LTSC:
+            if tid in self.indice:
+                self.assertEqual(
+                    WP.validate(base_settings(target="11-ltsc", tweaks=[tid]))["tweaks"], [tid])
+                with self.assertRaises(ValueError):
+                    WP.validate(base_settings(target="10-ltsc", tweaks=[tid]))
+
+    def test_generazione_10_ltsc_senza_store_cortana_copilot_widget(self):
+        """Con target 10-ltsc l'XML si genera lo stesso, senza i comandi delle voci escluse."""
+        ids = [t["id"] for t in self.cat["items"]]
+        xml, dom = rendi(target="10-ltsc", tweaks=ids, remove_apps=[])
+        minidom.parseString(xml)
+        comandi = []
+        for passo, tag, campo in (("specialize", "RunSynchronousCommand", "Path"),
+                                  ("oobeSystem", "SynchronousCommand", "CommandLine")):
+            sp = passaggio(dom, passo)
+            if sp is not None:
+                comandi += [testo(uno(dom, campo, c)) for c in sp.getElementsByTagName(tag)]
+        testo_comandi = "\n".join(comandi)
+        # Store, Cortana, Copilot, widget e compagnia non devono generare nulla
+        for chiave in ("AllowCortana", "TurnOffWindowsCopilot", "ShowCopilotButton",
+                       "AllowNewsAndInterests", "EnableFeeds", "ChatIcon", "AutoDownload",
+                       "DisableWindowsConsumerFeatures", "ContentDeliveryManager",
+                       "DisableWindowsSpotlightFeatures", "NoUseStoreOpenWith",
+                       "DisableFileSyncNGSC", "OneDriveSetup", "Services\\XblAuthManager",
+                       "DisabledByGroupPolicy", "DeferFeatureUpdates"):
+            self.assertNotIn(chiave, testo_comandi,
+                             chiave + ": generato con il target 10-ltsc")
+        for t in self.cat["items"]:
+            if WP.tweak_compatibile(t, "10-ltsc"):
+                continue
+            for r in (t.get("reg") or []):
+                # chiave e nome insieme: un nome di valore corto (Enabled) comparirebbe da solo
+                # anche dentro il nome di un altro valore (HiberbootEnabled)
+                self.assertNotIn('%s" /v "%s"' % (r["path"], r["name"]), testo_comandi,
+                                 f"{t['id']}: valore {r['name']} generato con target 10-ltsc")
+            for sv in (t.get("services") or []):
+                self.assertNotIn("Services\\" + sv["name"], testo_comandi,
+                                 f"{t['id']}: servizio {sv['name']} generato con target 10-ltsc")
+            for c in (t.get("commands") or []):
+                self.assertNotIn(c, comandi, t["id"] + ": comando generato con target 10-ltsc")
+            for f in (t.get("features_enable") or []) + (t.get("features_disable") or []):
+                self.assertNotIn("/featurename:" + f, testo_comandi,
+                                 f"{t['id']}: funzionalità {f} generata con target 10-ltsc")
+        # le voci di sistema invece ci sono
+        self.assertIn("AllowTelemetry", testo_comandi)
+        self.assertIn("Services\\DiagTrack", testo_comandi)
+        self.assertIn("Services\\WSearch", testo_comandi)
+        self.assertIn("EnableSmartScreen", testo_comandi)
+        # e con il target client le voci escluse tornano
+        xml_client, _ = rendi(target="client", tweaks=ids, remove_apps=[])
+        self.assertIn("AllowCortana", xml_client)
+        # le voci solo Windows 11 restano fuori anche dal target 11-ltsc quando non sono LTSC
+        xml11, _ = rendi(target="11-ltsc", tweaks=ids, remove_apps=[])
+        self.assertNotIn("TurnOffWindowsCopilot", xml11)
+        self.assertIn("TaskbarAl", xml11)          # barra applicazioni a sinistra: c'è anche su LTSC
+
+    def test_app_ignorate_con_i_target_ltsc(self):
+        """Senza Microsoft Store le app Appx non si rimuovono: nessun comando, ma un commento."""
+        for target in ("10-ltsc", "11-ltsc"):
+            xml, _ = rendi(target=target, remove_apps=["Microsoft.BingNews", "Clipchamp.Clipchamp"])
+            self.assertNotIn("Remove-AppxPackage", xml, target)
+            self.assertNotIn("Remove-AppxProvisionedPackage", xml, target)
+            self.assertIn("Le app da rimuovere sono state ignorate", xml, target)
+            self.assertIn("LTSC", xml, target)
+            # l'elenco resta scritto nel profilo: tornando al tipo client si ritrova
+            self.assertEqual(
+                WP.validate(base_settings(target=target,
+                                          remove_apps=["Microsoft.BingNews"]))["remove_apps"],
+                ["Microsoft.BingNews"])
+        xml_client, _ = rendi(target="client", remove_apps=["Microsoft.BingNews"])
+        self.assertIn("Remove-AppxPackage", xml_client)
+
+    def test_generazione_non_alza_su_profilo_ltsc_incompatibile(self):
+        """Profilo salvato come client e poi passato a LTSC: l'XML si genera lo stesso."""
+        st = base_settings(tweaks=["disattiva-cortana", "telemetria-minima"])
+        st["target"] = "11-ltsc"
+        xml = WP.render_autounattend({"name": "Vecchio", "settings": st}, "10.10.0.254",
+                                     cfg=CFG_FINTA)
+        minidom.parseString(xml)
+        self.assertNotIn("AllowCortana", xml)
+        self.assertIn("AllowTelemetry", xml)
+
+
+# ------------------------------------------------- lingua installata dopo il setup (sezione 13)
+
+def primo_accesso(dom):
+    """FirstLogonCommands dell'XML: [{order, cmd, descr}] nell'ordine in cui stanno nel file."""
+    flc = uno(dom, "FirstLogonCommands")
+    if flc is None:
+        return []
+    fuori = []
+    for c in flc.getElementsByTagName("SynchronousCommand"):
+        fuori.append({"order": int(testo(uno(dom, "Order", c)) or 0),
+                      "cmd": testo(uno(dom, "CommandLine", c)),
+                      "descr": testo(uno(dom, "Description", c))})
+    return fuori
+
+
+def dove(comandi, pezzo):
+    """Posizione del primo comando che contiene quel pezzo di testo (-1 se non c'è)."""
+    for i, c in enumerate(comandi):
+        if pezzo in c:
+            return i
+    return -1
+
+
+def lingua(**campi):
+    """settings.language_install con l'interruttore acceso e i campi indicati."""
+    d = {"enabled": True}
+    d.update(campi)
+    return d
+
+
+class LinguaInstallataTest(unittest.TestCase):
+    """settings.language_install: le ISO in una lingua sola escono nella lingua voluta.
+
+    È il caso di Windows Server 2022 English, il cui install.wim contiene solo en-US: senza questa
+    funzione il pacchetto della lingua italiana va installato a mano dopo ogni installazione.
+    """
+
+    def setUp(self):
+        C.WINPROFILES_FILE = MIO_WINPROFILES
+        if os.path.exists(C.WINPROFILES_FILE):
+            os.unlink(C.WINPROFILES_FILE)
+
+    def _ko(self, atteso, **campi):
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(language_install=lingua(**campi)))
+        self.assertIn(atteso.lower(), str(ctx.exception).lower())
+
+    # ---------------------------------------------------------------- elenchi e predefiniti
+
+    def test_elenco_lingue_con_geoid(self):
+        """languages_install_list(): lingue più comuni in Italia con il GeoId giusto."""
+        el = WP.languages_install_list()
+        self.assertEqual({x["tag"]: x["geo_id"] for x in el},
+                         {"it-IT": 118, "en-GB": 242, "en-US": 244,
+                          "de-DE": 94, "fr-FR": 84, "es-ES": 217})
+        self.assertEqual(el[0]["tag"], "it-IT", "l'italiano deve essere il primo della tendina")
+        self.assertTrue(all(x.get("name") for x in el))
+        # deve essere una copia: chi la modifica non tocca l'elenco del modulo
+        el[0]["geo_id"] = 0
+        self.assertEqual(WP.languages_install_list()[0]["geo_id"], 118)
+        self.assertEqual([s["id"] for s in WP.lang_sources_list()], ["windows-update", "file"])
+        self.assertTrue(all(s.get("name") for s in WP.lang_sources_list()))
+
+    def test_predefinito_spento_e_italiano(self):
+        li = WP.defaults()["language_install"]
+        self.assertFalse(li["enabled"], "di norma non serve: le ISO italiane hanno già la lingua")
+        self.assertEqual(li["languages"], ["it-IT"])
+        self.assertEqual(li["source"], "windows-update")
+        self.assertEqual(li["geo_id"], 118)
+        self.assertTrue(li["set_system"])
+        # la validazione di un profilo qualsiasi restituisce la stessa forma
+        self.assertEqual(WP.validate(base_settings())["language_install"], li)
+
+    # ---------------------------------------------------------------- validazione
+
+    def test_tag_non_valido(self):
+        self._ko("lingua da installare non valida", languages=["italiano"])
+        self._ko("lingua da installare non valida", languages=["IT-it"])
+        self._ko("lingua da installare non valida", languages=["it_IT"])
+        self._ko("lingua da installare non valida", languages=["it-IT & shutdown"])
+        self._ko("lingua da installare non valida", languages=["it-IT", "en_US"])
+        # forme ammesse (anche i tag lunghi in stile BCP-47)
+        for buono in ("it-IT", "en-US", "de", "sr-Latn-RS"):
+            v = WP.validate(base_settings(language_install=lingua(languages=[buono])))
+            self.assertEqual(v["language_install"]["languages"], [buono])
+
+    def test_troppe_lingue(self):
+        self._ko("troppe lingue",
+                 languages=["it-IT", "en-US", "de-DE", "fr-FR", "es-ES", "pt-PT"])
+        cinque = ["it-IT", "en-US", "de-DE", "fr-FR", "es-ES"]
+        v = WP.validate(base_settings(language_install=lingua(languages=cinque)))
+        self.assertEqual(v["language_install"]["languages"], cinque)
+        # i doppioni non contano e non si ripetono
+        v = WP.validate(base_settings(language_install=lingua(languages=["it-IT", "it-IT"])))
+        self.assertEqual(v["language_install"]["languages"], ["it-IT"])
+
+    def test_indirizzo_non_http(self):
+        for cattivo in ("ftp://srv/it.cab", "\\\\srv\\lang\\it.cab", "/srv/pixio/it.cab",
+                        "srv/it.cab", "file:///srv/it.cab", 'http://srv/it.cab" & shutdown'):
+            self._ko("indirizzo del pacchetto lingua non valido", source="file", file_url=cattivo)
+        # con la sorgente "file" l'indirizzo è obbligatorio
+        self._ko("indica l'indirizzo", source="file", file_url="")
+        buono = "https://10.10.0.254/pxe/lang/it-IT.cab"
+        v = WP.validate(base_settings(language_install=lingua(source="file", file_url=buono)))
+        self.assertEqual(v["language_install"]["file_url"], buono)
+
+    def test_sorgente_sconosciuta(self):
+        self._ko("sorgente della lingua non valida", source="internet")
+        self._ko("sorgente della lingua non valida", source="smb")
+        self._ko("sorgente della lingua non valida", source="windowsupdate")
+        for buona in ("windows-update", "file"):
+            campi = {"source": buona}
+            if buona == "file":
+                campi["file_url"] = "http://10.10.0.254/pxe/lang/it.cab"
+            v = WP.validate(base_settings(language_install=lingua(**campi)))
+            self.assertEqual(v["language_install"]["source"], buona)
+
+    def test_altri_controlli(self):
+        self._ko("geoid", geo_id=999999)
+        self._ko("geoid", geo_id=-1)
+        self._ko("indica almeno una lingua", languages=[])
+        self._ko("tastiera", keyboard="tastiera italiana")
+        self._ko("troppo lungo", source="file", file_url="http://10.10.0.254/" + "a" * 600)
+        # i controlli sulla forma valgono anche con l'interruttore spento: un valore sbagliato non
+        # deve saltare fuori la prima volta che qualcuno accende la funzione
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(language_install={"enabled": False,
+                                                        "languages": ["italiano"]}))
+        self.assertIn("lingua da installare non valida", str(ctx.exception).lower())
+        # con l'interruttore spento, invece, l'indirizzo mancante non è un errore
+        v = WP.validate(base_settings(language_install={"enabled": False, "source": "file"}))
+        self.assertEqual(v["language_install"]["source"], "file")
+
+    # ---------------------------------------------------------------- generazione
+
+    def test_spento_nessun_comando(self):
+        """Con enabled falso non viene generato niente (docs/API.md, sezione 13)."""
+        xml, dom = rendi()
+        for pezzo in ("Install-Language", "Set-SystemPreferredUILanguage", "Set-WinHomeLocation",
+                      "lang.cab", "curl.exe"):
+            self.assertNotIn(pezzo, xml)
+        # nemmeno con lingua, sorgente e indirizzo già scritti nel profilo
+        xml, _ = rendi(language_install={"enabled": False, "languages": ["it-IT"], "source": "file",
+                                         "file_url": "http://10.10.0.254/pxe/lang/it.cab"})
+        for pezzo in ("Install-Language", "curl.exe", "add-package", "Set-Culture"):
+            self.assertNotIn(pezzo, xml)
+
+    def test_windows_update(self):
+        """Sorgente windows-update: Install-Language e poi le impostazioni di sistema."""
+        xml, dom = rendi(language_install=lingua(languages=["it-IT"]))
+        voci = primo_accesso(dom)
+        cmd = [x["cmd"] for x in voci]
+        tutto = "\n".join(cmd)
+        self.assertIn('powershell -NoProfile -ExecutionPolicy Bypass -Command '
+                      '"Install-Language -Language it-IT -CopyToSettings"', cmd)
+        for atteso in ("Set-SystemPreferredUILanguage it-IT",
+                       "Set-WinUILanguageOverride -Language it-IT",
+                       "Set-WinUserLanguageList it-IT -Force",
+                       "Set-Culture it-IT",
+                       "Set-WinHomeLocation -GeoId 118"):
+            self.assertIn('powershell -NoProfile -ExecutionPolicy Bypass -Command "%s"' % atteso,
+                          cmd, atteso)
+        self.assertNotIn("curl", tutto)
+        self.assertNotIn("lang.cab", tutto)
+        # ordine giusto: prima si installa la lingua, poi la si imposta
+        self.assertLess(dove(cmd, "Install-Language"), dove(cmd, "Set-SystemPreferredUILanguage"))
+        self.assertLess(dove(cmd, "Set-SystemPreferredUILanguage"), dove(cmd, "Set-WinHomeLocation"))
+        # e i comandi della lingua vengono prima di tutti gli altri
+        self.assertEqual(dove(cmd, "Install-Language"), 0)
+        self.assertEqual([x["order"] for x in voci], list(range(1, len(voci) + 1)))
+        # descrizioni in italiano
+        descr = [x["descr"] for x in voci if "Install-Language" in x["cmd"]
+                 or "Set-SystemPreferredUILanguage" in x["cmd"]]
+        self.assertEqual(len(descr), 2)
+        self.assertIn("Installa la lingua it-IT da Windows Update", descr)
+        self.assertTrue(all(d and not d.startswith("<") for d in descr))
+        self.assertIn("lingua del sistema", " ".join(descr))
+        # il commento nell'XML dice a cosa serve
+        self.assertIn("Lingua installata al primo accesso", xml)
+
+    def test_windows_update_piu_lingue(self):
+        """Più lingue: una Install-Language ciascuna, le impostazioni solo per la prima."""
+        xml, dom = rendi(language_install=lingua(languages=["it-IT", "en-US"], geo_id=118))
+        cmd = [x["cmd"] for x in primo_accesso(dom)]
+        self.assertEqual(len([c for c in cmd if "Install-Language" in c]), 2)
+        self.assertLess(dove(cmd, "Install-Language -Language it-IT"),
+                        dove(cmd, "Install-Language -Language en-US"))
+        self.assertEqual(len([c for c in cmd if "Set-SystemPreferredUILanguage" in c]), 1)
+        self.assertIn("Set-SystemPreferredUILanguage it-IT", "\n".join(cmd))
+        self.assertNotIn("Set-SystemPreferredUILanguage en-US", "\n".join(cmd))
+        # le impostazioni vengono dopo l'installazione di tutte le lingue
+        self.assertLess(dove(cmd, "Install-Language -Language en-US"),
+                        dove(cmd, "Set-SystemPreferredUILanguage"))
+
+    def test_sorgente_file(self):
+        """Sorgente file: curl.exe e dism con l'indirizzo indicato, niente Windows Update."""
+        url = "http://10.10.0.254/pxe/lang/it-IT_LanguagePack.cab"
+        xml, dom = rendi(language_install=lingua(source="file", file_url=url))
+        cmd = [x["cmd"] for x in primo_accesso(dom)]
+        tutto = "\n".join(cmd)
+        self.assertIn("curl.exe", tutto)
+        self.assertIn(url, tutto)
+        self.assertIn("dism /online /add-package", tutto)
+        self.assertIn("%TEMP%\\lang.cab", tutto)
+        self.assertNotIn("Install-Language", tutto)
+        self.assertEqual(dove(cmd, "curl.exe"), 0)
+        self.assertLess(dove(cmd, "curl.exe"), dove(cmd, "add-package"))
+        self.assertLess(dove(cmd, "add-package"), dove(cmd, "Set-SystemPreferredUILanguage"))
+        # virgolette: l'indirizzo e il percorso del file stanno fra virgolette doppie, così gli
+        # spazi e i caratteri strani di cmd non spezzano il comando
+        scarica = cmd[dove(cmd, "curl.exe")]
+        self.assertIn('-o "%TEMP%\\lang.cab"', scarica)
+        self.assertIn('"%s"' % url, scarica)
+        descr = [x["descr"] for x in primo_accesso(dom)][:2]
+        self.assertIn("Scarica il pacchetto della lingua it-IT da Pixio", descr)
+
+    def test_indirizzo_con_caratteri_speciali_nell_xml(self):
+        """Un indirizzo con & resta valido nell'XML (l'escaping lo fa ElementTree)."""
+        url = "https://10.10.0.254/pxe/lang.cab?v=1&lang=it-IT"
+        xml, dom = rendi(language_install=lingua(source="file", file_url=url))
+        self.assertIn("&amp;", xml)
+        minidom.parseString(xml)
+        self.assertIn(url, "\n".join(x["cmd"] for x in primo_accesso(dom)))
+
+    def test_senza_impostazioni_di_sistema(self):
+        """set_system falso: la lingua si installa e basta."""
+        xml, dom = rendi(language_install=lingua(languages=["it-IT"], set_system=False))
+        cmd = [x["cmd"] for x in primo_accesso(dom)]
+        self.assertIn("Install-Language", "\n".join(cmd))
+        for pezzo in ("Set-SystemPreferredUILanguage", "Set-WinUILanguageOverride",
+                      "Set-WinUserLanguageList", "Set-Culture", "Set-WinHomeLocation"):
+            self.assertNotIn(pezzo, "\n".join(cmd))
+
+    def test_geoid_della_lingua_scelta(self):
+        xml, dom = rendi(language_install=lingua(languages=["en-US"], geo_id=244))
+        self.assertIn("Set-WinHomeLocation -GeoId 244",
+                      "\n".join(x["cmd"] for x in primo_accesso(dom)))
+        self.assertEqual(WP.geo_id_di("de-DE"), 94)
+        self.assertEqual(WP.geo_id_di("xx-XX"), 118, "lingua fuori elenco: si resta sull'Italia")
+
+    def test_xml_sempre_valido(self):
+        """Qualunque combinazione produce un autounattend.xml valido secondo minidom."""
+        combinazioni = [
+            {"enabled": False},
+            lingua(languages=["it-IT"]),
+            lingua(languages=["it-IT", "en-GB", "de-DE", "fr-FR", "es-ES"]),
+            lingua(languages=["it-IT"], set_system=False),
+            lingua(source="file", file_url="http://10.10.0.254/pxe/lang/it.cab"),
+            lingua(source="file", file_url="https://10.10.0.254/l.cab?a=1&b=2", set_system=False),
+            lingua(languages=["en-US"], geo_id=244, keyboard="0409:00000409"),
+        ]
+        for li in combinazioni:
+            for target in ("client", "server"):
+                xml, dom = rendi(language_install=li, target=target, remove_apps=[])
+                self.assertEqual(dom.documentElement.tagName, "unattend")
+                for passo in ("windowsPE", "specialize", "oobeSystem"):
+                    self.assertIsNotNone(passaggio(dom, passo), passo)
+                # i comandi al primo accesso restano numerati senza buchi
+                ordini = [x["order"] for x in primo_accesso(dom)]
+                self.assertEqual(ordini, list(range(1, len(ordini) + 1)), str(li))
+
+    def test_lingua_prima_dei_comandi_del_tecnico(self):
+        """La lingua si installa prima delle app, delle ottimizzazioni e dei comandi del profilo."""
+        xml, dom = rendi(language_install=lingua(languages=["it-IT"]),
+                         remove_apps=["Microsoft.BingNews"],
+                         run_commands=["cmd /c echo ciao"],
+                         features_enable=["NetFx3"])
+        cmd = [x["cmd"] for x in primo_accesso(dom)]
+        self.assertEqual(dove(cmd, "Install-Language"), 0)
+        for dopo in ("Remove-AppxPackage", "/featurename:NetFx3", "echo ciao"):
+            self.assertLess(dove(cmd, "Set-WinHomeLocation"), dove(cmd, dopo), dopo)
+
+    # ---------------------------------------------------------------- modelli
+
+    def test_modello_server_con_lingua_attiva(self):
+        """Il modello di Windows Server esce già in italiano anche da una ISO in inglese."""
+        ids = preset_windows_ids()
+        if not ids:
+            self.skipTest("modelli non installati")
+        server = [p for p in (WP.load_preset(i) for i in ids)
+                  if p["settings"].get("target") == "server"]
+        self.assertTrue(server, "manca il modello di Windows Server")
+        for p in server:
+            li = p["settings"].get("language_install") or {}
+            self.assertTrue(li.get("enabled"), p["id"] + ": la lingua deve essere già attiva")
+            self.assertEqual(li.get("languages"), ["it-IT"], p["id"])
+            self.assertEqual(li.get("source"), "windows-update", p["id"])
+            self.assertEqual(li.get("geo_id"), 118, p["id"])
+            self.assertTrue(li.get("set_system"), p["id"])
+            # la descrizione spiega perché qui serve e negli altri modelli no
+            d = p["description"].lower()
+            self.assertIn("inglese", d, p["id"] + ": la descrizione deve spiegare a cosa serve")
+            self.assertIn("windows update", d, p["id"])
+        # gli altri modelli non ce l'hanno: le ISO italiane contengono già la lingua
+        for pid in ids:
+            s = WP.load_preset(pid)["settings"]
+            if s.get("target") == "server":
+                continue
+            self.assertFalse((s.get("language_install") or {}).get("enabled"),
+                             pid + ": con una ISO italiana il pacchetto lingua non serve")
+
+    def test_profilo_dal_modello_server_genera_i_comandi(self):
+        ids = [i for i in preset_windows_ids()
+               if WP.load_preset(i)["settings"].get("target") == "server"]
+        if not ids:
+            self.skipTest("modelli non installati")
+        pid = ids[0]
+        prof = WP.create({"name": "Server dal modello", "preset": pid,
+                          "settings": {"admin_password": "PasswordDiProva1"}})
+        try:
+            self.assertTrue(prof["settings"]["language_install"]["enabled"])
+            xml = WP.render_autounattend(prof, "10.10.0.254", cfg=CFG_FINTA)
+            minidom.parseString(xml)
+            self.assertIn("Install-Language -Language it-IT -CopyToSettings", xml)
+            self.assertIn("Set-SystemPreferredUILanguage it-IT", xml)
+            self.assertIn("Set-WinHomeLocation -GeoId 118", xml)
+        finally:
+            WP.delete(prof["id"])
+
+
+class ApiLinguaTest(unittest.TestCase):
+    """GET /api/winprofiles espone languages_install (docs/API.md, sezione 13)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from pixio import create_app
+        from pixio.blueprints import api_winprofile
+        cls._etc = (C.ETC_DIR, C.CONFIG_FILE, C.SECRET_FILE)
+        C.ETC_DIR = MIO_ETC
+        C.CONFIG_FILE = os.path.join(MIO_ETC, "config.json")
+        C.SECRET_FILE = os.path.join(MIO_ETC, "secret")
+        cls.app = create_app()
+        if "api_winprofile" not in cls.app.blueprints:
+            cls.app.register_blueprint(api_winprofile.bp)
+        cls.app.config["TESTING"] = True
+        cls.client = cls.app.test_client()
+        r = cls.client.post("/api/auth/login", json={"password": "segreta1"})
+        assert r.status_code == 200, r.get_json()
+        cls.h = {"X-CSRF-Token": r.get_json()["csrf"]}
+
+    @classmethod
+    def tearDownClass(cls):
+        C.ETC_DIR, C.CONFIG_FILE, C.SECRET_FILE = cls._etc
+
+    def setUp(self):
+        C.WINPROFILES_FILE = MIO_WINPROFILES
+        if os.path.exists(C.WINPROFILES_FILE):
+            os.unlink(C.WINPROFILES_FILE)
+
+    def test_languages_install_nell_elenco(self):
+        d = self.client.get("/api/winprofiles").get_json()
+        self.assertIn("languages_install", d)
+        self.assertEqual({x["tag"]: x["geo_id"] for x in d["languages_install"]},
+                         {"it-IT": 118, "en-GB": 242, "en-US": 244,
+                          "de-DE": 94, "fr-FR": 84, "es-ES": 217})
+        self.assertTrue(all(x.get("name") for x in d["languages_install"]))
+        self.assertEqual([s["id"] for s in d["lang_sources"]], ["windows-update", "file"])
+        self.assertFalse(d["defaults"]["language_install"]["enabled"])
+        self.assertEqual(d["defaults"]["language_install"]["languages"], ["it-IT"])
+
+    def test_profilo_con_lingua_via_api(self):
+        r = self.client.post("/api/winprofiles", headers=self.h, json={
+            "name": "Server inglese", "settings": {
+                "admin_user": "amministratore", "admin_password": "Pw1234567",
+                "target": "server",
+                "language_install": {"enabled": True, "languages": ["it-IT"],
+                                     "source": "windows-update"}}})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        pid = r.get_json()["id"]
+        self.assertTrue(r.get_json()["settings"]["language_install"]["enabled"])
+        x = self.client.post("/api/winprofiles/%s/preview" % pid, headers=self.h, json={})
+        self.assertEqual(x.status_code, 200)
+        self.assertIn("Install-Language -Language it-IT", x.get_json()["xml"])
+        # sorgente sconosciuta: errore in italiano, non un 500
+        r = self.client.put("/api/winprofiles/" + pid, headers=self.h,
+                            json={"settings": {"language_install": {"source": "internet"}}})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sorgente", r.get_json()["error"].lower())
+        # indirizzo non http con la sorgente file: stesso trattamento
+        r = self.client.put("/api/winprofiles/" + pid, headers=self.h, json={
+            "settings": {"language_install": {"source": "file", "file_url": "ftp://srv/it.cab"}}})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("indirizzo", r.get_json()["error"].lower())
+        self.client.delete("/api/winprofiles/" + pid, headers=self.h)
 
 
 def tearDownModule():

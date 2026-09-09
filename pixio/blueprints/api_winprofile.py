@@ -3,7 +3,8 @@
 Rotte:
   GET    /api/winprofiles                      elenco + valori predefiniti + elenchi per la GUI
                                                (compreso il catalogo delle ottimizzazioni, sezione 10,
-                                               e i tipi di Windows client/LTSC/server, sezioni 11 e 12)
+                                               i tipi di Windows client/LTSC/server, sezioni 11 e 12,
+                                               e le lingue installabili dopo il setup, sezione 13)
   POST   /api/winprofiles                      crea (con "preset" come base, sovrascritto da "settings")
   GET    /api/winprofiles/<id>                 un profilo
   PUT    /api/winprofiles/<id>                 aggiorna nome/nota/impostazioni
@@ -63,6 +64,10 @@ def list_profiles():
         "defaults": winprofile.defaults(),
         "timezones": winprofile.timezones_list(),
         "languages": winprofile.languages_list(),
+        # lingue installabili dopo il setup con il loro GeoId, per il riquadro "Lingua da
+        # installare" della GUI (docs/API.md, sezione 13)
+        "languages_install": winprofile.languages_install_list(),
+        "lang_sources": winprofile.lang_sources_list(),
         "apps": winprofile.apps_list(),
         "disk_modes": winprofile.disk_modes_list(),
         "groups": winprofile.groups_list(),

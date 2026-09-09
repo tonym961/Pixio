@@ -9,11 +9,23 @@
    ricerca, filtro per impatto, contatori, più gli elenchi a mano dei servizi e delle funzionalità
    Windows. Le scelte finiscono in settings.tweaks / services_extra / features_enable / features_disable.
 
-   Il selettore "Tipo di Windows" della sezione "Lingua e area" (settings.target: client oppure server,
-   docs/API.md sezione 11) decide quali voci del catalogo hanno senso: ogni voce dichiara in "editions"
-   le piattaforme su cui ha effetto ("10", "11", "server") e la GUI mostra solo quelle compatibili,
-   avvisa se il profilo ne conteneva di incompatibili e disattiva la rimozione delle app del Microsoft
-   Store, che su Windows Server non esiste. */
+   Il selettore "Tipo di Windows" della sezione "Lingua e area" (settings.target: "client",
+   "10-ltsc", "11-ltsc" oppure "server", docs/API.md sezioni 11 e 12) decide quali voci del catalogo
+   hanno senso: ogni voce dichiara in "editions" le piattaforme su cui ha effetto ("10", "10-ltsc",
+   "11", "11-ltsc", "server") e la GUI mostra solo quelle compatibili, avvisa se il profilo ne
+   conteneva di incompatibili e disattiva la rimozione delle app del Microsoft Store, che su Windows
+   Server e nelle edizioni Enterprise LTSC non esiste.
+
+   La finestra "Nuovo profilo" mostra i modelli di data/profile-presets.json raggruppati (campo
+   "group"): prima "Per edizione di Windows" (Windows 11 Pro, le due LTSC, Windows Server), poi
+   "Generici" (per tipo di postazione), ognuno con la descrizione e il tipo di Windows a cui si
+   riferisce. Scegliendone uno il form si riempie per intero, selettore "Tipo di Windows" compreso.
+
+   Il riquadro "Lingua da installare" della stessa sezione (settings.language_install, docs/API.md
+   sezione 13) serve alle ISO che contengono una lingua sola: la ISO parte in inglese e il PC si
+   ritrova in italiano da solo, senza installare a mano il pacchetto lingua. Interruttore, lingua,
+   sorgente del pacchetto (Windows Update oppure un file caricato in Pixio) e indirizzo del file;
+   i comandi generati si vedono nell'anteprima dell'XML in fondo alla pagina. */
 'use strict';
 (function () {
   const P = window.Pixio;
@@ -66,6 +78,17 @@
   }
 
   function presets() { return (W.meta && W.meta.presets) || []; }
+  // lingue installabili dopo il setup, con il GeoId che vuole Set-WinHomeLocation (sezione 13)
+  function lingueInstall() {
+    return (W.meta && W.meta.languages_install)
+      || [{ tag: 'it-IT', name: 'Italiano (Italia)', geo_id: 118 }];
+  }
+  function sorgentiLingua() {
+    return (W.meta && W.meta.lang_sources) || [
+      { id: 'windows-update', name: 'Windows Update (il PC deve raggiungere internet)' },
+      { id: 'file', name: 'Pacchetto caricato in Pixio (indirizzo http/https)' },
+    ];
+  }
   function apps() { return (W.meta && W.meta.apps) || []; }
   function defaults() { return clone((W.meta && W.meta.defaults) || {}); }
   function serverIp() { return (W.meta && W.meta.server_ip) || (P.state.status && P.state.status.server_ip) || '<ip>'; }
@@ -84,7 +107,7 @@
       const s = p.settings || {};
       const dk = s.disk || {};
       const dettagli = [s.computer_name || '—', dk.mode || 'auto-uefi', s.language || 'it-IT'].join(' · ');
-      const tipo = s.target && s.target !== 'client' ? ` <span class="pill neutral">${esc(s.target === 'server' ? 'Server' : s.target)}</span>` : '';
+      const tipo = s.target && s.target !== 'client' ? ` <span class="pill neutral">${esc(targetPill(s.target))}</span>` : '';
       return `<li data-id="${esc(p.id)}" class="${p.id === sel ? 'sel' : ''}" style="${p.id === sel ? 'border-color:var(--accent)' : ''}">
         <div style="min-width:0;flex:1">
           <div class="drv-name">${esc(p.name)}${tipo}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
@@ -104,19 +127,81 @@
   }
 
   // ---------------------------------------------------------------- nuovo profilo (modello)
+  /* I modelli arrivano da GET /api/winprofiles (campo "presets", da data/profile-presets.json).
+     Vanno mostrati in due gruppi — prima quelli tarati su un'edizione di Windows, poi quelli
+     generici per tipo di postazione — con la descrizione sempre visibile e il tipo di Windows di
+     ognuno, così si sceglie leggendo invece di aprire una tendina alla cieca. */
+
+  // identificativi dei modelli per edizione: servono solo come ripiego se il campo "group" non
+  // arriva dal server (l'API dei modelli passa i campi che conosce)
+  const PRESET_EDIZIONE = ['win11-pro', 'win11-ltsc', 'win10-ltsc', 'winserver'];
+
+  function presetGruppo(p) {
+    const g = String((p && p.group) || '').toLowerCase();
+    if (g === 'edizione' || g === 'generico') return g;
+    return PRESET_EDIZIONE.indexOf(p && p.id) >= 0 ? 'edizione' : 'generico';
+  }
+
+  /** Tipo di Windows del modello, con il nome per esteso preso da /api/winprofiles. */
+  function presetTarget(p) { return String((p && p.settings && p.settings.target) || 'client'); }
+
+  function presetCardHtml(p, sel) {
+    const t = presetTarget(p);
+    const s = p.settings || {};
+    const extra = [];
+    if (s.edition_index) extra.push('edizione ' + s.edition_index);
+    if (s.product_key) extra.push('chiave di installazione già pronta');
+    if (s.bypass_requirements) extra.push('requisiti di Windows 11 aggirati');
+    if (s.autologon) extra.push('accesso automatico');
+    return `<label class="wn-card${sel ? ' on' : ''}" data-preset="${esc(p.id)}">
+      <input type="radio" name="wn-preset" value="${esc(p.id)}" ${sel ? 'checked' : ''}>
+      <span class="b">
+        <span class="t">${esc(p.name)} <span class="pill neutral wn-tipo">${esc(twTargetNome(t))}</span></span>
+        <span class="d">${esc(p.description || '')}</span>
+        ${extra.length ? `<span class="m">${esc(extra.join(' · '))}</span>` : ''}
+      </span>
+    </label>`;
+  }
+
+  function presetListaHtml(ps) {
+    const gruppi = [
+      { id: 'edizione', titolo: 'Per edizione di Windows',
+        nota: 'Tarati su un\'edizione precisa: tipo di Windows, edizione da installare, chiave pubblica di installazione e ottimizzazioni che su quell\'edizione hanno davvero effetto.' },
+      { id: 'generico', titolo: 'Generici',
+        nota: 'Per tipo di postazione, senza legarsi a un\'edizione: l\'edizione la scegli tu o la chiede il programma di installazione.' },
+    ];
+    const blocchi = gruppi.map((g) => {
+      const voci = ps.filter((p) => presetGruppo(p) === g.id);
+      if (!voci.length) return '';
+      return `<div class="wn-group">
+        <div class="wn-gtitle">${esc(g.titolo)} <span class="pill neutral">${voci.length}</span></div>
+        <div class="wn-gnota">${esc(g.nota)}</div>
+        ${voci.map((p) => presetCardHtml(p, false)).join('')}
+      </div>`;
+    }).join('');
+    return `<div class="wn-list">
+      <label class="wn-card wn-vuoto on" data-preset="">
+        <input type="radio" name="wn-preset" value="" checked>
+        <span class="b">
+          <span class="t">Nessun modello <span class="pill neutral wn-tipo">Windows client (10 e 11)</span></span>
+          <span class="d">Parti dai valori predefiniti di Pixio: italiano, disco UEFI automatico, OOBE saltato, nessuna ottimizzazione selezionata.</span>
+        </span>
+      </label>
+      ${blocchi}
+    </div>`;
+  }
 
   async function nuovo() {
     const ps = presets();
-    const opzioni = ['<option value="">Nessun modello (valori predefiniti)</option>']
-      .concat(ps.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`)).join('');
     const m = P.modal({
       title: 'Nuovo profilo Windows',
+      wide: true,
       body: `<div class="field"><label for="wn-name">Nome del profilo</label>
                <input id="wn-name" maxlength="64" placeholder="es. Postazione ufficio Windows 11">
                <div class="hint">Serve solo a te per riconoscerlo nell'elenco.</div></div>
-             <div class="field"><label for="wn-preset">Parti da un modello</label>
-               <select id="wn-preset">${opzioni}</select>
-               <div class="hint" id="wn-desc">I valori del modello riempiono il form e restano tutti modificabili prima del salvataggio.</div></div>`,
+             <div class="field"><span class="field-label">Parti da un modello</span>
+               <div class="hint" style="margin:0 0 8px">I valori del modello riempiono tutto il form — tipo di Windows, edizione, chiave, account, disco e ottimizzazioni — e restano modificabili prima del salvataggio.</div>
+               ${ps.length ? presetListaHtml(ps) : '<div class="hint">Nessun modello disponibile: il file dei modelli non è installato. Si parte dai valori predefiniti.</div>'}</div>`,
       buttons: [
         { label: 'Annulla', value: null },
         {
@@ -125,17 +210,16 @@
           onClick: (dlg) => {
             const name = $('#wn-name', dlg).value.trim();
             if (!name) { P.toast('Indica un nome per il profilo', 'warn'); return false; }
-            return { name, preset: $('#wn-preset', dlg).value };
+            const scelto = dlg.querySelector('input[name="wn-preset"]:checked');
+            return { name, preset: scelto ? scelto.value : '' };
           },
         },
       ],
     });
-    const selPreset = $('#wn-preset', m.el);
-    const desc = $('#wn-desc', m.el);
-    selPreset.addEventListener('change', () => {
-      const p = ps.find((x) => x.id === selPreset.value);
-      desc.textContent = p ? p.description
-        : 'I valori del modello riempiono il form e restano tutti modificabili prima del salvataggio.';
+    // evidenzia la scheda scelta (le caselle radio da sole non si vedono abbastanza)
+    m.el.addEventListener('change', (e) => {
+      if (e.target.name !== 'wn-preset') return;
+      $$('.wn-card', m.el).forEach((c) => c.classList.toggle('on', c.dataset.preset === e.target.value));
     });
     const r = await m.done;
     if (!r || !r.name) return;
@@ -196,6 +280,57 @@
     return `<div class="field"><label for="${id}">${esc(label)}</label><textarea id="${id}" class="mono" rows="${rows || 4}">${esc(value || '')}</textarea>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
   }
 
+  // ---------------------------------------------------------------- lingua da installare
+  /* Riquadro "Lingua da installare" (settings.language_install, docs/API.md sezione 13).
+     Serve quando la ISO è in una lingua diversa da quella voluta — il caso tipico è Windows
+     Server 2022 in inglese su un server che deve parlare italiano: finora il pacchetto lingua
+     andava installato a mano dopo ogni installazione. Qui si scelgono lingua e sorgente; i
+     comandi finiscono in FirstLogonCommands e si vedono nell'anteprima dell'XML. */
+  function riquadroLingua(s) {
+    const li = s.language_install || {};
+    const on = !!li.enabled;
+    const scelte = (li.languages || []).filter(Boolean);
+    const tag = scelte[0] || 'it-IT';
+    const sorgente = li.source || 'windows-update';
+    const opz = lingueInstall().map((x) => ({ id: x.tag, name: `${x.name} — ${x.tag}` }));
+    if (!opz.some((o) => o.id === tag)) opz.unshift({ id: tag, name: tag });
+    const altre = scelte.slice(1);
+    return `<div class="wp-lang" id="wp-li">
+      ${spunta('wp-li-on', 'Installa la lingua di Windows dopo l\'installazione', on,
+        'Da attivare quando la ISO è in una lingua diversa da quella che vuoi: per esempio una ISO '
+        + 'di Windows Server in inglese su un server che deve parlare italiano. Il pacchetto lingua '
+        + 'viene installato da solo al primo accesso, senza doverlo più fare a mano.')}
+      <div id="wp-li-box" ${on ? '' : 'hidden'}>
+        <div class="row3">
+          ${tendina('wp-li-lang', 'Lingua da installare', tag, opz,
+            'La lingua che il PC deve parlare alla fine. Con le ISO già in italiano questo riquadro non serve.')}
+          ${tendina('wp-li-source', 'Da dove prendere il pacchetto', sorgente, sorgentiLingua(),
+            'Windows Update: nessun file da procurarsi, ma il PC deve raggiungere internet durante '
+            + 'il primo accesso. Pacchetto caricato in Pixio: per le reti chiuse.')}
+          <div id="wp-li-url-box" ${sorgente === 'file' ? '' : 'hidden'}>
+            ${campo('wp-li-url', 'Indirizzo del pacchetto', li.file_url, {
+              mono: true, maxlength: 500, placeholder: 'http://' + serverIp() + '/pxe/lang/it-IT.cab',
+              hint: 'Indirizzo <span class="mono">http://</span> o <span class="mono">https://</span> del file '
+                + '<span class="mono">.cab</span> (o <span class="mono">.esd</span>) del pacchetto lingua: '
+                + 'lo scarica il PC in installazione, quindi deve essere raggiungibile da lui.',
+            })}
+          </div>
+        </div>
+        ${spunta('wp-li-system', 'Rendila anche la lingua del sistema, dei formati e dell\'area geografica',
+          li.set_system !== false,
+          'Imposta lingua dell\'interfaccia, formati di data e ora e area geografica (GeoId) per '
+          + 'l\'utente creato, per i nuovi utenti e per le schermate di accesso. Senza questa spunta '
+          + 'la lingua viene solo installata e resta da scegliere a mano.')}
+        ${altre.length ? `<div class="hint">Il profilo installa anche: <span class="mono">${esc(altre.join(', '))}</span>. Restano salvate; la lingua qui sopra è quella che il sistema userà.</div>` : ''}
+        <div class="alert">Serve <strong>solo</strong> se l'immagine di Windows non contiene già la
+          lingua che vuoi (le ISO italiane non ne hanno bisogno). Con <strong>Windows Update</strong>
+          il PC deve poter raggiungere internet durante il primo accesso; senza collegamento il
+          comando non installa niente e l'installazione prosegue nella lingua della ISO.
+          Il cambio di lingua <strong>si vede dopo il riavvio successivo</strong>.</div>
+      </div>
+    </div>`;
+  }
+
   // ---------------------------------------------------------------- ottimizzazioni (stile nLite)
   /* Il catalogo arriva da GET /api/winprofiles nel campo "tweaks" ({categories:[{id,name,description}],
      items:[{id,category,name,description,impact,editions,reg,services,commands,features_*}]}).
@@ -213,15 +348,48 @@
      stessa tabella di PLATFORMS / TARGET_PLATFORMS in services/winprofile.py. Un tipo che il server
      dovesse aggiungere e che qui non è in elenco non filtra niente: meglio mostrare tutto che far
      sparire voci già scelte. */
-  const TW_PLATFORMS = ['10', '11', 'server'];
-  const TW_TARGET_PLATFORMS = { client: ['10', '11'], server: ['server'] };
-  // pillola discreta per le voci che valgono su una piattaforma sola
-  const TW_SOLO = { 10: 'solo Windows 10', 11: 'solo Windows 11', server: 'solo Server' };
+  const TW_PLATFORMS = ['10', '10-ltsc', '11', '11-ltsc', 'server'];
+  const TW_TARGET_PLATFORMS = {
+    client: ['10', '11'],           // Windows 10 e 11 "normali", con Microsoft Store
+    '10-ltsc': ['10-ltsc'],         // Windows 10 Enterprise LTSC 2019 e 2021
+    '11-ltsc': ['11-ltsc'],         // Windows 11 Enterprise LTSC 2024
+    server: ['server'],             // Windows Server 2016-2025 con interfaccia grafica
+  };
+  /* Pillola discreta con le edizioni su cui la voce ha effetto: la chiave è l'elenco delle
+     piattaforme in ordine, così si nomina il gruppo invece di elencare cinque sigle. L'elenco
+     completo non porta pillola: quella voce vale ovunque. */
+  const TW_SOLO = {
+    10: 'solo Windows 10',
+    '10-ltsc': 'solo Windows 10 LTSC',
+    11: 'solo Windows 11',
+    '11-ltsc': 'solo Windows 11 LTSC',
+    server: 'solo Windows Server',
+    '10,11': 'solo Windows 10 e 11 con Store',
+    '10,10-ltsc': 'solo Windows 10',
+    '11,11-ltsc': 'solo Windows 11',
+    '10,10-ltsc,11,11-ltsc': 'solo Windows client',
+    '10,11,server': 'non nelle LTSC',
+  };
+  // etichetta breve del tipo di Windows, per le pillole dell'elenco dei profili
+  const TW_TARGET_PILL = { server: 'Server', '10-ltsc': 'Windows 10 LTSC', '11-ltsc': 'Windows 11 LTSC' };
+  /* Perché una voce non ha effetto su un certo tipo di Windows: stessa spiegazione dei messaggi
+     del server (TARGET_MOTIVI in services/winprofile.py), da mettere nell'avviso. */
+  const TW_MOTIVI = {
+    server: 'Cortana, Copilot, widget, Xbox, app del Microsoft Store, esperienze consumer, barra applicazioni di Windows 11',
+    '10-ltsc': 'Microsoft Store e app che ne dipendono, Cortana, Copilot, widget, Teams, Xbox, esperienze consumer, contenuti consigliati, OneDrive preinstallato',
+    '11-ltsc': 'Microsoft Store e app che ne dipendono, Cortana, Copilot, widget, Teams, Xbox, esperienze consumer, contenuti consigliati, OneDrive preinstallato',
+    client: 'componenti presenti solo nelle edizioni LTSC o su Windows Server',
+  };
+
+  function targetPill(t) { return TW_TARGET_PILL[String(t)] || String(t); }
 
   function targets() {
     return (W.meta && W.meta.targets && W.meta.targets.length)
       ? W.meta.targets
-      : [{ id: 'client', name: 'Windows client (10 e 11)' }, { id: 'server', name: 'Windows Server' }];
+      : [{ id: 'client', name: 'Windows client (10 e 11)' },
+         { id: '10-ltsc', name: 'Windows 10 Enterprise LTSC (2019 e 2021)' },
+         { id: '11-ltsc', name: 'Windows 11 Enterprise LTSC (2024)' },
+         { id: 'server', name: 'Windows Server (2016-2025, con interfaccia grafica)' }];
   }
 
   /** Tipo scelto adesso: quello della sezione Ottimizzazioni, che il selettore tiene aggiornato. */
@@ -311,8 +479,9 @@
     if (nf) dett.push(nf === 1 ? '1 funzionalità Windows' : nf + ' funzionalità Windows');
     // pillola discreta quando la voce vale su una piattaforma sola (solo Windows 11, solo Server…)
     const piatt = twPiattaforme(t);
-    const soloEd = piatt.length === 1
-      ? ` <span class="pill neutral tw-ed">${esc(TW_SOLO[piatt[0]] || ('solo ' + piatt[0]))}</span>` : '';
+    const chiave = TW_PLATFORMS.filter((x) => piatt.indexOf(x) >= 0).join(',');
+    const etichetta = piatt.length === TW_PLATFORMS.length ? '' : (TW_SOLO[chiave] || '');
+    const soloEd = etichetta ? ` <span class="pill neutral tw-ed">${esc(etichetta)}</span>` : '';
     return `<label class="tw-item imp-${esc(imp)}${on ? ' on' : ''}" title="${esc(t.description || '')}">
       <input type="checkbox" data-tweak="${esc(t.id)}" ${on ? 'checked' : ''}>
       <span class="b">
@@ -376,7 +545,7 @@
       <strong>${inc.length} ${uno ? 'ottimizzazione selezionata non ha' : 'ottimizzazioni selezionate non hanno'}
       effetto su ${esc(twTargetNome())}.</strong>
       ${uno ? 'Tocca componenti che su questo tipo di Windows non esistono' : 'Toccano componenti che su questo tipo di Windows non esistono'}
-      (Cortana, Copilot, widget, Xbox, app del Microsoft Store, barra applicazioni di Windows 11…):
+      (${esc(TW_MOTIVI[twTarget()] || 'componenti assenti su questo tipo di Windows')}…):
       finché ${uno ? 'resta selezionata' : 'restano selezionate'} il salvataggio viene rifiutato.
       <div class="tw-inc">${inc.map((t) => `<span class="pill neutral">${esc(t.name)}</span>`).join('')}</div>
       <div class="actions" style="margin-top:8px">
@@ -699,10 +868,12 @@
 
       <div class="card"><h3>Lingua e area</h3>
         ${tendina('wp-target', 'Tipo di Windows', s.target || 'client', targets(),
-          'Windows Server non ha Cortana, Copilot, widget, Xbox, le app del Microsoft Store né la barra '
-          + 'applicazioni di Windows 11: molte ottimizzazioni pensate per i PC lì non fanno nulla. '
-          + 'Scegliendo <strong>Server</strong> la sezione Ottimizzazioni mostra solo le voci che hanno '
-          + 'davvero effetto e la rimozione delle app preinstallate viene disattivata.')}
+          'Windows Server e le edizioni <strong>Enterprise LTSC</strong> non hanno Microsoft Store, '
+          + 'Cortana, Copilot, widget, Teams, Xbox né le esperienze consumer (su Server manca anche la '
+          + 'barra applicazioni di Windows 11): molte ottimizzazioni pensate per i PC lì non fanno nulla. '
+          + 'Cambiando tipo la sezione Ottimizzazioni mostra solo le voci che hanno davvero effetto e, '
+          + 'con Server e LTSC, la rimozione delle app preinstallate viene disattivata. Il modo più '
+          + 'rapido di impostarlo bene è partire da un modello "per edizione" quando crei il profilo.')}
         <div class="row3">
           ${tendina('wp-language', 'Lingua di Windows', s.language, meta.languages || [{ id: 'it-IT', name: 'Italiano (Italia)' }], 'Vale per il setup e per il sistema installato. L\'immagine deve contenere questa lingua.')}
           ${campo('wp-input', 'Tastiera', s.input_locale, { mono: true, maxlength: 64, placeholder: 'it-IT', hint: 'Sigla (<span class="mono">it-IT</span>) o identificativo (<span class="mono">0410:00000410</span>). Più layout: separali con <span class="mono">;</span>.' })}
@@ -713,6 +884,7 @@
           ${campo('wp-edition', 'Edizione da installare', s.edition_index, { maxlength: 64, placeholder: 'Windows 11 Pro oppure 6', hint: 'Nome esatto dell\'immagine dentro <span class="mono">install.wim</span> oppure il suo indice. Vuoto = il setup chiede.' })}
           ${campo('wp-key', 'Chiave di prodotto', s.product_key, { mono: true, maxlength: 29, placeholder: 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX', hint: 'Vuota: nessuna richiesta durante il setup (si attiva dopo o con la chiave del firmware).' })}
         </div>
+        ${riquadroLingua(s)}
       </div>
 
       <div class="card"><h3>Account</h3>
@@ -810,6 +982,13 @@
     $('#wp-dom-on', box).addEventListener('change', (e) => {
       $('#wp-dom-box', box).hidden = !e.target.checked;
     });
+    // lingua da installare: l'interruttore apre il riquadro, la sorgente "file" chiede l'indirizzo
+    $('#wp-li-on', box).addEventListener('change', (e) => {
+      $('#wp-li-box', box).hidden = !e.target.checked;
+    });
+    $('#wp-li-source', box).addEventListener('change', (e) => {
+      $('#wp-li-url-box', box).hidden = e.target.value !== 'file';
+    });
     // tipo di Windows: ridisegna ottimizzazioni, contatori, avviso e sezione App
     $('#wp-target', box).addEventListener('change', (e) => cambiaTipo(e.target.value));
     // ricerca e filtri delle ottimizzazioni non sono modifiche del profilo: non sporcano il form
@@ -838,6 +1017,20 @@
     s.language = v('wp-language');
     s.input_locale = v('wp-input') || s.language;
     s.timezone = v('wp-timezone');
+    // lingua da installare dopo il setup: la tendina mostra la prima lingua, le eventuali altre
+    // (profilo scritto via API con più lingue) restano salvate in coda
+    const liTag = v('wp-li-lang') || 'it-IT';
+    const liVecchie = ((s.language_install || {}).languages || []).filter((x) => x && x !== liTag);
+    const liVoce = lingueInstall().find((x) => x.tag === liTag);
+    s.language_install = {
+      enabled: b('wp-li-on'),
+      languages: [liTag].concat(liVecchie),
+      source: v('wp-li-source') || 'windows-update',
+      file_url: v('wp-li-url'),
+      set_system: b('wp-li-system'),
+      geo_id: liVoce ? liVoce.geo_id : ((s.language_install || {}).geo_id || 118),
+      keyboard: liTag,
+    };
     s.architecture = v('wp-arch');
     s.edition_index = v('wp-edition');
     s.product_key = v('wp-key');

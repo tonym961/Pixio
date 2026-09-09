@@ -428,3 +428,34 @@ details.custom .inner{padding-top:10px}
 /* campi disattivati perché non hanno senso sul tipo scelto (app dello Store su Server) */
 .wp-off{opacity:.55}
 .wp-off input,.wp-off textarea,.wp-off label{cursor:not-allowed}
+
+/* Windows: riquadro "Lingua da installare" (docs/API.md, sezione 13) --------------------------- */
+/* Sta dentro la scheda "Lingua e area" ma è una funzione a sé — si accende solo quando la ISO è in
+   una lingua diversa da quella voluta — quindi si stacca dagli altri campi con un bordo e uno
+   sfondo leggero, come le altre sotto-sezioni della pagina. */
+.wp-lang{margin-top:14px;padding:12px 14px 4px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+.wp-lang .field.check{margin-bottom:8px}
+.wp-lang #wp-li-box{margin-top:6px}
+.wp-lang .alert{margin-bottom:12px}
+/* il campo dell'indirizzo occupa la sua colonna della riga a tre anche quando è nascosto */
+.wp-lang #wp-li-url-box .field{margin-bottom:0}
+@media (max-width:900px){.wp-lang{padding:10px 10px 2px}}
+
+/* Windows: modelli raggruppati nella finestra "Nuovo profilo" (docs/API.md, sezione 12) --------- */
+/* I modelli non stanno più in una tendina: sono schede leggibili, divise in "Per edizione di
+   Windows" e "Generici", con descrizione e tipo di Windows sempre visibili. */
+.wn-list{display:grid;gap:8px;max-height:52vh;overflow:auto;padding:2px}
+.wn-group{display:grid;gap:8px;margin-top:6px}
+.wn-gtitle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:4px}
+.wn-gnota{font-size:12px;color:var(--muted);margin:-4px 0 2px;overflow-wrap:anywhere}
+.wn-card{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-left:3px solid var(--line-strong);border-radius:8px;padding:9px 11px;background:var(--surface-2);cursor:pointer;min-width:0}
+.wn-card:hover{border-color:var(--line-strong)}
+.wn-card>input{flex:none;width:auto;margin:3px 0 0;cursor:pointer}
+.wn-card .b{flex:1 1 auto;min-width:0;display:grid;gap:3px}
+.wn-card .t{font-weight:600;font-size:13.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;overflow-wrap:anywhere}
+.wn-card .d{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.wn-card .m{font-size:11px;color:var(--muted);font-family:var(--mono);overflow-wrap:anywhere}
+.wn-card.on{background:var(--accent-soft);border-color:var(--accent);border-left-color:var(--accent)}
+.wn-card .wn-tipo{font-weight:500}
+.wn-card.wn-vuoto{border-left-color:var(--line)}
+@media (max-width:900px){.wn-list{max-height:none}}

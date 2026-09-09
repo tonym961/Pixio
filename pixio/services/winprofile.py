@@ -29,6 +29,14 @@ davvero effetto: la validazione rifiuta le voci non compatibili col target, la g
 senza errori e le app Appx da rimuovere vengono ignorate con i tipi senza Microsoft Store, cioè
 "server" e le due LTSC (docs/API.md, sezioni 11 e 12).
 
+Il campo settings["language_install"] installa una lingua dopo il setup (docs/API.md, sezione 13):
+serve alle ISO che contengono una lingua sola, per esempio Windows Server 2022 English, dove
+finora bisognava aggiungere a mano il pacchetto della lingua italiana. Con l'interruttore acceso
+in FirstLogonCommands finiscono prima i comandi che installano la lingua (Install-Language da
+Windows Update oppure curl.exe + dism sul pacchetto caricato in Pixio) e poi quelli che la
+rendono lingua di sistema (Set-SystemPreferredUILanguage e compagni); con l'interruttore spento
+non viene generato niente.
+
 ATTENZIONE alle password: autounattend.xml le contiene in chiaro (PlainText true) e il file viene servito
 ai client via HTTP senza autenticazione. È il funzionamento previsto dal contratto; la GUI lo dice a chiare
 lettere. Anche il bypass dei requisiti di Windows 11 non è una configurazione supportata da Microsoft.
@@ -199,6 +207,46 @@ LANGUAGES = [
     {"id": "ro-RO", "name": "Rumeno (Romania)"},
 ]
 
+# ---- Lingua installata dopo il setup (docs/API.md, sezione 13) --------------------------------
+# Serve alle ISO che contengono una lingua sola (per esempio Windows Server 2022 English, il cui
+# install.wim ha solo en-US): l'installazione parte in inglese e si ritrova in italiano da sola,
+# senza che nessuno debba installare a mano il pacchetto lingua. I comandi finiscono in
+# FirstLogonCommands e usano il modulo LanguagePackManagement (Install-Language), presente in
+# Windows 10/11 e in Windows Server 2019, 2022 e 2025.
+
+# Tag BCP-47 come lo vuole il contratto: due lettere minuscole più eventuali sottotag (it-IT,
+# en-US, sr-Latn-RS). È più stretto di LANG_RE: qui i valori finiscono dentro comandi PowerShell.
+LANG_TAG_RE = re.compile(r"^[a-z]{2}(-[A-Za-z]{2,8})*$")
+# Indirizzo del pacchetto lingua: lo scarica il PC in installazione, quindi solo http/https
+# (niente percorsi UNC o file:// che il setup non saprebbe raggiungere) e niente spazi o virgolette
+LANG_URL_RE = re.compile(r"^https?://[^\s\"'<>]+$", re.I)
+MAX_LANG_INSTALL = 5        # lingue installabili in una volta sola (ognuna è un pacchetto da scaricare)
+MAX_GEO_ID = 100000
+MAX_URL = 500
+
+# Da dove arriva il pacchetto lingua
+LANG_SOURCES = ("windows-update", "file")
+LANG_SOURCE_LABELS = {
+    "windows-update": "Windows Update (il PC deve raggiungere internet)",
+    "file": "Pacchetto caricato in Pixio (indirizzo http/https)",
+}
+
+# Lingue più comuni in Italia con il loro GeoId, quello che vuole Set-WinHomeLocation:
+# Italia 118, Regno Unito 242, Stati Uniti 244, Germania 94, Francia 84, Spagna 217.
+LANGUAGES_INSTALL = [
+    {"tag": "it-IT", "name": "Italiano (Italia)", "geo_id": 118},
+    {"tag": "en-GB", "name": "Inglese (Regno Unito)", "geo_id": 242},
+    {"tag": "en-US", "name": "Inglese (Stati Uniti)", "geo_id": 244},
+    {"tag": "de-DE", "name": "Tedesco (Germania)", "geo_id": 94},
+    {"tag": "fr-FR", "name": "Francese (Francia)", "geo_id": 84},
+    {"tag": "es-ES", "name": "Spagnolo (Spagna)", "geo_id": 217},
+]
+GEO_IDS = {x["tag"]: x["geo_id"] for x in LANGUAGES_INSTALL}
+GEO_ID_ITALIA = 118
+# File temporaneo dove finisce il pacchetto scaricato: curl.exe c'è in Windows 10 dalla 1803 e in
+# Windows Server dal 2019, quindi anche nel primo accesso di un'installazione appena fatta.
+LANG_CAB = "%TEMP%\\lang.cab"
+
 # App preinstallate che il tecnico rimuove più spesso (Windows 10/11)
 APPS = [
     {"id": "Microsoft.XboxApp", "name": "Xbox"},
@@ -234,6 +282,17 @@ DEFAULTS = {
     "language": "it-IT",
     "input_locale": "it-IT",
     "timezone": "W. Europe Standard Time",
+    # lingua installata dopo il setup, per le ISO che non contengono quella voluta (sezione 13):
+    # con "enabled" falso non viene generato nessun comando
+    "language_install": {
+        "enabled": False,
+        "languages": ["it-IT"],
+        "source": "windows-update",     # oppure "file": pacchetto caricato in Pixio
+        "file_url": "",
+        "set_system": True,             # lingua del sistema, formati e area geografica
+        "geo_id": 118,                  # Italia
+        "keyboard": "it-IT",
+    },
     "architecture": "amd64",
     "edition_index": "",
     "product_key": "",
@@ -274,6 +333,27 @@ def timezones_list():
 
 def languages_list():
     return [dict(x) for x in LANGUAGES]
+
+
+def languages_install_list():
+    """Lingue installabili dopo il setup, con il loro GeoId (docs/API.md, sezione 13).
+
+    Ritorna `[{tag, name, geo_id}]` per la tendina "Lingua da installare" della GUI: le lingue più
+    comuni in Italia (italiano, inglese del Regno Unito e degli Stati Uniti, tedesco, francese e
+    spagnolo). Il GeoId è il numero che vuole Set-WinHomeLocation: Italia 118, Regno Unito 242,
+    Stati Uniti 244, Germania 94, Francia 84, Spagna 217.
+    """
+    return [dict(x) for x in LANGUAGES_INSTALL]
+
+
+def lang_sources_list():
+    """Sorgenti del pacchetto lingua per la GUI: [{id, name}] (docs/API.md, sezione 13)."""
+    return [{"id": s, "name": LANG_SOURCE_LABELS[s]} for s in LANG_SOURCES]
+
+
+def geo_id_di(tag):
+    """GeoId della lingua indicata; per una lingua fuori elenco quello dell'Italia."""
+    return GEO_IDS.get(_txt(tag), GEO_ID_ITALIA)
 
 
 def apps_list():
@@ -523,6 +603,70 @@ def _check_password(pw, campo):
 
 # ---------------------------------------------------------------- validazione
 
+def check_language_install(valore):
+    """Controlla e normalizza settings.language_install (docs/API.md, sezione 13).
+
+    Forma attesa: `{enabled, languages, source, file_url, set_system, geo_id, keyboard}`.
+    I controlli sulla forma (tag, numero di lingue, indirizzo, sorgente, GeoId) valgono anche con
+    `enabled` falso: un valore sbagliato lasciato lì dentro non deve saltare fuori mesi dopo, la
+    prima volta che qualcuno accende l'interruttore. Sono invece legati all'interruttore i due
+    controlli di coerenza, cioè "almeno una lingua" e "con la sorgente file serve l'indirizzo".
+    """
+    d = valore if isinstance(valore, dict) else {}
+    base = DEFAULTS["language_install"]
+    attivo = _bool(d.get("enabled"), False)
+
+    lingue = []
+    for v in _list(d.get("languages")):
+        tag = _txt(v)
+        if not tag:
+            continue
+        if not LANG_TAG_RE.match(tag):
+            raise ValueError(f"Lingua da installare non valida: {tag}. Serve una sigla come it-IT, "
+                             "en-US o de-DE")
+        if tag not in lingue:
+            lingue.append(tag)
+    if len(lingue) > MAX_LANG_INSTALL:
+        raise ValueError(f"Troppe lingue da installare (max {MAX_LANG_INSTALL}): ogni lingua è un "
+                         "pacchetto che il PC deve scaricare e installare durante il primo accesso")
+    if attivo and not lingue:
+        raise ValueError("Indica almeno una lingua da installare, oppure spegni l'installazione "
+                         "automatica della lingua")
+
+    sorgente = _txt(d.get("source")).lower() or base["source"]
+    if sorgente not in LANG_SOURCES:
+        raise ValueError("Sorgente della lingua non valida: " + ", ".join(LANG_SOURCES)
+                         + ". windows-update = il PC scarica il pacchetto da Microsoft; "
+                           "file = pacchetto già caricato in Pixio, indicato con un indirizzo "
+                           "http/https")
+
+    url = _txt(d.get("file_url"))
+    if url:
+        if len(url) > MAX_URL:
+            raise ValueError(f"Indirizzo del pacchetto lingua troppo lungo (max {MAX_URL} caratteri)")
+        if not LANG_URL_RE.match(url):
+            raise ValueError("Indirizzo del pacchetto lingua non valido: deve cominciare con "
+                             "http:// oppure https:// (è il PC in installazione a scaricarlo, non "
+                             "il server), senza spazi né virgolette")
+    if attivo and sorgente == "file" and not url:
+        raise ValueError("Indica l'indirizzo http/https del pacchetto lingua da installare, oppure "
+                         "scegli Windows Update come sorgente")
+
+    geo = _int(d.get("geo_id"), base["geo_id"])
+    if geo < 0 or geo > MAX_GEO_ID:
+        raise ValueError(f"Area geografica (GeoId) non valida: da 0 a {MAX_GEO_ID}. "
+                         "Italia = 118, Regno Unito = 242, Stati Uniti = 244, Germania = 94, "
+                         "Francia = 84, Spagna = 217")
+
+    kbd = _txt(d.get("keyboard"))
+    if kbd and not (LANG_RE.match(kbd) or KBD_HEX_RE.match(kbd)):
+        raise ValueError("Tastiera della lingua da installare non valida: attesa una sigla come "
+                         "it-IT oppure un identificativo come 0410:00000410")
+
+    return {"enabled": attivo, "languages": lingue, "source": sorgente, "file_url": url,
+            "set_system": _bool(d.get("set_system"), True), "geo_id": geo, "keyboard": kbd}
+
+
 def validate(settings, rifiuta_incompatibili=True):
     """Controlla e normalizza le impostazioni. Alza ValueError con un messaggio in italiano.
 
@@ -559,6 +703,10 @@ def validate(settings, rifiuta_incompatibili=True):
             raise ValueError("Tastiera non valida: attesa una sigla come it-IT "
                              "oppure un identificativo come 0410:00000410")
     out["input_locale"] = ";".join(parti)
+
+    # lingua da installare dopo il setup: serve quando l'ISO non contiene la lingua voluta
+    # (docs/API.md, sezione 13). Con l'interruttore spento resta scritta ma non genera comandi.
+    out["language_install"] = check_language_install(s.get("language_install"))
 
     tz = _txt(s.get("timezone")) or DEFAULTS["timezone"]
     if not TIMEZONE_RE.match(tz):
@@ -912,6 +1060,17 @@ def _cmd_safe(v):
     return _txt(v).replace('"', "'")
 
 
+def _ps(comando):
+    """Comando PowerShell lanciato da cmd (come li scrive il setup in FirstLogonCommands).
+
+    L'argomento di `-Command` sta fra virgolette doppie, che per cmd delimitano un unico argomento:
+    dentro non ce ne possono essere altre, quindi le eventuali virgolette diventano apici come in
+    tutti gli altri comandi generati. I valori che ci finiscono (tag di lingua e numeri) sono già
+    passati dalla validazione, che non ammette né spazi né virgolette.
+    """
+    return 'powershell -NoProfile -ExecutionPolicy Bypass -Command "%s"' % _cmd_safe(comando)
+
+
 def _reg_add(radice, percorso, nome, tipo, dato):
     """Comando `reg add` completo. Il percorso viene sempre virgolettato (contiene spazi, es.
     "Control Panel\\Desktop"), il dato pure (può essere vuoto o contenere spazi e &)."""
@@ -1046,6 +1205,57 @@ def _comandi_tweak_specialize(st, em):
             agg(_reg_add(DEFAULT_HIVE, percorso, nome, r.get("type"), r.get("data")),
                 "%s: %s" % (t.get("name", t["id"]), nome))
         agg('cmd /c reg unload "%s"' % DEFAULT_HIVE, "Scarica il profilo utente predefinito")
+    return righe
+
+
+def _comandi_lingua(st):
+    """(comando, descrizione) che installano la lingua di Windows al primo accesso.
+
+    Nell'ordine giusto: prima l'installazione del pacchetto lingua (da Windows Update oppure dal
+    pacchetto caricato in Pixio), poi le impostazioni di sistema, che hanno senso solo dopo. Con
+    `enabled` falso, o senza nessuna lingua, non torna niente (docs/API.md, sezione 13).
+
+    Le impostazioni di sistema si applicano alla prima lingua dell'elenco: è quella che si vuole
+    davvero vedere: le altre restano installate e disponibili nella barra della lingua.
+    Il cambio si vede al riavvio successivo, che il setup fa comunque.
+    """
+    li = st.get("language_install") if isinstance(st.get("language_install"), dict) else {}
+    lingue = [x for x in (li.get("languages") or []) if x]
+    if not li.get("enabled") or not lingue:
+        return []
+    prima = lingue[0]
+    righe = []
+
+    if li.get("source") == "file":
+        # rete senza accesso a Windows Update: il pacchetto sta su Pixio e lo scarica il PC.
+        # curl.exe fa parte di Windows dalla 1803 (e di Windows Server dal 2019).
+        url = _cmd_safe(li.get("file_url"))
+        righe.append(('cmd /c curl.exe -L -o "%s" "%s"' % (LANG_CAB, url),
+                      "Scarica il pacchetto della lingua %s da Pixio" % prima))
+        righe.append(('cmd /c dism /online /add-package /packagepath:"%s" /norestart' % LANG_CAB,
+                      "Installa il pacchetto della lingua %s" % prima))
+    else:
+        # Install-Language (modulo LanguagePackManagement) si porta dietro anche i pacchetti di
+        # funzionalità della lingua; -CopyToSettings la mette anche nelle schermate di accesso e
+        # nei profili dei nuovi utenti
+        for tag in lingue:
+            righe.append((_ps("Install-Language -Language %s -CopyToSettings" % tag),
+                          "Installa la lingua %s da Windows Update" % tag))
+
+    if li.get("set_system"):
+        geo = _int(li.get("geo_id"), geo_id_di(prima))
+        righe.extend([
+            (_ps("Set-SystemPreferredUILanguage %s" % prima),
+             "Imposta %s come lingua del sistema (vale anche per i nuovi utenti)" % prima),
+            (_ps("Set-WinUILanguageOverride -Language %s" % prima),
+             "Imposta %s come lingua dell'interfaccia dell'utente" % prima),
+            (_ps("Set-WinUserLanguageList %s -Force" % prima),
+             "Mette %s in cima all'elenco delle lingue, con la sua tastiera" % prima),
+            (_ps("Set-Culture %s" % prima),
+             "Formati di data, ora, numeri e valuta di %s" % prima),
+            (_ps("Set-WinHomeLocation -GeoId %d" % geo),
+             "Area geografica del PC (GeoId %d)" % geo),
+        ])
     return righe
 
 
@@ -1368,6 +1578,21 @@ def _pass_oobe(root, st, arch, em=None):
     def agg(cmd, descr):
         if em.comando(cmd):
             comandi.append((cmd, descr))
+
+    # Prima di tutto la lingua (docs/API.md, sezione 13): se l'ISO è in inglese e il PC deve
+    # parlare italiano, il pacchetto va installato prima che comincino le ottimizzazioni e i
+    # comandi del tecnico. Il cambio si vede al riavvio successivo.
+    lingua = _comandi_lingua(st)
+    if lingua:
+        li = st["language_install"]
+        shell.append(ET.Comment(
+            " Lingua installata al primo accesso: %s (%s). Serve quando l'immagine di Windows non "
+            "contiene la lingua voluta; il cambio si vede dopo il riavvio successivo. "
+            % (", ".join(li["languages"]),
+               "da Windows Update, il PC deve raggiungere internet"
+               if li["source"] == "windows-update" else "dal pacchetto caricato in Pixio")))
+        for cmd, descr in lingua:
+            agg(cmd, descr)
 
     avanzate = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"
     # se un'ottimizzazione ha già scritto HideFileExt sul profilo predefinito non lo si rifà
