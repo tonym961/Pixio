@@ -59,6 +59,11 @@ button{font:inherit}
 .nav:hover{background:var(--surface)}
 .nav[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .nav .n{font-size:11.5px;color:var(--muted);font-weight:500;white-space:nowrap}
+.navgroup{display:flex;flex-direction:column;gap:4px;margin:6px 0 2px}
+.navgroup-title{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:4px 12px 2px}
+.navgroup-items{display:flex;flex-direction:column;gap:4px;margin-left:12px;padding-left:8px;border-left:2px solid var(--line)}
+.navgroup-items .nav.sub{padding-left:10px}
+.navgroup-items:has(.nav[aria-current="page"]){border-left-color:var(--accent)}
 .side .foot{margin-top:auto;padding:10px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
 .main{padding:22px 26px 40px;min-width:0}
 .app.wizard-mode .side{display:none}
@@ -326,6 +331,9 @@ details.custom .inner{padding-top:10px}
   .side .brand{padding:4px 8px}
   .navlist{flex-direction:row;flex-wrap:wrap;gap:4px}
   .nav{padding:7px 10px;font-size:14px}
+  .navgroup{flex-direction:row;align-items:center;gap:6px;margin:0}
+  .navgroup-title{padding:0 4px}
+  .navgroup-items{flex-direction:row;margin-left:0;padding-left:6px}
   .side .foot{margin-top:0;margin-left:auto;border-top:0;padding:6px 8px}
   .main{padding:16px 14px 32px}
   .tiles{grid-template-columns:1fr 1fr}
