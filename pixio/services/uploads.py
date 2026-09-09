@@ -35,7 +35,8 @@ ANSWER_EXT = (".xml", ".cfg", ".ks", ".yaml", ".yml", ".txt", ".cmd", ".bat", ".
 ANSWER_NOEXT = ("user-data", "meta-data", "vendor-data", "network-config")   # nomi cloud-init senza estensione
 ANSWER_MAX_SIZE = 8 * 1024 * 1024   # i file di risposta sono testo: 8 MiB sono già abbondanti
 KINDS = ("iso", "driver", "answer")
-DISK_MARGIN = 1024 ** 3          # 1 GiB di margine sul disco
+DISK_MARGIN = 1024 ** 3          # margine sul disco per le ISO (1 GiB)
+DISK_MARGIN_SMALL = 64 * 1024 ** 2   # per i file piccoli (driver, risposte) basta molto meno
 MAX_SIZE = 64 * 1024 ** 3        # 64 GiB
 MAX_AGE = 7 * 86400              # upload abbandonati eliminati dopo 7 giorni
 READ_BLOCK = 1024 * 1024
@@ -347,7 +348,10 @@ def init(filename, size, kind="iso", folder=None, path=None):
                             "path": _rel_name(subdir, name)}
         os.makedirs(C.UPLOAD_TMP_DIR, exist_ok=True)
         free = shutil.disk_usage(free_dir).free
-        if free < size + DISK_MARGIN:
+        # il margine grande serve alle ISO; per driver e risposte basta poco, altrimenti su un disco
+        # quasi pieno non si potrebbe caricare nemmeno un file da pochi kilobyte
+        margine = DISK_MARGIN if size > 512 * 1024 ** 2 else DISK_MARGIN_SMALL
+        if free < size + margine:
             raise UploadError("Spazio su disco insufficiente per questo file", 507)
         upload_id = secrets.token_hex(8)
         os.makedirs(_chunk_dir(upload_id), exist_ok=True)
