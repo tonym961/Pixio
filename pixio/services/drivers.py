@@ -1,7 +1,10 @@
 """Libreria driver: cartelle in DRIVERS_DIR (share Samba in scrittura + upload web), flag per cartella in DRIVERS_FILE.
 
-winpe_inject: i file .inf/.sys/.cat/.dll al primo livello della cartella vengono iniettati nel WinPE via wimboot
-              (finiscono in X:\\Windows\\System32) e caricati con drvload prima di wpeinit -> driver di rete/storage.
+winpe_inject: i file .inf/.sys/.cat della cartella vengono iniettati nel WinPE via wimboot (finiscono in
+              X:\\Windows\\System32) e caricati con drvload prima di wpeinit -> driver di rete/storage. Insieme a un
+              .inf iniettato ci vanno anche i file che quell'.inf dichiara e che gli stanno accanto, qualunque
+              sia l'estensione (.dll, .exe, .bin, .dat): drvload fallisce anche solo per un file di CopyFiles
+              che non riesce a mettere a posto.
 setup_load:   dopo aver mappato la share, drvload ricorsivo di tutti i .inf della cartella prima di setup.exe.
 
 I pacchetti driver contengono spesso anche l'installatore .exe, file di lingua .ini, documentazione: file che
@@ -18,20 +21,28 @@ coerenza .inf: un pacchetto driver contiene spesso piu' copie dello stesso .inf 
               (SourceDisksFiles, CopyFiles, ServiceBinary): fra piu' copie vince quella che li ha davvero
               accanto, e i file dichiarati si prendono dalla cartella dell'.inf scelto. Un .inf che dichiara
               file che non ci sono viene segnalato alla GUI in winpe_missing (docs/API.md, sezione 21).
+              La regola per le estensioni fuori da WINPE_EXT e' "lo inietto perche' quell'.inf lo chiede", non
+              "lo inietto perche' e' li'": un file dichiarato che porta il nome di un file gia' presente in
+              X:\\Windows\\System32 non si inietta (winpe_shadowed), e se un'altra copia dello stesso .inf e'
+              coerente mentre quella scelta no, la GUI lo dice (winpe_better).
 """
+import glob
 import os
 import re
 import shutil
+import subprocess
 
 from .. import config as C
 from ..storage import read_json, update_json
 
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,63}$")
 FILE_RE = re.compile(r"^[^/\\\x00]{1,200}$")
-# Nel WinPE i file iniettati finiscono tutti in X:\Windows\System32: le .dll dei pacchetti driver
-# (co-installer e componenti in modalità utente) non servono a drvload e, con nomi comuni come
-# "generic.dll", rischiano di sovrascrivere file di sistema e far riavviare il PC. Restano comunque
-# nella cartella e raggiungibili dalla share con "Carica prima del setup".
+# Nel WinPE i file iniettati finiscono tutti in X:\Windows\System32: una .dll qualsiasi trovata in una
+# cartella driver non serve a drvload e, con nomi comuni come "generic.dll", rischia di sovrascrivere un
+# file di sistema e far riavviare il PC. Da sole entrano quindi solo queste tre estensioni. Le altre
+# entrano soltanto se un .inf iniettato le dichiara come proprie e stanno nella sua stessa cartella:
+# l'elenco lo scrive il produttore del driver, non e' "tutto quello che c'e' nella cartella"
+# (inf_extra_files, _mark_inject, docs/API.md sezione 21).
 WINPE_EXT = (".inf", ".sys", ".cat")
 # estensioni che servono davvero a installare un driver (tutto il resto e' scarto: .exe, .txt, .ini, ...)
 USEFUL_EXT = (".inf", ".sys", ".cat", ".dll", ".bin", ".dat", ".cab", ".sepolicy")
@@ -198,8 +209,16 @@ def list_folders():
             "winpe_candidates": cand, "excluded_files": sum(1 for x in files if x["excluded"]),
             "winpe_inject": bool(f.get("winpe_inject")), "setup_load": bool(f.get("setup_load")),
             "excluded": sorted(esclusi), "apply_to": _read_apply_to(f),
-            "winpe_missing": [{"inf": x["name"], "missing": list(x["inf_missing"])}
-                              for x in inject if x.get("inf_missing")],
+            # cosa l'.inf iniettato dichiara e non trovera' nel WinPE: quello che sta in un'altra copia
+            # (inf_missing) e quello che non c'e' in nessuna copia della cartella (inf_absent, .exe compresi)
+            "winpe_missing": [{"inf": x["name"], "missing": _nomi_uniti(x["inf_missing"], x["inf_absent"])}
+                              for x in inject if x.get("inf_missing") or x.get("inf_absent")],
+            # dichiarati e presenti, ma con il nome di un file che il WinPE ha gia' in \\Windows\\System32
+            "winpe_shadowed": [{"inf": x["name"], "files": list(x["inf_shadowed"])}
+                               for x in inject if x.get("inf_shadowed")],
+            # la copia scelta non e' un set coerente, un'altra si': si dice in quale cartella sta
+            "winpe_better": [{"inf": x["name"], "copy": x["inf_better"], "folder": _dir_of(x["inf_better"])}
+                             for x in inject if x.get("inf_better")],
             "note": f.get("note", ""), "valid_name": bool(FOLDER_RE.match(name)),
         })
     return out
@@ -212,51 +231,106 @@ def _mark_inject(base, files, esclusi):
     (wimboot appiattisce tutto in X:\\Windows\\System32), i file esclusi a mano lasciano il posto al gemello.
     Fra piu' copie dello stesso .inf vince quella completa, cioe' quella che ha accanto tutti i file che
     dichiara; e i file dichiarati da un .inf scelto si prendono dalla sua stessa cartella, non da un'altra
-    copia (docs/API.md, sezione 21).
+    copia. Da soli entrano solo i .inf/.sys/.cat, ma un .inf scelto si porta dietro anche i file dichiarati
+    con altra estensione (.dll, .exe...) che gli stanno accanto (docs/API.md, sezione 21).
     Campi aggiunti a ogni file: winpe_cand (potrebbe essere iniettato), excluded (escluso a mano),
-    winpe (finisce davvero nel WinPE); sui .inf candidati anche inf_missing (file dichiarati che non stanno
-    accanto all'.inf)."""
+    winpe (finisce davvero nel WinPE); sui .inf anche inf_missing (file dichiarati che stanno in un'altra
+    copia ma non accanto a questo .inf), inf_absent (dichiarati e assenti da tutta la cartella),
+    inf_shadowed (dichiarati, presenti, ma con il nome di un file di sistema del WinPE: non si iniettano) e
+    inf_better (percorso di un'altra copia dello stesso .inf che invece e' un set coerente)."""
     cand = []
-    presenti = set(x["name"].lower() for x in files)
+    presenti = set(x["name"].lower() for x in files)                        # percorsi relativi
+    nomi_cartella = set(x["name"].split("/")[-1].lower() for x in files)    # nomi, ovunque nella cartella
+    per_rel = {x["name"].lower(): x for x in files}
     for x in files:
         x["excluded"] = x["name"] in esclusi
         x["winpe_cand"] = x["name"].lower().endswith(WINPE_EXT) and not _inject_skip(x["name"])
         x["winpe"] = False
         if x["name"].lower().endswith(".inf"):
-            x["inf_missing"] = []
+            x["inf_missing"], x["inf_absent"], x["inf_shadowed"], x["inf_better"] = [], [], [], ""
         if x["winpe_cand"] and not x["excluded"]:
             cand.append(x)
-    # ogni copia di un .inf dice di quali file ha bisogno: quelli che non le stanno accanto la rendono monca
-    for x in cand:
-        if not x["name"].lower().endswith(".inf"):
+
+    # ogni copia di un .inf dice di quali file ha bisogno: si guarda quali le stanno accanto e quali no
+    infs = [x for x in files if x["name"].lower().endswith(".inf") and not _inject_skip(x["name"])]
+    coerente = {}          # percorso dell'.inf -> True se tutti i file che dichiara sono davvero iniettabili
+    for x in infs:
+        dich = _inf_declared_cached(os.path.join(base, *x["name"].split("/")))
+        manca, assenti, ombra, tolti = [], [], [], []
+        for low, orig in sorted(dich.items()):
+            accanto = _sibling(x["name"], low)
+            if accanto in presenti:
+                if not low.endswith(WINPE_EXT) and is_winpe_system_file(low):
+                    ombra.append(orig)             # il WinPE ha gia' un file con questo nome: non si tocca
+                elif per_rel[accanto]["excluded"]:
+                    tolti.append(orig)             # c'e', ma il tecnico l'ha escluso a mano
+                continue
+            if low in nomi_cartella:
+                manca.append(orig)                 # un'altra copia ce l'ha: questa copia e' monca
+            else:
+                assenti.append(orig)               # non c'e' in nessuna copia: il pacchetto e' incompleto
+                if low.endswith(WINPE_EXT):
+                    manca.append(orig)             # un .inf/.sys/.cat dichiarato e mai presente resta "manca"
+        x["inf_missing"] = sorted(manca, key=str.lower)
+        x["inf_absent"], x["inf_shadowed"] = assenti, ombra
+        coerente[x["name"]] = not (manca or ombra or tolti)
+        # i file dichiarati che stanno accanto all'.inf sono candidati anche se non sono .inf/.sys/.cat:
+        # entrano pero' solo se questo .inf viene scelto, mai perche' si trovano nella cartella. Un .inf
+        # escluso a mano non tira dentro niente, quindi i suoi file non sono nemmeno candidati.
+        if x["excluded"]:
             continue
-        x["inf_missing"] = [n for n in inf_needed_files(os.path.join(base, *x["name"].split("/")))
-                            if _sibling(x["name"], n.lower()) not in presenti]
+        for low in dich:
+            if low.endswith(WINPE_EXT) or is_winpe_system_file(low):
+                continue
+            y = per_rel.get(_sibling(x["name"], low))
+            if y is not None:
+                y["winpe_cand"] = True
+
     # una copia completa batte una monca anche se sta in una cartella meno preferita
     cand.sort(key=lambda y: (1 if y.get("inf_missing") else 0, _inject_rank(y["name"]), y["name"].lower()))
     scelti = {}
     for x in cand:
         scelti.setdefault(x["name"].split("/")[-1].lower(), x)
     # coerenza: i file dichiarati da un .inf scelto arrivano dalla cartella dell'.inf, non da un'altra copia
-    per_rel = {x["name"].lower(): x for x in cand}
-    bloccati = set()
+    per_inj = {x["name"].lower(): x for x in files if x["winpe_cand"] and not x["excluded"]}
+    bloccati, scelti_inf = set(), []
     for x in cand:
         nome = x["name"].split("/")[-1].lower()
         if not nome.endswith(".inf") or scelti.get(nome) is not x:
             continue
-        for n in inf_needed_files(os.path.join(base, *x["name"].split("/"))):
+        scelti_inf.append(x)
+        for n in inf_all_files(os.path.join(base, *x["name"].split("/"))):
             n = n.lower()
-            fratello = per_rel.get(_sibling(x["name"], n))
+            fratello = per_inj.get(_sibling(x["name"], n))
             if n in bloccati or fratello is None:
                 continue
             scelti[n] = fratello
             bloccati.add(n)
+    # piu' copie dello stesso .inf: se quella scelta non e' un set coerente e un'altra lo e', si dice quale
+    for x in scelti_inf:
+        if coerente.get(x["name"]):
+            continue
+        nome = x["name"].split("/")[-1].lower()
+        alt = sorted((y for y in infs if y is not x and coerente.get(y["name"])
+                      and y["name"].split("/")[-1].lower() == nome),
+                     key=lambda y: (_inject_rank(y["name"]), y["name"].lower()))
+        if alt:
+            x["inf_better"] = alt[0]["name"]
     inject = []
-    for x in cand:
+    for x in files:
         if scelti.get(x["name"].split("/")[-1].lower()) is x:
             x["winpe"] = True
             inject.append(x)
     return inject
+
+
+def _nomi_uniti(*elenchi):
+    """Unione di piu' elenchi di nomi file: senza doppioni (confronto in minuscolo) e in ordine alfabetico."""
+    out = {}
+    for e in elenchi:
+        for n in e:
+            out.setdefault(str(n).lower(), n)
+    return [out[k] for k in sorted(out)]
 
 
 def create_folder(name):
@@ -586,6 +660,102 @@ def inf_needed_files(path):
                   key=str.lower)
 
 
+def inf_extra_files(path):
+    """File dichiarati dall'.inf con un'estensione fuori da WINPE_EXT (.dll, .exe, .bin, .dat...), in ordine.
+
+    Sono i file che l'.inf si porta dietro con CopyFiles o SourceDisksFiles ma che da soli non entrerebbero
+    mai nel WinPE. drvload fallisce anche quando non riesce a mettere a posto uno solo dei file di CopyFiles
+    (successo davvero con iaStorVD.inf e RstMwEventLogMsg.dll), quindi vanno iniettati anche loro - ma solo
+    quelli che l'.inf dichiara e che stanno nella sua stessa cartella."""
+    return sorted((orig for low, orig in _inf_declared_cached(path).items() if not low.endswith(WINPE_EXT)),
+                  key=str.lower)
+
+
+def inf_all_files(path):
+    """Tutti i file dichiarati dall'.inf che possono seguirlo nel WinPE: prima i .inf/.sys/.cat, poi gli altri."""
+    return inf_needed_files(path) + inf_extra_files(path)
+
+
+# ---------------------------------------------------------------------------
+# Protezione dei file di sistema del WinPE (docs/API.md, sezione 21)
+#
+# wimboot appiattisce tutto in X:\Windows\System32, dove il WinPE ha gia' i suoi file: iniettare un file
+# dichiarato che si chiama come uno di quelli lo sostituirebbe, e il WinPE si riavvia. I nomi qui sotto sono
+# quelli veri di \Windows\System32 del WinPE (ricavati da "wimdir <boot.wim> 2" su
+# /srv/pixio/http/iso/ltsc2021-x64/sources/boot.wim), scelti fra quelli che un pacchetto driver puo'
+# davvero portarsi dietro: runtime C/C++, librerie di installazione, nomi generici.
+# L'elenco completo (1234 nomi) non sta nel codice: winpe_system32_names() lo legge una volta sola dal primo
+# boot.wim che trova in HTTP_ISO_DIR e lo tiene in memoria per tutta la vita del processo. Se wimlib non c'e'
+# o nessuna ISO e' montata resta valido l'elenco scritto qui.
+WINPE_SYSTEM32 = frozenset((
+    # runtime e librerie che gli installatori dei driver si portano dietro
+    "msvcrt.dll", "msvcirt.dll", "msvcp60.dll", "msvcp_win.dll", "ucrtbase.dll", "mfc42.dll", "mfc42u.dll",
+    "atl.dll", "atmlib.dll", "asycfilt.dll", "advpack.dll", "cabinet.dll", "imagehlp.dll", "dbghelp.dll",
+    "dbgcore.dll", "propsys.dll", "xmllite.dll", "msxml3.dll", "msxml6.dll", "riched20.dll", "riched32.dll",
+    # installazione dei driver: un pacchetto che le ricopia sostituirebbe quelle del WinPE
+    "setupapi.dll", "difxapi.dll", "newdev.dll", "cfgmgr32.dll", "devobj.dll", "devrtl.dll", "drvstore.dll",
+    "drvsetup.dll", "spinf.dll", "syssetup.dll", "sppnp.dll", "msports.dll", "storprop.dll", "hid.dll",
+    "wimgapi.dll", "wdscore.dll", "sfc.dll", "sfc_os.dll", "streamci.dll", "sdhcinst.dll",
+    # librerie di sistema con nomi che capita di trovare anche altrove
+    "kernel32.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "shell32.dll", "shlwapi.dll", "ole32.dll",
+    "oleaut32.dll", "oleacc.dll", "comdlg32.dll", "rpcrt4.dll", "ntdll.dll", "combase.dll", "sechost.dll",
+    "ws2_32.dll", "wsock32.dll", "winmm.dll", "winhttp.dll", "wininet.dll", "urlmon.dll", "iertutil.dll",
+    "crypt32.dll", "cryptsp.dll", "bcrypt.dll", "ncrypt.dll", "wintrust.dll", "netapi32.dll", "secur32.dll",
+    "psapi.dll", "powrprof.dll", "uxtheme.dll", "dwmapi.dll", "d2d1.dll", "dwrite.dll", "gdiplus.dll",
+    "imm32.dll", "msctf.dll", "usp10.dll", "version.dll", "profapi.dll", "dnsapi.dll", "mpr.dll", "wmi.dll",
+    # nomi corti e generici: sono proprio quelli che fanno danno
+    "input.dll", "console.dll", "security.dll", "authz.dll", "avrt.dll", "clb.dll", "dab.dll", "fms.dll",
+    "kd.dll", "mi.dll", "nsi.dll", "wer.dll", "dpx.dll", "ci.dll", "cdd.dll", "lpk.dll", "lz32.dll",
+    "slc.dll", "sxs.dll", "spp.dll", "tbs.dll", "tdh.dll", "ulib.dll", "esent.dll", "hal.dll",
+    # eseguibili con nomi comuni
+    "attrib.exe", "compact.exe", "convert.exe", "doskey.exe", "expand.exe", "find.exe", "net.exe",
+    "notepad.exe", "ping.exe", "print.exe", "recover.exe", "replace.exe", "reg.exe", "sfc.exe",
+    "subst.exe", "vds.exe", "verifier.exe", "xcopy.exe",
+))
+WIM_LIST_TIMEOUT = 20            # wimdir legge solo i metadati del .wim: ~0,1 s, ma non si resta appesi
+WIM_LIST_MAX = 2                 # bastano uno o due WinPE: i nomi di System32 sono quasi gli stessi
+_SYS32_CACHE = None              # calcolato una volta sola: list_folders() gira a ogni aggiornamento pagina
+
+
+def _wim_system32_names(wim):
+    """Nomi dei file in \\Windows\\System32 di un boot.wim (immagine 2, il WinPE del setup)."""
+    try:
+        p = subprocess.run(["wimdir", wim, "2"], capture_output=True, text=True, timeout=WIM_LIST_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if p.returncode != 0:
+        return set()
+    nomi = set()
+    for riga in (p.stdout or "").splitlines():
+        parti = riga.strip().replace("\\", "/").lower().split("/")
+        # solo i file al primo livello di /windows/system32: le sottocartelle (drivers, ...) non c'entrano
+        if len(parti) == 4 and parti[:3] == ["", "windows", "system32"] and "." in parti[3]:
+            nomi.add(parti[3])
+    return nomi
+
+
+def winpe_system32_names():
+    """Nomi (minuscoli) che il WinPE ha gia' in \\Windows\\System32: elenco scritto nel codice piu' quelli
+    letti una volta sola da un boot.wim del catalogo. Il risultato resta in memoria fino al riavvio."""
+    global _SYS32_CACHE
+    if _SYS32_CACHE is None:
+        nomi = set(WINPE_SYSTEM32)
+        try:
+            # C.HTTP_DIR e non C.HTTP_ISO_DIR: cosi' segue la radice HTTP anche quando e' reindirizzata
+            wims = sorted(glob.glob(os.path.join(C.HTTP_DIR, "iso", "*", "sources", "boot.wim")))
+        except OSError:
+            wims = []
+        for wim in wims[:WIM_LIST_MAX]:
+            nomi |= _wim_system32_names(wim)
+        _SYS32_CACHE = frozenset(nomi)
+    return _SYS32_CACHE
+
+
+def is_winpe_system_file(nome):
+    """True se il WinPE ha gia' un file con questo nome in \\Windows\\System32: iniettarlo lo sostituirebbe."""
+    return str(nome or "").split("/")[-1].lower() in winpe_system32_names()
+
+
 def _dir_of(rel):
     """Cartella (percorso relativo) che contiene il file; "" se sta al primo livello."""
     return "/".join(rel.split("/")[:-1])
@@ -612,6 +782,9 @@ def winpe_inject_files(iso=None):
     Un .inf iniettato si porta dietro i file che dichiara presi dalla sua stessa cartella, anche quando un
     file con quello stesso nome era già stato scelto da un'altra cartella: se un .inf ha bisogno del suo
     iaStorAfs.sys deve avere quello che gli sta accanto, altrimenti drvload non lo carica (sezione 21).
+    Valgono anche i file dichiarati con altra estensione (.dll, .exe...): drvload fallisce pure quando non
+    riesce a mettere a posto un file di CopyFiles. Un file dichiarato che porta il nome di un file di sistema
+    del WinPE non viene iniettato (is_winpe_system_file): lo sostituirebbe.
     La sostituzione rispetta comunque MAX_INJECT_BYTES: se il file di ricambio non ci sta, resta il primo."""
     out, pos, dim, total = [], {}, [], 0     # pos: nome minuscolo -> indice in out; dim: dimensioni parallele
 
@@ -657,7 +830,7 @@ def winpe_inject_files(iso=None):
         for x in scelti:
             if not x["name"].lower().endswith(".inf"):
                 continue
-            for n in inf_needed_files(os.path.join(base, *x["name"].split("/"))):
+            for n in inf_all_files(os.path.join(base, *x["name"].split("/"))):
                 n = n.lower()
                 fratello = per_rel.get(_sibling(x["name"], n))
                 if n in bloccati or fratello is None:

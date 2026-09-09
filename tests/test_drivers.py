@@ -96,6 +96,49 @@ DiskId1 = "Disco driver; di prova"
 """
 
 # .inf che non porta file propri (solo registro), come le estensioni dei pacchetti Intel
+# Finto pacchetto in stile Intel RST (sezione 21): oltre al .sys dichiara una .dll di messaggi che sta
+# nella cartella, un servizio .exe che non c'e' e una version.dll, che nel WinPE esiste gia' in System32.
+INF_RST = """; Finto pacchetto RST: dichiara rst.sys, RstMsg.dll, RstServizio.exe, version.dll
+[Version]
+Signature="$Windows NT$"
+Class=SCSIAdapter
+CatalogFile=rst.cat
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles.amd64]
+rst.sys = 1,,,
+RstMsg.dll = 1,,,
+RstServizio.exe = 1,,,
+version.dll = 1,,,
+
+[DestinationDirs]
+DefaultDestDir = 13
+Driver_files_copy = 12
+Log_files_copy = 11
+
+[Rst_inst.NTamd64]
+CopyFiles=Driver_files_copy
+CopyFiles=@RstServizio.exe
+CopyFiles=Log_files_copy
+
+[Driver_files_copy]
+rst.sys
+
+[Log_files_copy]
+RstMsg.dll
+version.dll
+
+[rst_service]
+ServiceBinary = %12%\\rst.sys
+
+[Strings]
+INTEL = "Finta Intel"
+DiskId1 = "Disco driver"
+"""
+
+
 INF_SENZA_FILE = """[Version]
 Signature="$Windows NT$"
 Class=Extension
@@ -855,8 +898,10 @@ class DriversApiTest(unittest.TestCase):
         self.assertTrue(per_nome["pacchetto/x64/aiuto.sys"]["winpe"])
         # un file che l'.inf non dichiara resta scelto come prima: vince la radice
         self.assertTrue(per_nome["prova.cat"]["winpe"])
-        # nessun avviso: la copia scelta è completa
-        self.assertEqual(f["winpe_missing"], [])
+        # la copia scelta ha accanto tutti i .inf/.sys/.cat che dichiara; resta l'avviso per prova.dll e
+        # prova.exe, dichiarati dall'.inf e assenti da ogni copia della cartella (sezione 21)
+        self.assertEqual(f["winpe_missing"],
+                         [{"inf": "pacchetto/x64/prova.inf", "missing": ["prova.dll", "prova.exe"]}])
         # e nell'iniezione vera i percorsi sono quelli della copia completa
         scelti = {nome: p for _c, nome, p in drivers.winpe_inject_files()}
         self.assertTrue(scelti["prova.inf"].endswith(os.path.join("pacchetto", "x64", "prova.inf")))
@@ -897,8 +942,10 @@ class DriversApiTest(unittest.TestCase):
         self.client.patch(f"/api/drivers/folders/{n.replace(' ', '%20')}",
                           json={"winpe_inject": True}, headers=self.h)
         f = self._folders()[n]
-        # nessuna copia ha aiuto.sys: si inietta comunque la migliore, ma con l'avviso
-        self.assertEqual(f["winpe_missing"], [{"inf": "prova.inf", "missing": ["aiuto.sys"]}])
+        # nessuna copia ha aiuto.sys: si inietta comunque la migliore, ma con l'avviso (che elenca anche
+        # prova.dll e prova.exe: l'.inf li dichiara e non ci sono in nessuna copia della cartella)
+        self.assertEqual(f["winpe_missing"],
+                         [{"inf": "prova.inf", "missing": ["aiuto.sys", "prova.dll", "prova.exe"]}])
         self.assertEqual({x["name"]: x["inf_missing"] for x in f["files"] if x["name"].endswith(".inf")},
                          {"prova.inf": ["aiuto.sys"], "altra/prova.inf": ["aiuto.sys", "prova.sys"]})
         self.assertIn("prova.inf", [x[1] for x in drivers.winpe_inject_files()])
@@ -906,11 +953,13 @@ class DriversApiTest(unittest.TestCase):
         # lo stesso avviso arriva alla GUI da GET /api/drivers
         d = self.client.get("/api/drivers", headers=self.h).get_json()
         cart = [x for x in d["folders"] if x["name"] == n][0]
-        self.assertEqual(cart["winpe_missing"], [{"inf": "prova.inf", "missing": ["aiuto.sys"]}])
-        # messo il file accanto all'.inf l'avviso sparisce e il file viene iniettato
+        self.assertEqual(cart["winpe_missing"],
+                         [{"inf": "prova.inf", "missing": ["aiuto.sys", "prova.dll", "prova.exe"]}])
+        # messo il file accanto all'.inf l'avviso su aiuto.sys sparisce e il file viene iniettato
         _put_file(self.client, self.h, n, "aiuto.sys", b"aiuto")
         f = self._folders()[n]
-        self.assertEqual(f["winpe_missing"], [])
+        self.assertEqual(f["winpe_missing"],
+                         [{"inf": "prova.inf", "missing": ["prova.dll", "prova.exe"]}])
         self.assertIn("aiuto.sys", [x[1] for x in drivers.winpe_inject_files()])
         # il limite di dimensione resta rispettato: nessun file oltre MAX_INJECT_BYTES
         vecchio, drivers.MAX_INJECT_BYTES = drivers.MAX_INJECT_BYTES, 1
@@ -918,6 +967,82 @@ class DriversApiTest(unittest.TestCase):
             self.assertEqual(drivers.winpe_inject_files(), [])
         finally:
             drivers.MAX_INJECT_BYTES = vecchio
+        self._reset_drivers()
+
+    def test_19_declared_files_any_extension(self):
+        """Un .inf iniettato porta con se\u2019 i file che dichiara, .dll comprese; gli altri restano fuori."""
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "RST finto"
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+        for nome, data in (("rst.inf", _inf_bytes(INF_RST)), ("rst.sys", b"sys"), ("rst.cat", b"cat"),
+                           ("RstMsg.dll", b"messaggi"), ("version.dll", b"finta version"),
+                           ("libera.dll", b"non dichiarata"), ("lettimi.txt", b"documentazione")):
+            _put_file(self.client, self.h, n, nome, data)
+        self.client.patch(f"/api/drivers/folders/{n.replace(' ', '%20')}",
+                          json={"winpe_inject": True}, headers=self.h)
+        f = self._folders()[n]
+        per_nome = {x["name"]: x for x in f["files"]}
+        # la .dll dichiarata dall'.inf entra nel WinPE...
+        self.assertTrue(per_nome["RstMsg.dll"]["winpe_cand"])
+        self.assertTrue(per_nome["RstMsg.dll"]["winpe"])
+        # ...quella che sta nella cartella ma nessun .inf dichiara resta fuori (e non e\u2019 nemmeno candidata)
+        self.assertFalse(per_nome["libera.dll"]["winpe_cand"])
+        self.assertFalse(per_nome["libera.dll"]["winpe"])
+        self.assertFalse(per_nome["lettimi.txt"]["winpe_cand"])
+        # version.dll e\u2019 un file che il WinPE ha gia\u2019 in System32: iniettarla lo sostituirebbe
+        self.assertTrue(drivers.is_winpe_system_file("VERSION.DLL"))
+        self.assertFalse(drivers.is_winpe_system_file("RstMsg.dll"))
+        self.assertFalse(per_nome["version.dll"]["winpe_cand"])
+        self.assertFalse(per_nome["version.dll"]["winpe"])
+        self.assertEqual(f["winpe_shadowed"], [{"inf": "rst.inf", "files": ["version.dll"]}])
+        # il file dichiarato che non c'e\u2019 in nessuna copia finisce fra gli avvisi
+        self.assertEqual(f["winpe_missing"], [{"inf": "rst.inf", "missing": ["RstServizio.exe"]}])
+        self.assertEqual(per_nome["rst.inf"]["inf_missing"], [])
+        # nell'iniezione vera ci sono i tre file del driver piu\u2019 la .dll dichiarata, e nient'altro
+        self.assertEqual(sorted(x[1] for x in drivers.winpe_inject_files()),
+                         ["RstMsg.dll", "rst.cat", "rst.inf", "rst.sys"])
+        # la .dll dichiarata si puo\u2019 comunque escludere a mano
+        r = self.client.patch(f"/api/drivers/folders/{n}/files/RstMsg.dll",
+                              json={"excluded": True}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertNotIn("RstMsg.dll", [x[1] for x in drivers.winpe_inject_files()])
+        self.client.patch(f"/api/drivers/folders/{n}/files/RstMsg.dll",
+                          json={"excluded": False}, headers=self.h)
+
+        # ---- piu\u2019 copie: la .dll dichiarata conta nella scelta della copia, e la GUI dice qual e\u2019 quella buona
+        m = "Copie con dll"
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": m}, headers=self.h).status_code, 201)
+        for nome, data in (("prova.inf", _inf_bytes(INF_PROVA)), ("prova.sys", b"radice-sys"),
+                           ("aiuto.sys", b"radice-aiuto")):
+            _put_file(self.client, self.h, m, nome, data)            # radice: le manca prova.dll
+        for nome, data in (("prova.inf", _inf_bytes(INF_PROVA)), ("prova.sys", b"completo-sys"),
+                           ("aiuto.sys", b"completo-aiuto"), ("prova.dll", b"completo-dll")):
+            _put_file(self.client, self.h, m, nome, data, path="completo/x64/" + nome)
+        self.client.patch(f"/api/drivers/folders/{m.replace(' ', '%20')}",
+                          json={"winpe_inject": True}, headers=self.h)
+        f = self._folders()[m]
+        per_nome = {x["name"]: x for x in f["files"]}
+        # la copia in radice e\u2019 monca proprio per la .dll: vince quella completa, anche se meno preferita
+        self.assertEqual(per_nome["prova.inf"]["inf_missing"], ["prova.dll"])
+        self.assertEqual(per_nome["completo/x64/prova.inf"]["inf_missing"], [])
+        self.assertTrue(per_nome["completo/x64/prova.inf"]["winpe"])
+        self.assertTrue(per_nome["completo/x64/prova.dll"]["winpe"])
+        self.assertEqual(f["winpe_better"], [])
+        scelti = {nome: p for _c, nome, p in drivers.winpe_inject_files()}
+        self.assertEqual(_leggi(scelti["prova.dll"]), b"completo-dll")
+        self.assertEqual(_leggi(scelti["prova.sys"]), b"completo-sys")
+        # escluso a mano l'.inf completo viene iniettata la copia monca: la GUI dice dov'e\u2019 quella coerente
+        r = self.client.patch(f"/api/drivers/folders/{m}/files/completo/x64/prova.inf",
+                              json={"excluded": True}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        f = r.get_json()["folder"]
+        per_nome = {x["name"]: x for x in f["files"]}
+        self.assertTrue(per_nome["prova.inf"]["winpe"])
+        self.assertEqual(f["winpe_better"],
+                         [{"inf": "prova.inf", "copy": "completo/x64/prova.inf", "folder": "completo/x64"}])
+        self.assertEqual(f["winpe_missing"], [{"inf": "prova.inf", "missing": ["prova.dll", "prova.exe"]}])
+        self.assertNotIn("prova.dll", [x[1] for x in drivers.winpe_inject_files()])
         self._reset_drivers()
 
     # ---------------------------------------------------------------- nessuna regressione su ISO e risposte

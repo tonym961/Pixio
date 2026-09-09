@@ -14,9 +14,13 @@
    e "includi tutti": così i driver RAID vanno solo sui server e non appesantiscono il WinPE dei PC.
 
    Coerenza dei .inf (docs/API.md, sezione 21): il server legge da ogni .inf i file che dichiara e sceglie la
-   copia che li ha davvero accanto. Se nemmeno una copia è completa manda winpe_missing e la scheda mostra un
-   avviso ("manca iaStorAfs.sys, il driver non si caricherebbe"): senza quel file drvload fallisce e il disco
-   non si vede, errore che oggi si scopre solo davanti a un PC in installazione. */
+   copia che li ha davvero accanto; insieme all'.inf inietta anche i file dichiarati con altra estensione
+   (.dll, .exe) che gli stanno accanto. Se qualcosa non tornerà nel WinPE la scheda lo dice:
+   winpe_missing (file dichiarati che mancano accanto all'.inf o da tutta la cartella, ".exe" compresi),
+   winpe_shadowed (file dichiarati che portano il nome di un file di sistema del WinPE e quindi non si
+   iniettano) e winpe_better (un'altra copia dello stesso .inf è un set coerente: si dice in quale cartella).
+   Senza quei file drvload fallisce e il disco non si vede, errore che altrimenti si scopre solo davanti a un
+   PC in installazione. */
 'use strict';
 (function () {
   const P = window.Pixio;
@@ -99,7 +103,16 @@
     return a.mode !== 'all' && !(a.mode === 'groups' ? a.groups : a.isos).length;
   };
   const active = (f) => !!(f.winpe_inject || f.setup_load);
-  /* File della cartella che potrebbero finire nel WinPE (candidati): il server li marca con winpe_cand. */
+  /* Sottocartelle di altre architetture (SKIP_DIRS del server): i loro file non vengono mai iniettati. */
+  const ARCH_RE = /(^|\/)(x86|i386|ia64|arm|arm64|win32|32bit|wow64)\//i;
+  /* Unione di più elenchi di nomi file, senza doppioni e in ordine. */
+  const uniqNames = (...liste) => {
+    const o = {};
+    liste.forEach((l) => (Array.isArray(l) ? l : []).forEach((n) => { o[String(n).toLowerCase()] = n; }));
+    return Object.keys(o).sort().map((k) => o[k]);
+  };
+  /* File della cartella che potrebbero finire nel WinPE (candidati): il server li marca con winpe_cand.
+     Sono i .inf/.sys/.cat e i file (di qualsiasi estensione) che un .inf della stessa cartella dichiara. */
   const candidates = (f) => (f.files || []).filter((x) => (x.winpe_cand !== undefined ? !!x.winpe_cand : (!x.name.includes('/') && WINPE_RE.test(x.name))));
 
   // ---------------------------------------------------------------- nomi di cartelle e sottopercorsi
@@ -546,12 +559,19 @@
     return P.pill('share attiva', 'ok') + ' <span class="hint">utente <span class="mono">pixio</span>, password di Impostazioni → Libreria locale; una sottocartella = una cartella driver</span>';
   }
 
-  /* File che un .inf dichiara ma che non stanno nella sua cartella: drvload li cerca per nome e non li
-     trova, quindi il driver non si carica (docs/API.md, sezione 21). Il server manda winpe_missing solo
-     per gli .inf che finirebbero davvero nel WinPE. */
+  /* File che un .inf dichiara ma che non finiranno nel WinPE: drvload li cerca per nome e non li trova,
+     quindi il driver non si carica (docs/API.md, sezione 21). Il server manda questi elenchi solo per gli
+     .inf che finirebbero davvero nel WinPE. */
   const missingList = (f) => (Array.isArray(f && f.winpe_missing) ? f.winpe_missing : [])
     .filter((m) => m && m.inf && Array.isArray(m.missing) && m.missing.length);
+  const shadowedList = (f) => (Array.isArray(f && f.winpe_shadowed) ? f.winpe_shadowed : [])
+    .filter((m) => m && m.inf && Array.isArray(m.files) && m.files.length);
+  const betterList = (f) => (Array.isArray(f && f.winpe_better) ? f.winpe_better : [])
+    .filter((m) => m && m.inf && m.copy);
   const infName = (rel) => String(rel || '').split('/').pop();
+  const infWhere = (rel) => (String(rel || '').includes('/') ? ` (in ${rel.slice(0, rel.lastIndexOf('/'))})` : '');
+  /* Nome della cartella di una copia, per gli avvisi: "" = radice della cartella driver. */
+  const copyWhere = (dir) => (dir ? `nella sottocartella ${dir}` : 'nella radice della cartella');
 
   function warningsHtml(f) {
     const w = [];
@@ -562,8 +582,14 @@
     if (!f.valid_name) w.push('Nome cartella non valido (ammessi lettere, numeri, spazi, . _ - ( ) +, max 64): rinominala dalla share, altrimenti non viene usata dal setup.');
     missingList(f).forEach((m) => {
       const uno = m.missing.length === 1;
-      const dove = m.inf.includes('/') ? ` (in ${m.inf.slice(0, m.inf.lastIndexOf('/'))})` : '';
-      w.push(`${infName(m.inf)}${dove} dichiara ${uno ? 'un file che non c\u2019\u00e8' : 'file che non ci sono'} nella sua cartella: ${uno ? 'manca' : 'mancano'} ${m.missing.join(', ')}, il driver non si caricherebbe nel WinPE (drvload cerca i file per nome, e nel WinPE finiscono tutti nella stessa cartella). Copia ${uno ? 'il file' : 'i file'} accanto all\u2019.inf, oppure ricarica il pacchetto driver completo.`);
+      w.push(`${infName(m.inf)}${infWhere(m.inf)} dichiara ${uno ? 'un file che non c\u2019\u00e8' : 'file che non ci sono'} nella sua cartella: ${uno ? 'manca' : 'mancano'} ${m.missing.join(', ')}. drvload carica il driver solo se trova accanto all\u2019.inf tutti i file che dichiara (nel WinPE finiscono tutti nella stessa cartella e li cerca per nome): senza ${uno ? 'quel file' : 'quei file'} il driver non si carica e il disco pu\u00f2 non essere visto in installazione. Copia ${uno ? 'il file' : 'i file'} accanto all\u2019.inf, oppure ricarica il pacchetto driver completo.`);
+    });
+    shadowedList(f).forEach((m) => {
+      const uno = m.files.length === 1;
+      w.push(`${infName(m.inf)}${infWhere(m.inf)} dichiara ${m.files.join(', ')}: nel WinPE ${uno ? 'esiste gi\u00e0 un file di sistema con quel nome' : 'esistono gi\u00e0 file di sistema con quei nomi'} in \\Windows\\System32, quindi Pixio non ${uno ? 'lo inietta' : 'li inietta'} (lo sostituirebbe e il WinPE potrebbe non partire). Se questo driver non si carica, usa "${FLAGS.setup_load.label}" per questa cartella.`);
+    });
+    betterList(f).forEach((m) => {
+      w.push(`Di ${infName(m.inf)} c\u2019\u00e8 pi\u00f9 di una copia: quella che verrebbe iniettata${infWhere(m.inf)} non ha accanto tutti i file che dichiara, mentre la copia ${copyWhere(m.folder)} \u00e8 completa. Se il driver non si carica, includi quella copia dal pannello dei file (ed escludi questa): fra .inf e file dichiarati conta la coerenza, non la versione.`);
     });
     return w.map((t) => `<div class="alert warn">${esc(t)}</div>`).join('');
   }
@@ -606,7 +632,7 @@
           <label class="drv-pick" title="Seleziona la cartella per le azioni su più cartelle"><input type="checkbox" data-pick ${D.sel.has(f.name) ? 'checked' : ''} aria-label="Seleziona la cartella ${esc(f.name)}"></label>
           <div>
             <div class="drv-name"><span>${esc(f.name)}</span>${f.valid_name ? '' : P.pill('nome non valido', 'bad')}${f.winpe_inject ? P.pill('WinPE', 'acc') : ''}${f.setup_load ? P.pill('setup', 'acc') : ''}${P.pill(applySummary(f), applyEmpty(f) ? 'warn' : (applyOf(f).mode === 'all' ? 'neutral' : 'acc'))}</div>
-            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File .inf/.sys/.cat che finiscono davvero nel WinPE, esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
+            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File che finiscono davvero nel WinPE (.inf/.sys/.cat e i file che gli .inf dichiarano), esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
           </div>
         </div>
         <div class="actions">
@@ -944,13 +970,16 @@
       const box = isCand
         ? `<label class="drv-inc" title="Togli la spunta per lasciare questo file fuori dal WinPE"><input type="checkbox" data-inc="${esc(x.name)}" ${x.excluded ? '' : 'checked'} aria-label="Metti ${esc(x.name)} nel WinPE"></label>`
         : '<span class="hint">—</span>';
-      const manca = Array.isArray(x.inf_missing) && x.inf_missing.length
-        ? ` <span class="pill warn" title="File dichiarati da questo .inf che non stanno nella sua cartella: senza di loro drvload non carica il driver">manca ${esc(x.inf_missing.join(', '))}</span>` : '';
-      const tag = !isCand ? (WINPE_RE.test(x.name) ? ' <span class="pill neutral" title="Sta in una sottocartella di un\'altra architettura (x86, arm…): nel WinPE a 64 bit non serve">altra architettura</span>' : '')
+      const mancanti = uniqNames(x.inf_missing, x.inf_absent);
+      const manca = mancanti.length
+        ? ` <span class="pill warn" title="File dichiarati da questo .inf che non finiranno nel WinPE (non stanno nella sua cartella, o non ci sono proprio): senza di loro drvload non carica il driver">manca ${esc(mancanti.join(', '))}</span>` : '';
+      const ombra = Array.isArray(x.inf_shadowed) && x.inf_shadowed.length
+        ? ` <span class="pill warn" title="File dichiarati da questo .inf che hanno il nome di un file di sistema del WinPE: iniettarli lo sostituirebbe, quindi restano fuori">già nel WinPE: ${esc(x.inf_shadowed.join(', '))}</span>` : '';
+      const tag = !isCand ? (ARCH_RE.test(x.name) && WINPE_RE.test(x.name) ? ' <span class="pill neutral" title="Sta in una sottocartella di un\'altra architettura (x86, arm…): nel WinPE a 64 bit non serve">altra architettura</span>' : '')
         : (x.excluded ? ' <span class="pill warn" title="Escluso a mano: non viene iniettato nel WinPE">escluso</span>'
           : (inWinpe ? ' ' + P.pill('WinPE', 'acc')
             : ' <span class="pill neutral" title="Un altro file con lo stesso nome ha la precedenza: nel WinPE i nomi sono tutti nella stessa cartella">doppione</span>'));
-      return `<tr class="${use ? '' : 'drv-unused'}${x.excluded ? ' drv-excluded' : ''}"><td class="num">${box}</td><td><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.name)}</span>${tag}${manca}${use ? '' : ' <span class="pill neutral" title="Estensione che non serve a installare il driver: resta nella cartella ma non viene usata">non usato</span>'}</td><td class="num">${P.fmtBytes(x.size)}</td><td class="num hint">${esc(P.fmtDate(x.mtime))}</td><td class="actions-cell"><button class="btn small danger" type="button" data-file="${esc(x.name)}" aria-label="Elimina ${esc(x.name)}">Elimina</button></td></tr>`;
+      return `<tr class="${use ? '' : 'drv-unused'}${x.excluded ? ' drv-excluded' : ''}"><td class="num">${box}</td><td><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.name)}</span>${tag}${manca}${ombra}${use ? '' : ' <span class="pill neutral" title="Estensione che non serve a installare il driver: resta nella cartella ma non viene usata">non usato</span>'}</td><td class="num">${P.fmtBytes(x.size)}</td><td class="num hint">${esc(P.fmtDate(x.mtime))}</td><td class="actions-cell"><button class="btn small danger" type="button" data-file="${esc(x.name)}" aria-label="Elimina ${esc(x.name)}">Elimina</button></td></tr>`;
     }).join('');
     const ign = Number(f.ignored_files || 0);
     const use = f.useful_files === undefined ? null : Number(f.useful_files);
@@ -958,7 +987,7 @@
     P.drawer.body.innerHTML = `
       <div class="drawer-sec">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${P.pill(f.count + ' file', 'neutral')}${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? P.pill(ign + ' non usati', 'warn') : ''}${P.pill(P.fmtBytes(f.size), 'neutral')}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}${f.winpe_inject ? P.pill(FLAGS.winpe_inject.label, 'ok') : ''}${f.setup_load ? P.pill(FLAGS.setup_load.label, 'ok') : ''}</div>
-        <div class="hint" style="margin-top:8px">Percorso da Windows: <span class="mono">${esc(sharePath())}\\${esc(f.name)}</span>. I file con l'etichetta <b>WinPE</b> sono quelli iniettati all'avvio quando "${esc(FLAGS.winpe_inject.label)}" è attivo; quelli marcati <b>non usato</b> restano sul disco ma non servono a installare il driver.</div>
+        <div class="hint" style="margin-top:8px">Percorso da Windows: <span class="mono">${esc(sharePath())}\\${esc(f.name)}</span>. I file con l'etichetta <b>WinPE</b> sono quelli iniettati all'avvio quando "${esc(FLAGS.winpe_inject.label)}" è attivo: i .inf/.sys/.cat e i file (anche .dll o .exe) che un .inf della stessa cartella dichiara come propri. Quelli marcati <b>non usato</b> restano sul disco ma non servono a installare il driver.</div>
         <div class="hint" style="margin-top:6px">Si applica a: <b>${esc(applySummary(f))}</b>${applyEmpty(f) ? ' — nessuna immagine riceverà questi driver' : ''}. Si cambia dalla scheda della cartella.</div>
         ${f.note ? `<div class="hint" style="margin-top:6px">Nota: ${esc(f.note)}</div>` : ''}
       </div>

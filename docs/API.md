@@ -599,9 +599,18 @@ a 64 bit). Ma un `.inf` dichiara i propri file, e wimboot appiattisce tutto in `
 li cerca per nome. Se si inietta l'`.inf` di una copia e il `.sys` di un'altra — o se quel `.sys` non c'è — il
 driver non si carica, e l'errore si scopre solo davanti a un PC in installazione.
 
+Dopo la prima versione due prove ulteriori in macchina virtuale hanno dato ancora "non caricato": la copia
+iniettata (Intel RST 19.5.1.1040) dichiara, oltre a `iaStorVD.sys`, anche `RstMwEventLogMsg.dll` (`%11%`) e
+`RstMwService.exe` (`%13%`). La `.dll` stava nella cartella ma non veniva iniettata, perché `WINPE_EXT`
+ammetteva solo `.inf .sys .cat`; l'`.exe` non c'è in nessuna copia del pacchetto. `drvload` fallisce anche
+solo per un file di `CopyFiles` che non riesce a mettere a posto, quindi da qui in avanti **un `.inf`
+iniettato si porta dietro tutti i file che dichiara**, qualunque sia l'estensione.
+
 ### Lettura dei .inf
 `drivers.inf_declared_files(path)` restituisce i nomi (minuscoli, senza percorso) dei file che l'`.inf` dichiara
-come propri; `drivers.inf_needed_files(path)` è il sottoinsieme che finirebbe anche lui nel WinPE (`.inf .sys .cat`).
+come propri; `drivers.inf_needed_files(path)` è il sottoinsieme con estensione da WinPE (`.inf .sys .cat`),
+`drivers.inf_extra_files(path)` quello con le altre estensioni (`.dll .exe .bin .dat`...) e
+`drivers.inf_all_files(path)` i due elenchi in fila, nell'ordine in cui vengono iniettati.
 Non è un parser INF completo, serve solo l'elenco dei nomi citati:
 - sezioni `[SourceDisksFiles*]`: il nome sta nella chiave (`iaStorVD.sys = 1,,,`);
 - righe `CopyFiles=`: i nomi diretti (`@RstMwService.exe`) e le sezioni di copia referenziate, dove ogni riga è
@@ -613,22 +622,57 @@ e commenti dopo `;` (non dentro le virgolette): tutto questo viene gestito. Un `
 `INF_MAX_BYTES` (4 MB) non dichiara nulla, e non fa fallire l'iniezione. Il risultato è in memoria per
 (percorso, mtime, dimensione), perché `list_folders()` gira a ogni aggiornamento della pagina.
 
+### Anche i file dichiarati che non sono .inf/.sys/.cat
+`WINPE_EXT` resta `.inf .sys .cat`: una `.dll` qualsiasi trovata in una cartella driver **non** viene iniettata.
+Il motivo per cui erano escluse vale ancora: wimboot appiattisce tutto in `X:\Windows\System32` e un file con un
+nome comune (era successo con un `generic.dll`) sovrascriverebbe un file di sistema del WinPE.
+La regola nuova è diversa: **lo inietto perché quell'`.inf` lo chiede**, non perché si trova lì. Un file entra nel
+WinPE solo se un `.inf` che viene iniettato lo dichiara come proprio e se sta nella sua stessa cartella; l'elenco
+lo scrive il produttore del driver, quindi il rischio resta quello di prima.
+- Il file dichiarato che sta accanto all'`.inf` diventa `winpe_cand` come i `.inf/.sys/.cat` e ha in GUI la
+  stessa casella per escluderlo a mano. Un `.inf` escluso a mano non tira dentro niente.
+- Un file dichiarato che porta il nome di un file già presente in `\Windows\System32` del WinPE **non** viene
+  iniettato: lo sostituirebbe. `drivers.is_winpe_system_file(nome)` decide, e finisce fra gli avvisi
+  (`winpe_shadowed`). L'elenco dei nomi è `WINPE_SYSTEM32` (scritto nel codice, i più comuni) unito a quelli
+  letti da un `boot.wim` del catalogo con `wimdir <boot.wim> 2`, filtrando i file al primo livello di
+  `\Windows\System32`. La lettura del `.wim` si fa **una volta sola** per processo (`winpe_system32_names()`,
+  cache in memoria): `list_folders()` gira a ogni aggiornamento della pagina. Se wimlib non c'è o nessuna ISO è
+  montata resta valido il solo elenco scritto nel codice.
+
 ### Scelta della copia e coerenza
-- Fra più copie dello stesso `.inf` vince quella **completa**, cioè quella che ha accanto tutti i file che dichiara
-  (fra quelli con estensione iniettabile). Una copia completa batte una monca anche se sta in una cartella meno
-  preferita; a parità di completezza vale l'ordine di prima (`_inject_rank`).
-- Insieme all'`.inf` scelto vengono iniettati i file che dichiara **presi dalla sua stessa cartella**, anche se un
-  file con quel nome era già stato scelto da un'altra cartella o da un'altra cartella driver: la coerenza fra
+- Fra più copie dello stesso `.inf` vince quella **completa**, cioè quella che ha accanto tutti i file che dichiara.
+  Contano anche i file dichiarati con altra estensione, ma solo se esistono da qualche parte nella cartella: un
+  file che non c'è in nessuna copia (come `RstMwService.exe`) non può far preferire una copia all'altra, e viene
+  solo segnalato. Una copia completa batte una monca anche se sta in una cartella meno preferita; a parità di
+  completezza vale l'ordine di prima (`_inject_rank`).
+- Insieme all'`.inf` scelto vengono iniettati i file che dichiara **presi dalla sua stessa cartella** (prima i
+  `.inf/.sys/.cat`, poi gli altri), anche se un file con quel nome era già stato scelto da un'altra cartella
+  o da un'altra cartella driver: la coerenza fra
   `.inf` e i suoi file viene prima della preferenza di cartella. Se due `.inf` diversi chiedono lo stesso nome,
   se lo tiene il primo (scelta stabile). Il limite `MAX_INJECT_BYTES` resta valido: se il file di ricambio non ci
   sta, resta quello già scelto.
 - I file esclusi a mano (sezione 15) restano fuori comunque: la scelta del tecnico vale anche qui.
 
 ### Segnalazione
-- Ogni file `.inf` candidato espone `inf_missing`: i file che dichiara e che non stanno nella sua cartella.
-- Ogni cartella espone `winpe_missing: [{inf: "<percorso relativo>", missing: ["nome", ...]}]`, con una voce per
-  ogni `.inf` che finirebbe davvero nel WinPE e a cui manca qualcosa (quindi nessuna copia è completa).
-- La pagina Driver mostra l'avviso sulla scheda della cartella, nello stile degli altri
-  (`"iaStorVD.inf (in RAID/RAPIDSTORAGE/Drivers) dichiara un file che non c'è nella sua cartella: manca
-  iaStorAfs.sys, il driver non si caricherebbe nel WinPE"`), e nel pannello dei file una pillola `manca <nome>`
-  sulla riga dell'`.inf`.
+Ogni file `.inf` espone:
+- `inf_missing`: i file che dichiara e che non gli stanno accanto ma che un'altra copia della cartella ha
+  (più i `.inf/.sys/.cat` dichiarati e mai presenti). È quello che rende la copia "monca" e decide la scelta.
+- `inf_absent`: i file che dichiara e che **non esistono in nessuna copia** della cartella, di qualsiasi
+  estensione (nel caso reale `RstMwService.exe`): nessuna copia può fornirli, il pacchetto è incompleto.
+- `inf_shadowed`: i file che dichiara, che ci sono, ma che portano il nome di un file di sistema del WinPE e
+  quindi non vengono iniettati.
+- `inf_better`: percorso di un'altra copia dello stesso `.inf` che invece è un set coerente (vuoto se non c'è).
+
+Ogni cartella espone, solo per gli `.inf` che finiscono davvero nel WinPE:
+- `winpe_missing: [{inf: "<percorso relativo>", missing: ["nome", ...]}]` — `inf_missing` più `inf_absent`, senza
+  doppioni: tutto quello che l'`.inf` dichiara e che nel WinPE non ci sarà.
+- `winpe_shadowed: [{inf: "<percorso>", files: ["nome", ...]}]`.
+- `winpe_better: [{inf: "<percorso>", copy: "<percorso dell'altra copia>", folder: "<sua cartella>"}]` — la copia
+  che verrebbe iniettata non è un set coerente (le manca un file dichiarato, o ne ha uno escluso a mano o
+  oscurato da un file di sistema) mentre un'altra copia dello stesso `.inf` lo è. Le esclusioni fatte a mano non
+  vengono toccate: si dice soltanto quale cartella conviene preferire.
+
+La pagina Driver mostra gli avvisi sulla scheda della cartella, nello stile degli altri
+(`"iaStorVD.inf (in RAID/RAPIDSTORAGE/Drivers) dichiara un file che non c'è nella sua cartella: manca
+RstMwService.exe. drvload carica il driver solo se trova accanto all'.inf tutti i file che dichiara..."`), e nel
+pannello dei file le pillole `manca <nome>` e `già nel WinPE: <nome>` sulla riga dell'`.inf`.
