@@ -173,6 +173,46 @@ def delete_file(name, rel):
     os.unlink(full)
 
 
+def clean_folder(name):
+    """Elimina dalla cartella i file che non servono al driver (.exe, documentazione, file di lingua...).
+    Ritorna l'elenco dei percorsi relativi rimossi."""
+    base = folder_path(name)
+    if not os.path.isdir(base):
+        raise FileNotFoundError("Cartella non trovata")
+    removed = []
+    for x in _walk(base):
+        if is_useful(x["name"]):
+            continue
+        full = os.path.realpath(os.path.join(base, x["name"]))
+        if not full.startswith(base + os.sep) or not os.path.isfile(full):
+            continue
+        try:
+            os.unlink(full)
+            removed.append(x["name"])
+        except OSError:
+            pass
+    # sottocartelle rimaste vuote: si tolgono, partendo dalle più profonde
+    for dirpath, dirnames, filenames in os.walk(base, topdown=False):
+        if dirpath == base or dirnames or filenames:
+            continue
+        try:
+            os.rmdir(dirpath)
+        except OSError:
+            pass
+    return removed
+
+
+def clean_folders(names):
+    """Pulizia su più cartelle: {'cleaned': {nome: [file]}, 'errors': {nome: messaggio}}."""
+    cleaned, errors = {}, {}
+    for n in names:
+        try:
+            cleaned[n] = clean_folder(n)
+        except (ValueError, FileNotFoundError) as e:
+            errors[n] = str(e)
+    return {"cleaned": cleaned, "errors": errors}
+
+
 def winpe_inject_files():
     """[(folder, filename, abs_path)] da iniettare nel WinPE (flag winpe_inject). Nomi duplicati: vince la prima cartella."""
     out, seen, total = [], set(), 0

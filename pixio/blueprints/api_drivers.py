@@ -132,6 +132,27 @@ def delete_folder(name):
     return jsonify({"ok": True})
 
 
+@bp.route("/api/drivers/folders/<name>/clean", methods=["POST"])
+def clean_one(name):
+    """Toglie dalla cartella i file che non servono al driver."""
+    removed = drivers.clean_folder(name)
+    return jsonify({"ok": True, "removed": removed, "count": len(removed), "folder": name})
+
+
+@bp.route("/api/drivers/clean", methods=["POST"])
+def clean_many():
+    """Stessa pulizia su più cartelle: {names:[...]}"""
+    data = request.get_json(silent=True) or {}
+    names = data.get("names")
+    if not isinstance(names, list) or not names:
+        raise ValueError("Indica almeno una cartella da pulire")
+    if len(names) > 200:
+        raise ValueError("Troppe cartelle in una sola richiesta")
+    res = drivers.clean_folders([str(n) for n in names])
+    tot = sum(len(v) for v in res["cleaned"].values())
+    return jsonify({"ok": not res["errors"], "cleaned": res["cleaned"], "errors": res["errors"], "count": tot})
+
+
 @bp.route("/api/drivers/folders/<name>/files/<path:file>", methods=["DELETE"])
 def delete_file(name, file):
     _folder_or_404(name)

@@ -514,6 +514,7 @@
         <div class="actions">
           <button class="btn small primary" type="button" data-act="upload" ${webUploadOff() ? 'disabled title="Upload dal browser disattivato (Impostazioni → Libreria locale)"' : ''}>Carica file</button>
           <button class="btn small" type="button" data-act="open">Apri</button>
+          ${ign ? `<button class="btn small" type="button" data-act="clean" title="Toglie dalla cartella i ${ign} file che non servono al driver">Pulisci (${ign})</button>` : ''}
           <button class="btn small danger" type="button" data-act="delete">Elimina cartella</button>
         </div>
       </div>
@@ -544,6 +545,7 @@
         <button class="btn small" type="button" data-bulk="setup_load:on">Attiva</button>
         <button class="btn small" type="button" data-bulk="setup_load:off">Disattiva</button></span>
       <span class="drv-bulk-sp"></span>
+      <button class="btn small" type="button" data-bulk="clean">Pulisci i file non usati</button>
       <button class="btn small danger" type="button" data-bulk="delete">Elimina le cartelle selezionate</button>
       ${n < folders.length ? '<button class="btn small" type="button" data-bulk="all">Seleziona tutte</button>' : ''}
       <button class="btn small" type="button" data-bulk="none">Deseleziona</button>
@@ -636,6 +638,45 @@
     } catch (e) { P.fail(e); input.value = f.note || ''; }
   }
 
+  /* Toglie dalla cartella i file che non servono al driver (.exe, documentazione, file di lingua...). */
+  async function cleanFolder(name, btn) {
+    const f = findFolder(name); if (!f) return;
+    const n = Number(f.ignored_files) || 0;
+    if (!n) { P.toast(`Nella cartella "${name}" non ci sono file da togliere`); return; }
+    const ok = await P.confirm(`Togliere ${plural(n, 'file non usato', 'file non usati')} dalla cartella "${name}"?`, {
+      title: 'Pulisci i file non usati', ok: 'Pulisci',
+      detail: 'Restano solo i file che servono a installare il driver (.inf, .sys, .cat, .dll, .bin, .dat, .cab). Gli altri vengono cancellati dal disco del server.',
+    });
+    if (!ok) return;
+    P.setBusy(btn, true, 'Pulizia…');
+    try {
+      const r = await P.api('POST', folderUrl(name) + '/clean');
+      P.toast(`Tolti ${plural((r && r.count) || 0, 'file', 'file')} da "${name}"`);
+      await reload();
+    } finally { P.setBusy(btn, false); }
+  }
+
+  /* Stessa pulizia sulle cartelle selezionate. */
+  async function cleanSelected(btn) {
+    const names = Array.from(D.sel);
+    if (!names.length) return;
+    const tot = names.reduce((a, n) => a + (Number((findFolder(n) || {}).ignored_files) || 0), 0);
+    if (!tot) { P.toast('Nelle cartelle scelte non ci sono file da togliere'); return; }
+    const ok = await P.confirm(`Togliere ${plural(tot, 'file non usato', 'file non usati')} da ${plural(names.length, 'cartella', 'cartelle')}?`, {
+      title: 'Pulisci i file non usati', ok: 'Pulisci',
+      detail: names.join(', ') + '\nRestano solo i file che servono a installare il driver.',
+    });
+    if (!ok) return;
+    P.setBusy(btn, true, 'Pulizia…');
+    try {
+      const r = await P.api('POST', '/api/drivers/clean', { names });
+      P.toast(`Tolti ${plural((r && r.count) || 0, 'file', 'file')} da ${plural(names.length, 'cartella', 'cartelle')}`);
+      const err = (r && r.errors) || {};
+      Object.keys(err).forEach((k) => P.toast(`${k}: ${err[k]}`, 'warn'));
+      await reload();
+    } finally { P.setBusy(btn, false); }
+  }
+
   async function deleteFolder(name, btn) {
     const f = findFolder(name); if (!f) return;
     const ok = await P.confirm(`Eliminare la cartella "${name}" e tutto il suo contenuto?`, {
@@ -705,6 +746,7 @@
   function onBulk(cmd) {
     if (cmd === 'none') { D.sel.clear(); render(); return; }
     if (cmd === 'all') { ((D.data && D.data.folders) || []).forEach((f) => D.sel.add(f.name)); render(); return; }
+    if (cmd === 'clean') { cleanSelected($('[data-bulk="clean"]', D.root)); return; }
     if (cmd === 'delete') { bulkDelete(); return; }
     const [flag, val] = cmd.split(':');
     if (FLAGS[flag]) bulkFlag(flag, val === 'on');
@@ -737,13 +779,14 @@
         ${f.note ? `<div class="hint" style="margin-top:6px">Nota: ${esc(f.note)}</div>` : ''}
       </div>
       <div class="drawer-sec">
-        <div class="actions" style="margin-bottom:10px"><button class="btn small primary" type="button" data-dr="upload" ${webUploadOff() ? 'disabled' : ''}>Carica file</button><span class="hint">${files.length >= 2000 ? 'Elenco limitato ai primi 2000 file.' : ''}</span></div>
+        <div class="actions" style="margin-bottom:10px">${Number(f.ignored_files) ? `<button class="btn small" type="button" data-dr="clean">Pulisci i ${f.ignored_files} file non usati</button>` : ''}<button class="btn small primary" type="button" data-dr="upload" ${webUploadOff() ? 'disabled' : ''}>Carica file</button><span class="hint">${files.length >= 2000 ? 'Elenco limitato ai primi 2000 file.' : ''}</span></div>
         ${files.length ? `<div class="tbl-wrap"><table><thead><tr><th>File</th><th>Dimensione</th><th>Modificato</th><th><span class="sr-only">Azioni</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
         : '<div class="empty"><h3>Cartella vuota</h3><p>Carica qui i file estratti del driver (.inf, .sys, .cat) o uno .zip, oppure copiali dalla share.</p></div>'}
       </div>`;
     P.drawer.body.onclick = (e) => {
       const b = e.target.closest('[data-file],[data-dr]'); if (!b) return;
       if (b.dataset.dr === 'upload') queue.pick(f.name);
+      else if (b.dataset.dr === 'clean') cleanFolder(f.name, b);
       else if (b.dataset.file != null) deleteFile(f.name, b.dataset.file, b);
     };
   }
@@ -786,6 +829,7 @@
         else if (act === 'folders') pickFolders();
         else if (act === 'upload' && name) queue.pick(name);
         else if (act === 'open' && name) openFolder(name);
+        else if (act === 'clean' && name) cleanFolder(name, b);
         else if (act === 'delete' && name) deleteFolder(name, b);
       });
       root.addEventListener('change', (e) => {
