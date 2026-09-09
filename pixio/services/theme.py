@@ -217,10 +217,12 @@ def ipxe_header(cfg, server_ip):
     lines = console_lines(cfg, server_ip)
     t = theme(cfg)
     lines += [
-        f"colour --rgb {ipxe_rgb(t['bg'])} 0 ||",        # nero   -> sfondo
-        f"colour --rgb {ipxe_rgb(t['muted'])} 4 ||",     # blu    -> testo attenuato
-        f"colour --rgb {ipxe_rgb(t['accent'])} 6 ||",    # ciano  -> accento
-        f"colour --rgb {ipxe_rgb(t['fg'])} 7 ||",        # bianco -> testo
+        # --basic serve alle console di testo del firmware, che non capiscono il colore a 24 bit:
+        # senza, il menu perde i colori e la barra della voce selezionata (misurato e fotografato).
+        f"colour --basic 0 --rgb {ipxe_rgb(t['bg'])} 0 ||",        # nero   -> sfondo
+        f"colour --basic 4 --rgb {ipxe_rgb(t['muted'])} 4 ||",     # blu    -> testo attenuato
+        f"colour --basic 6 --rgb {ipxe_rgb(t['accent'])} 6 ||",    # ciano  -> accento
+        f"colour --basic 7 --rgb {ipxe_rgb(t['fg'])} 7 ||",        # bianco -> testo
         "cpair --foreground 7 --background 0 0 ||",      # default
         "cpair --foreground 7 --background 0 1 ||",      # normale
         "cpair --foreground 0 --background 6 2 ||",      # voce selezionata: scuro su ciano
