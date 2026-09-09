@@ -5,6 +5,10 @@ install.cmd: drvload dei driver iniettati (rete/storage) -> wpeinit -> [net use 
 
 Ogni voce del menu riceve solo i driver abbinati alla sua immagine: flags() e install_cmd() portano avanti la
 voce di catalogo (docs/API.md, sezione 15). Senza ISO il comportamento resta quello di prima (tutte le cartelle).
+
+Perche' la share SMB e non un download: il programma di installazione di Windows legge install.wim (4 GB) un pezzo
+per volta mentre installa, e sa farlo solo da un supporto locale o da una cartella di rete. Con la share non si
+scarica niente prima di iniziare; scaricare l'immagine intera vorrebbe dire aspettare a ogni installazione.
 """
 from .. import settings as S
 from . import drivers
@@ -45,6 +49,8 @@ def install_cmd(slug, cfg=None, iso=None):
     ip = cfg["network"]["server_ip"]
     wuser = cfg["windows"].get("smb_user") or "pxe"
     wpass = cfg["windows"].get("smb_password") or ""
+    # le virgolette proteggono le password con caratteri che cmd interpreterebbe (&, ^, |)
+    cred = f'"{wpass}" /user:{wuser}'
     L = ["@echo off", "title Pixio - avvio Windows", "echo.", "echo Pixio: preparazione di Windows PE...", "echo."]
     infs = [name for _, name, _ in f["driver_files"] if name.lower().endswith(".inf")]
     if infs:
@@ -55,6 +61,10 @@ def install_cmd(slug, cfg=None, iso=None):
     L += [
         "echo Avvio la rete...",
         "wpeinit",
+        # In Windows PE il firewall e' attivo e il client SMB non sempre e' avviato: senza queste due
+        # righe "net use" fallisce con l'errore di sistema 53 (percorso di rete non trovato).
+        "wpeutil disablefirewall >nul 2>&1",
+        "net start LanmanWorkstation >nul 2>&1",
         "echo.",
         # senza indirizzo IP e' inutile insistere: manca il driver della scheda di rete
         "set PIXIO_IP=",
@@ -68,29 +78,69 @@ def install_cmd(slug, cfg=None, iso=None):
             "set /a tries=0",
             ":retry",
             "set /a tries+=1",
-            f"net use S: \\\\{ip}\\pxe {wpass} /user:{wuser} /persistent:no >nul 2>&1 && goto ok",
-            "if %tries% GEQ 10 goto nonraggiungibile",
-            "echo    tentativo %tries% di 10...",
+            f"net use S: \\\\{ip}\\pxe {cred} /persistent:no >nul 2>&1 && goto ok",
+            "if %tries% GEQ 5 goto diagnosi",
+            "echo    tentativo %tries% di 5...",
             "ping -n 3 127.0.0.1 >nul",
             "goto retry",
             ":ok",
+            "echo Cartella collegata.",
+            "echo.",
         ]
         for folder in f["setup_folders"]:
             L.append(f'echo Carico i driver della cartella "{folder}"...')
             L.append(f'for /r "S:\\drivers\\{folder}" %%f in (*.inf) do drvload "%%f" >nul 2>&1')
         L += [
+            f'if not exist "S:\\iso\\{slug}\\setup.exe" goto senzasetup',
             "echo.",
             f"echo Avvio il programma di installazione da \\\\{ip}\\pxe\\iso\\{slug}",
             f"S:\\iso\\{slug}\\setup.exe",
             "goto fine_setup",
-            ":nonraggiungibile",
+            # ------------------------------------------------------------------
+            # Diagnosi: un solo schermo con la causa vera, cosi' basta fotografarlo.
+            # I comandi girano senza >nul apposta: il messaggio di errore di "net use"
+            # e' l'unica cosa che distingue una porta chiusa da una password sbagliata.
+            ":diagnosi",
             "echo.",
-            f"echo PROBLEMA: la rete funziona ma la cartella \\\\{ip}\\pxe non risponde.",
-            "echo Verifica l'ultimo messaggio qui sotto e poi usa il prompt.",
-            f"net use S: \\\\{ip}\\pxe {wpass} /user:{wuser} /persistent:no",
+            f"echo La cartella \\\\{ip}\\pxe non risponde. Ecco cosa dice questo PC:",
+            "echo.",
+            "echo --- indirizzi di questo PC ---",
+            'ipconfig | find "IPv4"',
+            'ipconfig | find "Subnet"',
+            "echo.",
+            f"echo --- il server {ip} risponde? ---",
+            f"ping -n 2 {ip}",
+            "echo.",
+            "echo --- servizio client di rete ---",
+            "net start LanmanWorkstation",
+            "echo.",
+            "echo --- prova di collegamento (senza cartella) ---",
+            f"net use \\\\{ip}\\IPC$ {cred}",
+            "echo.",
+            "echo --- prova di collegamento (con la cartella) ---",
+            f"net use S: \\\\{ip}\\pxe {cred} /persistent:no",
+            "echo.",
+            "echo Come si legge il risultato:",
+            "echo   errore 53   = la porta 445 non arriva al server (rete, VLAN o firewall in mezzo)",
+            "echo   errore 1326 = utente o password non corrispondono",
+            "echo   errore 67   = il nome della cartella e' sbagliato",
+            "echo   errore 1219 = c'e' gia' un collegamento con altre credenziali",
+            "echo.",
+            "echo Fotografa questa schermata: contiene la causa.",
             "echo.",
             "cmd.exe",
-            "goto fine_setup",
+            "goto prompt",
+            ":senzasetup",
+            "echo.",
+            f"echo PROBLEMA: la cartella e' collegata ma manca S:\\iso\\{slug}\\setup.exe.",
+            "echo Quasi sempre significa che l'immagine non e' piu' montata sul server.",
+            "echo Apri Pixio, pagina Catalogo, e rimonta l'immagine.",
+            "echo.",
+            "echo Contenuto di S:\\iso :",
+            "dir S:\\iso",
+            "echo.",
+            "cmd.exe",
+            "goto prompt",
         ]
     else:
         L += [
