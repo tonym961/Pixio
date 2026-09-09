@@ -521,6 +521,9 @@
           <p>Una <b>risposta automatica</b> è il file che l'installatore legge da solo per non fare domande: lingua, tastiera,
           partizionamento, utente e password. Pixio la pubblica su <span class="mono">http://${esc(serverIp())}/answers/&lt;id&gt;/</span>
           e la aggancia all'avvio della ISO che scegli (pagina <a href="#/iso">ISO</a>).</p>
+          <p class="hint">Le risposte Windows nate da un <a href="#/windows">profilo Windows</a> vengono rigenerate al momento dell'avvio
+          per l'immagine che stai installando: se l'edizione indicata nel profilo non è dentro quella immagine, Pixio non la scrive
+          invece di far fallire l'installazione.</p>
           <p class="hint">Windows usa <span class="mono">autounattend.xml</span>, Debian il <span class="mono">preseed.cfg</span>,
           Ubuntu <span class="mono">user-data</span> (cloud-init), Red Hat e derivate il kickstart <span class="mono">ks.cfg</span>.
           Attenzione: i file contengono password in chiaro e sono scaricabili senza autenticazione da tutta la rete PXE.</p>
