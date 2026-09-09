@@ -242,3 +242,15 @@ prestazioni (effetti visivi, SysMain, indicizzazione, avvio rapido, ibernazione,
 aggiornamenti (rinvio funzionalità, niente riavvio automatico con utente connesso, driver esclusi da Windows Update),
 sicurezza e accesso (UAC, SmartScreen, RDP attivo con firewall, richiesta password al risveglio),
 rete (rilevamento rete, IPv6, condivisione password protetta), componenti opzionali (.NET 3.5, Hyper-V, client Telnet, SSH server, sandbox).
+
+## 11. Distinzione client / server nelle ottimizzazioni Windows
+Nel catalogo `data/windows-tweaks.json` il campo `editions` diventa l'elenco delle piattaforme su cui la voce ha davvero effetto,
+scelte fra `"10"`, `"11"` e `"server"` (Windows Server 2016/2019/2022/2025). Una voce che tocca componenti assenti su Server
+(Cortana, Copilot, widget, Xbox, app del Microsoft Store, barra applicazioni di Windows 11, esperienze consumer) NON deve avere `"server"`.
+Nel profilo Windows arriva il campo `settings.target`: `"client"` (predefinito) oppure `"server"`.
+- La validazione rifiuta i tweak non compatibili con il target scelto, con messaggio in italiano che dice quale voce e perché.
+- La generazione dell'autounattend salta comunque le voci non compatibili, senza errori.
+- `GET /api/winprofiles` restituisce `targets:[{id,name}]`; ogni voce del catalogo espone `editions` così la GUI può filtrare.
+- Nella GUI: selettore "Tipo di Windows" (Client oppure Server) nella sezione Lingua e area; cambiandolo la sezione Ottimizzazioni
+  mostra solo le voci compatibili e avvisa se il profilo ne aveva di incompatibili, offrendo di toglierle.
+- I preset dichiarano `settings.target` coerente (`win-server` è server, gli altri client) e contengono solo voci compatibili.
