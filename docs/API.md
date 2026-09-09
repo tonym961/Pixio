@@ -340,3 +340,36 @@ che non servono e sporcano l'elenco; e le cartelle vanno create a mano una per u
   e "Carica prima del setup di Windows" sulle cartelle selezionate, oppure eliminale (con conferma che elenca i nomi).
 - `PATCH /api/drivers/folders` (senza nome) accetta `{names:[...], winpe_inject?, setup_load?}` e applica la stessa modifica a tutte,
   restituendo `{ok, updated:[nomi], errors:{nome:messaggio}}`.
+
+## 15. Driver abbinati alle ISO (server, PC, singola immagine) e scelta dei file
+Motivo: i driver RAID di un server non servono su un PC da ufficio e viceversa; caricarli tutti sempre appesantisce
+il WinPE e può creare conflitti.
+
+### Abbinamento
+Ogni cartella driver ha il campo `apply_to`:
+```
+{"mode": "all" | "groups" | "isos",
+ "groups": ["Windows", "Windows Server", "Linux", ...],   // gruppi del menu di boot
+ "isos": ["slug-iso", ...]}
+```
+`all` è il valore predefinito e mantiene il comportamento di oggi. Con `groups` la cartella vale solo per le voci
+di quei gruppi (per esempio "Windows Server"); con `isos` solo per le immagini indicate.
+- `drivers.winpe_inject_files(iso=None)` e `drivers.setup_load_folders(iso=None)` accettano la voce di catalogo che si sta
+  avviando (dict con `slug` e `group`) e restituiscono solo le cartelle abbinate; senza argomento si comportano come prima
+  (utile per l'anteprima generica).
+- `services/winpe.flags(cfg, iso=None)` e la generazione dello script iPXE passano la ISO corrente, così ogni voce del menu
+  riceve i propri driver. L'anteprima nella pagina ISO mostra i driver che quella voce riceverà davvero.
+- `GET /api/drivers` espone `apply_to` per ogni cartella e l'elenco delle scelte possibili
+  (`groups` dal menu, `isos` con slug e nome delle ISO Windows presenti nel catalogo).
+- `PATCH /api/drivers/folders/<name>` accetta `apply_to`; la PATCH multipla lo accetta allo stesso modo.
+
+### Scelta dei singoli file (già implementata, da mostrare nella GUI)
+`PATCH /api/drivers/folders/<name>/files/<path:file>` con `{excluded: true|false}` esclude o rimette un file
+nell'iniezione WinPE; l'elenco degli esclusi sta in `apply_to`-fratello `excluded` della cartella e ogni file
+dell'elenco espone `excluded`.
+
+### GUI
+- Sulla scheda della cartella: riga "Si applica a" con le tre modalità; scegliendo gruppi o ISO compare l'elenco con caselle,
+  e la scheda mostra un riassunto ("solo Windows Server", "solo 2 immagini").
+- Nel pannello dei file: casella per ogni file che finirebbe nel WinPE, per escluderlo, con "escludi tutti" e "includi tutti"
+  e il conteggio aggiornato dei file iniettati.
