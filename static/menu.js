@@ -8,12 +8,29 @@
   const M = { data: null, root: null, platform: 'efi', dragging: null, saving: false, bgStamp: Date.now() };
 
   // ---------------------------------------------------------------- tema (aspetto del menu iPXE)
-  const THEME_DEFAULT = { bg: '#0B1220', accent: '#3FC1CF', fg: '#E6ECF2', muted: '#7C8A99', logo_text: 'PIXIO', subtitle: 'Avvio da rete' };
+  const THEME_DEFAULT = { bg: '#0B1220', accent: '#3FC1CF', fg: '#E6ECF2', muted: '#7C8A99', logo_text: 'PIXIO', subtitle: 'Avvio da rete', style: 'testo', resolution: '1024x768' };
   const THEME_COLORS = [['bg', 'Sfondo', 'Colore di fondo del menu'], ['accent', 'Accento', 'Titoli dei gruppi e voce selezionata'], ['fg', 'Testo', 'Voci normali'], ['muted', 'Testo attenuato', 'Note e piè di pagina']];
   const HEX_RE = /^#?([0-9a-fA-F]{6})$/;
-  const BG_URL = '/pxe/inject/theme/bg.png';
-  // sottomenu per gruppo nel menu di boot
-  const SUBMENU_MODES = [['auto', 'Automatici oltre N voci'], ['always', 'Sempre'], ['never', 'Mai']];
+  // Stile della console del menu di boot. I tempi qui sotto sono misurati in QEMU (BIOS e UEFI,
+  // menu di 11 voci, 5 ripetizioni per configurazione, tempo fra il tasto e il cambio sullo schermo).
+  const STYLES = [
+    ['testo', 'Testo (consigliato) · colori a tutto schermo'],
+    ['grafico', 'Grafico · con lo sfondo disegnato dal server'],
+    ['compatibile', 'Compatibilità · console di testo del firmware'],
+  ];
+  const STYLE_HINT = {
+    testo: 'iPXE prende il framebuffer video e scrive direttamente in memoria: la console del firmware viene spenta. Misurato: menu pronto in 0,19 s (BIOS) e 0,18 s (UEFI), 38 ms per spostamento della selezione, zero chiamate al firmware.',
+    grafico: 'Come "Testo" più lo sfondo. Lo sfondo non costa nulla per tasto (38 ms, identici allo stile Testo alla stessa risoluzione): cambia solo la comparsa del menu, da 0,19/0,18 s a 0,46/0,32 s (BIOS/UEFI) a 1024×768, perché il PNG va scaricato e decodificato una volta sola. A 640×480 la comparsa scende a 0,23/0,20 s.',
+    compatibile: 'Usa la console di testo del firmware: ogni carattere è una chiamata al BIOS (fino a 3 INT 10h) o allo UEFI (ConOut), e a ogni spostamento della selezione iPXE riscrive due righe intere, cioè circa 170 chiamate. Su PC con Console Redirection, Serial-over-LAN, BMC o AMT attivi si arriva ai 5 secondi per tasto, e in UEFI la voce selezionata può non evidenziarsi. Da usare solo se sul PC il framebuffer non parte.',
+  };
+  const RESOLUTIONS = [['1024x768', '1024 × 768'], ['800x600', '800 × 600'], ['640x480', '640 × 480']];
+  const RES_HINT = 'Vale per gli stili Testo e Grafico. Comparsa del menu con lo sfondo (BIOS/UEFI): 1024×768 0,46/0,32 s · 800×600 0,33/0,26 s · 640×480 0,23/0,20 s. Tempo per tasto: 38/38 · 33/33 · 30/29 ms. Senza sfondo il menu è pronto in 0,19/0,18 s a qualunque risoluzione.';
+  const PREV_HINT = {
+    testo: 'Anteprima dello stile Testo: nessuna immagine, solo i colori del tema disegnati da iPXE nel framebuffer.',
+    grafico: 'Anteprima in scala dello sfondo. L’immagine viene rigenerata dal server a ogni salvataggio.',
+    compatibile: 'Console di testo del firmware: 80×25 caratteri e i 16 colori standard VGA. I colori del tema qui non si applicano.',
+  };
+  const VGA = { bg: '#000000', accent: '#00AAAA', fg: '#AAAAAA', muted: '#555555' };   // resa tipica della console del firmware
 
   function normHex(v, fallback) {
     const m = HEX_RE.exec(String(v || '').trim());
@@ -23,11 +40,23 @@
   function currentTheme() {
     const t = Object.assign({}, THEME_DEFAULT, (M.data && M.data.settings && M.data.settings.theme) || {});
     THEME_COLORS.forEach(([k]) => { t[k] = normHex(t[k], THEME_DEFAULT[k]); });
+    if (!STYLES.some(([v]) => v === t.style)) t.style = THEME_DEFAULT.style;
+    if (!RESOLUTIONS.some(([v]) => v === t.resolution)) t.resolution = THEME_DEFAULT.resolution;
     return t;
+  }
+
+  /** Colori usati dall'anteprima: con la console del firmware i colori del tema non arrivano. */
+  function prevColors(t) {
+    return t.style === 'compatibile' ? VGA : t;
+  }
+
+  function bgUrl() {
+    return ((M.data && M.data.settings && M.data.settings.theme_bg_url) || '/pxe/inject/theme/bg-1024x768.png') + '?t=' + M.bgStamp;
   }
 
   function themeHtml(s, entries, groups) {
     const t = currentTheme();
+    const c = prevColors(t);
     const swatches = THEME_COLORS.map(([k, label, hint]) => `
       <div class="field swatch">
         <label for="m-th-${k}">${esc(label)}</label>
@@ -46,19 +75,27 @@
     const rows = items.map((n, i) => `<div class="${i === selIdx ? 'sel' : 'it'}">${esc(n)}</div>`).join('');
     return `
       <div class="card theme-card">
-        <div class="theme-hd"><div><h3>Aspetto del menu</h3><div class="hint">Colori, logo e sottotitolo dello sfondo grafico. L'anteprima è indicativa: si applica con "Salva".</div></div>
+        <div class="theme-hd"><div><h3>Aspetto e reattività del menu</h3><div class="hint">Lo stile decide dove iPXE disegna il menu: nel framebuffer video (veloce) o nella console del firmware (lenta su molti PC). L'anteprima è indicativa: si applica con "Salva".</div></div>
           <button class="btn small" type="button" id="m-th-reset">Ripristina predefiniti</button></div>
         <div class="theme-grid">
           <div>
+            <div class="row2">
+              <div class="field"><label for="m-th-style">Stile del menu</label>
+                <select id="m-th-style" data-th-sel="style">${STYLES.map(([v, l]) => `<option value="${esc(v)}" ${v === t.style ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+                <div class="hint" id="m-th-style-hint">${esc(STYLE_HINT[t.style])}</div></div>
+              <div class="field" id="m-th-res-field" ${t.style === 'compatibile' ? 'hidden' : ''}><label for="m-th-res">Risoluzione</label>
+                <select id="m-th-res" data-th-sel="resolution">${RESOLUTIONS.map(([v, l]) => `<option value="${esc(v)}" ${v === t.resolution ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+                <div class="hint">${esc(RES_HINT)}</div></div>
+            </div>
             <div class="swatches">${swatches}</div>
             <div class="row2">
-              <div class="field"><label for="m-th-logo">Logo (testo)</label><input id="m-th-logo" data-th-text="logo_text" value="${esc(t.logo_text)}" maxlength="16"><div class="hint">Max 16 caratteri.</div></div>
-              <div class="field"><label for="m-th-sub">Sottotitolo</label><input id="m-th-sub" data-th-text="subtitle" value="${esc(t.subtitle)}" maxlength="40"><div class="hint">Max 40 caratteri.</div></div>
+              <div class="field"><label for="m-th-logo">Logo (testo)</label><input id="m-th-logo" data-th-text="logo_text" value="${esc(t.logo_text)}" maxlength="16"><div class="hint">Max 16 caratteri. Disegnato sullo sfondo: si vede solo con lo stile Grafico.</div></div>
+              <div class="field"><label for="m-th-sub">Sottotitolo</label><input id="m-th-sub" data-th-text="subtitle" value="${esc(t.subtitle)}" maxlength="40"><div class="hint">Max 40 caratteri. Anche questo fa parte dello sfondo grafico.</div></div>
             </div>
           </div>
           <div class="tprev-wrap">
-            <div class="tprev" id="m-th-prev" aria-label="Anteprima del menu di boot" style="--t-bg:${esc(t.bg)};--t-accent:${esc(t.accent)};--t-fg:${esc(t.fg)};--t-muted:${esc(t.muted)}">
-              <img id="m-th-img" src="${BG_URL}?t=${M.bgStamp}" alt="" width="512" height="384" draggable="false">
+            <div class="tprev st-${esc(t.style)}" id="m-th-prev" aria-label="Anteprima del menu di boot" style="--t-bg:${esc(c.bg)};--t-accent:${esc(c.accent)};--t-fg:${esc(c.fg)};--t-muted:${esc(c.muted)}">
+              <img id="m-th-img" src="${esc(bgUrl())}" alt="" width="512" height="384" draggable="false">
               <div class="tprev-logo"><span class="tl" data-tp="logo_text">${esc(t.logo_text)}</span><span class="ts" data-tp="subtitle">${esc(t.subtitle)}</span></div>
               <div class="tprev-menu mono">
                 <div class="ttl">${esc(s.title || 'PIXIO - Avvio da rete')}</div>
@@ -69,7 +106,7 @@
                 <div class="dim">Avvio automatico tra ${esc(s.timeout != null ? s.timeout : 30)} s…</div>
               </div>
             </div>
-            <div class="hint">Anteprima in scala 1:2 (1024×768). L'immagine di sfondo viene rigenerata dal server a ogni salvataggio.</div>
+            <div class="hint" id="m-th-prev-hint">${esc(PREV_HINT[t.style])} <span id="m-th-prev-res">${esc(t.style === 'compatibile' ? '' : t.resolution.replace('x', '×'))}</span></div>
           </div>
         </div>
       </div>`;
@@ -79,7 +116,26 @@
     const r = M.root; const prev = $('#m-th-prev', r); if (!prev) return;
     const img = $('#m-th-img', r);
     img.addEventListener('error', () => { img.hidden = true; });
-    const apply = (k, v) => { prev.style.setProperty('--t-' + k, v); };
+    const apply = (k, v) => { if (readStyle() !== 'compatibile') prev.style.setProperty('--t-' + k, v); };
+    const readStyle = () => { const e = $('#m-th-style', r); return e ? e.value : THEME_DEFAULT.style; };
+    const readRes = () => { const e = $('#m-th-res', r); return e ? e.value : THEME_DEFAULT.resolution; };
+    // l'anteprima segue lo stile: immagine e fascia del logo solo in "grafico", colori VGA in "compatibile"
+    const syncStyle = () => {
+      const st = readStyle();
+      prev.className = 'tprev st-' + st;
+      $('#m-th-style-hint', r).textContent = STYLE_HINT[st] || '';
+      $('#m-th-res-field', r).hidden = st === 'compatibile';
+      const c = st === 'compatibile' ? VGA : readColors();
+      ['bg', 'accent', 'fg', 'muted'].forEach((k) => prev.style.setProperty('--t-' + k, c[k]));
+      $('#m-th-prev-hint', r).firstChild.nodeValue = (PREV_HINT[st] || '') + ' ';
+      $('#m-th-prev-res', r).textContent = st === 'compatibile' ? '' : readRes().replace('x', '×');
+      if (st === 'grafico') { img.hidden = false; img.src = bgUrl(); }
+    };
+    const readColors = () => {
+      const c = {};
+      THEME_COLORS.forEach(([k]) => { const h = $(`[data-th-hex="${k}"]`, r); c[k] = normHex(h ? h.value : '', THEME_DEFAULT[k]); });
+      return c;
+    };
     $$('[data-th-color]', r).forEach((c) => c.addEventListener('input', () => {
       const k = c.dataset.thColor; const v = normHex(c.value, THEME_DEFAULT[k]);
       const h = $(`[data-th-hex="${k}"]`, r); h.value = v; h.classList.remove('invalid');
@@ -95,6 +151,7 @@
       h.addEventListener('input', sync);
       h.addEventListener('blur', () => { const m = HEX_RE.exec(h.value.trim()); if (m) h.value = ('#' + m[1]).toUpperCase(); });
     });
+    $$('[data-th-sel]', r).forEach((sl) => sl.addEventListener('change', syncStyle));
     $$('[data-th-text]', r).forEach((i) => i.addEventListener('input', () => {
       const el = $(`[data-tp="${i.dataset.thText}"]`, r); if (el) el.textContent = i.value;
     }));
@@ -102,11 +159,14 @@
       THEME_COLORS.forEach(([k]) => {
         $(`[data-th-color="${k}"]`, r).value = THEME_DEFAULT[k];
         const h = $(`[data-th-hex="${k}"]`, r); h.value = THEME_DEFAULT[k]; h.classList.remove('invalid');
-        apply(k, THEME_DEFAULT[k]);
       });
+      $('#m-th-style', r).value = THEME_DEFAULT.style;
+      $('#m-th-res', r).value = THEME_DEFAULT.resolution;
       $$('[data-th-text]', r).forEach((i) => { i.value = THEME_DEFAULT[i.dataset.thText]; const el = $(`[data-tp="${i.dataset.thText}"]`, r); if (el) el.textContent = i.value; });
+      syncStyle();
       P.toast('Valori predefiniti ripristinati: premi "Salva" per applicarli', 'info');
     });
+    syncStyle();
   }
 
   /** Legge il tema dal form; ritorna null (e mette a fuoco il campo) se un colore non è valido. */
@@ -120,6 +180,8 @@
     }
     t.logo_text = ($('#m-th-logo', r).value.trim() || 'PIXIO').slice(0, 16);
     t.subtitle = $('#m-th-sub', r).value.trim().slice(0, 40);
+    const st = $('#m-th-style', r); t.style = st && STYLES.some(([v]) => v === st.value) ? st.value : THEME_DEFAULT.style;
+    const rs = $('#m-th-res', r); t.resolution = rs && RESOLUTIONS.some(([v]) => v === rs.value) ? rs.value : THEME_DEFAULT.resolution;
     return t;
   }
 

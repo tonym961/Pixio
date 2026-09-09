@@ -15,7 +15,7 @@ if [ "$MODE" = "uefi" ]; then
   rm -f "$VARS"
 else
   timeout "$SECS" qemu-system-x86_64 -m 1024 -smp 2 -display none -monitor none -serial file:"$LOG" \
-    -netdev user,id=n0,tftp=$TFTP,bootfile=undionly-debug.kpxe -device e1000,netdev=n0 -boot n -no-reboot >/dev/null 2>&1
+    -netdev user,id=n0,tftp=$TFTP,bootfile=ipxe-bios.pxe -device e1000,netdev=n0 -boot n -no-reboot >/dev/null 2>&1
 fi
 CLEAN=$(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b\[=3h//g' "$LOG" | tr -d '\r')
 if grep -q "$EXPECT" <<<"$CLEAN"; then echo "OK ($MODE): trovato \"$EXPECT\""; exit 0; fi

@@ -494,11 +494,11 @@ def render_dnsmasq(cfg):
             "# proxyDHCP: nessun lease, risponde solo ai client PXE; il DHCP esistente resta com'e'",
             f"dhcp-range={ip},proxy",
             "# Firmware PXE (non iPXE): UN solo pxe-service per architettura -> boot diretto (UEFI via porta 4011)",
-            "pxe-service=tag:!ipxe,x86PC,\"Pixio (BIOS)\",undionly.kpxe",
+            "pxe-service=tag:!ipxe,x86PC,\"Pixio (BIOS)\",ipxe-bios.pxe",
             "pxe-service=tag:!ipxe,IA32_EFI,\"Pixio (UEFI ia32)\",ipxe32.efi",
             "pxe-service=tag:!ipxe,X86-64_EFI,\"Pixio (UEFI x64)\",ipxe.efi",
             "pxe-service=tag:!ipxe,BC_EFI,\"Pixio (UEFI x64)\",ipxe.efi",
-            f"dhcp-boot=tag:bios,tag:!ipxe,undionly.kpxe,,{ip}",
+            f"dhcp-boot=tag:bios,tag:!ipxe,ipxe-bios.pxe,,{ip}",
             "# iPXE: secondo stadio via HTTP (il server deve essere esplicito: iPXE ignora offerte proxy con siaddr=0)",
             f"dhcp-boot=tag:ipxe,http://{ip}/boot.ipxe,,{ip}",
         ] + httpboot
@@ -512,7 +512,7 @@ def render_dnsmasq(cfg):
             f"dhcp-boot=tag:ipxe,http://{ip}/boot.ipxe,,{ip}",
             f"dhcp-boot=tag:!ipxe,tag:efi64,ipxe.efi,,{ip}",
             f"dhcp-boot=tag:!ipxe,tag:efi32,ipxe32.efi,,{ip}",
-            f"dhcp-boot=tag:!ipxe,tag:bios,undionly.kpxe,,{ip}",
+            f"dhcp-boot=tag:!ipxe,tag:bios,ipxe-bios.pxe,,{ip}",
         ] + httpboot
     return "\n".join(lines) + "\n"
 

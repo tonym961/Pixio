@@ -10,7 +10,7 @@ if [ "$MODE" = "uefi" ]; then
     -netdev user,id=n0,tftp=$TFTP,bootfile=ipxe-debug.efi -device virtio-net-pci,netdev=n0,romfile=,bootindex=1 -no-reboot >/dev/null 2>&1 &
 else
   qemu-system-x86_64 -m 1024 -smp 2 -display none -vga std -monitor unix:$SOCK,server,nowait \
-    -netdev user,id=n0,tftp=$TFTP,bootfile=undionly-debug.kpxe -device e1000,netdev=n0 -boot n -no-reboot >/dev/null 2>&1 &
+    -netdev user,id=n0,tftp=$TFTP,bootfile=ipxe-bios.pxe -device e1000,netdev=n0 -boot n -no-reboot >/dev/null 2>&1 &
 fi
 QPID=$!
 sleep "$WAIT"

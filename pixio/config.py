@@ -75,8 +75,10 @@ DEFAULT_CONFIG = {
         "groups": ["Strumenti", "Windows", "Windows Server", "Linux", "Hypervisor"],
         "submenus": "auto",          # auto | always | never: sottomenu per gruppo nel menu di boot
         "submenu_threshold": 8,      # con "auto" i sottomenu compaiono oltre questo numero di voci
+        # style: testo | grafico usano il framebuffer (iPXE scrive in memoria video e scavalca la console
+        # del firmware, che e' la causa dei menu lentissimi); compatibile = console di testo del firmware.
         "theme": {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99", "logo_text": "PIXIO", "subtitle": "Avvio da rete",
-                  "style": "testo"},   # testo = solo colori (menu reattivo) | grafico = con sfondo (piu' bello, piu' lento)
+                  "style": "testo", "resolution": "1024x768"},
     },
     "library": {
         "samba_share_enabled": True,   # share \\pixio\iso in scrittura

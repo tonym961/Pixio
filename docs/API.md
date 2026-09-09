@@ -50,7 +50,7 @@ Oggetto ISO:
 - `DELETE /api/catalog/<slug>` → SOLO per sorgente "local": elimina il file dalla libreria. Per sorgenti remote: 400.
 
 ## Menu di boot
-- `GET /api/menu` → `{settings:{title, timeout, default, show_local, show_shell, show_reboot, show_memtest, groups:[str]}, entries:[{slug,name,group,order,enabled,platforms,type_name}], preview:{efi:"#!ipxe ...", bios:"#!ipxe ..."}}`
+- `GET /api/menu` → `{settings:{title, timeout, default, show_local, show_shell, show_reboot, show_memtest, groups:[str], submenus, submenu_threshold, theme:{bg,accent,fg,muted,logo_text,subtitle,style,resolution}, theme_bg_url, theme_styles, theme_resolutions}, entries:[{slug,name,group,order,enabled,platforms,type_name}], preview:{efi:"#!ipxe ...", bios:"#!ipxe ..."}}`
 - `PUT /api/menu {settings}` → `{ok}`
 - `GET /boot.ipxe` (pubblico) → script iPXE del menu, generato per il client (`${platform}` e `${mac}` valutati lato client via variabili iPXE: il server genera un unico script con `iseq ${platform} efi` dove serve). Query opzionali per l'anteprima: `?platform=efi|pcbios`.
 - `GET /boot/<slug>.ipxe` (pubblico) → script della singola voce (kernel/initrd/boot). Il menu fa `chain http://<ip>/boot/<slug>.ipxe`. `?mac=` opzionale per il log client.
@@ -107,6 +107,25 @@ Con "auto" i sottomenu compaiono quando le voci avviabili superano la soglia. Il
 Le voci di sistema (memtest, disco locale, shell, riavvia, esci) restano sempre nel menu principale.
 `GET /api/menu` restituisce anche `settings.submenus` e `settings.submenu_threshold`; `PUT /api/menu` li accetta e li valida
 (`submenus` tra i tre valori, soglia 1-100).
+
+## 2b. Stile del menu di boot (reattivita')
+Impostazioni in `menu.theme`: `style` (`testo` | `grafico` | `compatibile`, default `testo`) e `resolution`
+(`1024x768` | `800x600` | `640x480`, default `1024x768`).
+Decidono *dove* iPXE disegna il menu, che e' il fattore dominante sul tempo di risposta ai tasti:
+- `testo` e `grafico` emettono `console -x W -y H ...`: iPXE prende il framebuffer video e spegne la console
+  del firmware (`efi_fbcon.c`, `vesafb.c`). Scritture dirette in memoria video, 0 chiamate al firmware.
+- `grafico` aggiunge una seconda riga `console ... --picture http://<ip>/pxe/inject/theme/bg-<W>x<H>.png`.
+  Va **dopo** quella senza immagine: se il PNG non arriva o non si decodifica, `console_cmd.c` esce prima di
+  `console_configure()` e la console resta sul framebuffer invece di ricadere su quella del firmware.
+- `compatibile` non emette nessun `console`: resta la console di testo del firmware (una chiamata per carattere,
+  circa 170 per ogni spostamento della selezione). E' il percorso che sui PC con Console Redirection / SOL / BMC / AMT
+  produce i ~5 secondi per tasto. Da usare solo se il framebuffer non parte.
+Lo sfondo e' un PNG **indicizzato a 256 colori** generato da `theme.render_background()` alla risoluzione scelta
+(un terzo dei dati da scompattare rispetto al PNG a colori pieni, -27% di file, differenza visiva impercettibile);
+la risoluzione sta nel nome del file, cosi' non si riusa mai uno sfondo di misura sbagliata.
+`GET /api/menu` restituisce `settings.theme` sempre completo piu' `settings.theme_bg_url`, `settings.theme_styles`
+e `settings.theme_resolutions`; `PUT /api/menu` valida `style` e `resolution` (400 se fuori elenco) e rigenera lo
+sfondo solo con lo stile `grafico`.
 
 ## 3. Risposte automatiche (installazioni non presidiate)
 Servizio `pixio/services/answers.py`, file in `/var/lib/pixio/answers/<id>/<nome file>`, metadati in `/var/lib/pixio/answers.json`.

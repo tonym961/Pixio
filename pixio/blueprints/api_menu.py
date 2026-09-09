@@ -14,11 +14,17 @@ def get_menu():
 
 
 def _settings(cfg):
-    """Impostazioni del menu con i valori dei sottomenu sempre presenti (config vecchie comprese)."""
+    """Impostazioni del menu normalizzate (sottomenu e tema sempre completi, anche da config vecchie)."""
+    from ..services import theme as T
     m = dict(cfg["menu"])
     if str(m.get("submenus") or "").lower() not in ipxe_menu.SUBMENU_MODES:
         m["submenus"] = "auto"
     m["submenu_threshold"] = ipxe_menu.submenu_threshold(m)
+    t = T.theme(cfg)
+    m["theme"] = t
+    m["theme_bg_url"] = T.bg_web(t)       # l'anteprima della GUI carica lo sfondo della risoluzione scelta
+    m["theme_styles"] = list(T.STYLES)
+    m["theme_resolutions"] = list(T.RESOLUTIONS)
     return m
 
 
@@ -69,11 +75,22 @@ def put_menu():
         for k in ("logo_text", "subtitle"):
             if k in s["theme"]:
                 th[k] = str(s["theme"][k]).strip()[:40]
+        if "style" in s["theme"]:
+            v = str(s["theme"]["style"]).strip().lower()
+            if v not in T.STYLES:
+                return jsonify({"error": "Stile del menu: valori ammessi " + ", ".join(T.STYLES)}), 400
+            th["style"] = v
+        if "resolution" in s["theme"]:
+            v = str(s["theme"]["resolution"]).strip().lower()
+            if v not in T.RESOLUTIONS:
+                return jsonify({"error": "Risoluzione del menu: valori ammessi " + ", ".join(T.RESOLUTIONS)}), 400
+            th["resolution"] = v
         m["theme"] = th
     S.save(cfg)
     try:
         from ..services import theme as T
-        T.render_background(cfg, cfg["network"]["server_ip"])
+        if T.theme(cfg)["style"] == "grafico":     # solo lo stile grafico usa lo sfondo PNG
+            T.render_background(cfg, cfg["network"]["server_ip"])
     except Exception as e:  # noqa
         return jsonify({"ok": True, "settings": _settings(cfg), "preview": ipxe_menu.preview(cfg), "warnings": [f"Sfondo non rigenerato: {e}"]})
     return jsonify({"ok": True, "settings": _settings(cfg), "preview": ipxe_menu.preview(cfg)})

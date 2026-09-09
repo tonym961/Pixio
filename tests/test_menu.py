@@ -1,4 +1,5 @@
-"""Test del menu di boot iPXE: sottomenu per gruppo (auto/always/never), sintassi dello script e API /api/menu.
+"""Test del menu di boot iPXE: sottomenu per gruppo (auto/always/never), stile della console
+(testo/grafico/compatibile, cioe' framebuffer o console del firmware), sintassi dello script e API /api/menu.
 
 Esecuzione: cd /opt/pixio && PIXIO_NO_BACKGROUND=1 python3 -m unittest tests.test_menu
 Catalogo finto su file, mount simulati (catalog._mounted_slugs sostituito) e helper privilegiato finto:
@@ -263,6 +264,68 @@ class MenuTest(unittest.TestCase):
                 if l.startswith("item ") and not l.startswith("item --gap"):
                     self.assertIn(l.split()[1], label, f"item senza label: {l}")
 
+    # ------------------------------------------------- stile del menu (dove iPXE disegna = reattivita')
+    def tema(self, **th):
+        """Salva il tema indicato e ritorna (script UEFI, righe 'console' generate)."""
+        from pixio.services import ipxe_menu
+        cfg = self.S.load()
+        cfg["menu"]["theme"] = dict(cfg["menu"].get("theme") or {}, **th)
+        self.S.save(cfg)
+        script = ipxe_menu.menu_script("efi", cfg=cfg)
+        return script, [l for l in script.splitlines() if l.startswith("console ")]
+
+    def test_12_stile_testo_prende_il_framebuffer(self):
+        """Stile testo: una riga 'console' con la risoluzione e senza immagine.
+
+        Serve a spegnere la console del firmware, dove ogni carattere e' una chiamata al BIOS/UEFI:
+        a ogni spostamento della selezione iPXE ne fa circa 170 ed e' la causa dei menu da 5 secondi.
+        """
+        script, console = self.tema(style="testo", resolution="1024x768")
+        self.assertEqual(len(console), 1, console)
+        self.assertIn("-x 1024 -y 768", console[0])
+        self.assertNotIn("--picture", console[0])
+        self.assertTrue(console[0].endswith("||"), console[0])
+        self.assertLess(script.index("console "), script.index("colour --rgb"))   # console, poi colori
+        self.assertLess(script.index("console "), script.index("\n:menu"))        # entrambi prima del menu
+
+    def test_13_stile_grafico_ripiega_sul_framebuffer(self):
+        """Stile grafico: prima il framebuffer nudo, poi lo sfondo.
+
+        Se il PNG non arriva o non si decodifica, iPXE non riconfigura la console e resta comunque
+        sul framebuffer, invece di ricadere sulla console lenta del firmware.
+        """
+        script, console = self.tema(style="grafico", resolution="1024x768")
+        self.assertEqual(len(console), 2, console)
+        self.assertNotIn("--picture", console[0])
+        self.assertIn("-x 1024 -y 768", console[0])
+        self.assertIn("--picture http://10.10.0.254/pxe/inject/theme/bg-1024x768.png", console[1])
+        self.assertIn("--top 104", console[1])          # cornice piu' larga: intestazione e piede disegnati
+        for l in console:
+            self.assertTrue(l.endswith("||"), l)
+        from pixio.services import theme as T
+        self.assertTrue(os.path.isfile(T.bg_path(T.theme(self.S.load()))), "sfondo non generato")
+
+    def test_14_risoluzione_nel_comando_e_nel_nome_del_file(self):
+        """La risoluzione scelta finisce sia in -x/-y sia nel nome dello sfondo (niente PNG stantii)."""
+        for res, w, h in (("800x600", 800, 600), ("640x480", 640, 480)):
+            script, console = self.tema(style="grafico", resolution=res)
+            for l in console:
+                self.assertIn(f"-x {w} -y {h}", l, l)
+            self.assertIn(f"bg-{w}x{h}.png", console[1])
+            self.assertNotIn(f"bg-1024x768.png", console[1])
+
+    def test_15_stile_compatibile_lascia_la_console_del_firmware(self):
+        script, console = self.tema(style="compatibile")
+        self.assertEqual(console, [], "in compatibilita' non si tocca la console")
+        self.assertIn("colour --rgb", script)          # i colori si impostano comunque
+        self.assertIn("cpair --foreground 0 --background 6 2 ||", script)
+
+    def test_16_valori_non_validi_tornano_al_predefinito(self):
+        script, console = self.tema(style="fantasia", resolution="1920x1080")
+        self.assertEqual(len(console), 1, console)
+        self.assertIn("-x 1024 -y 768", console[0])
+        self.assertNotIn("--picture", console[0])
+
     # ---------------------------------------------------------------- API
     def test_09_api_get(self):
         self.menu(submenus="auto", submenu_threshold=8)
@@ -291,6 +354,35 @@ class MenuTest(unittest.TestCase):
         for plat in ("efi", "bios"):
             self.assertIn(":grp-1", r.get_json()["preview"][plat])
         self.assertIn(":grp-1", self.client.get("/api/menu").get_json()["preview"]["efi"])
+
+    def test_17_api_stile_e_risoluzione(self):
+        for bad in ({"theme": {"style": "fantasia"}}, {"theme": {"resolution": "1920x1080"}}):
+            r = self.client.put("/api/menu", json={"settings": bad}, headers=self.h)
+            self.assertEqual(r.status_code, 400, bad)
+            self.assertIn("error", r.get_json())
+        r = self.client.put("/api/menu", json={"settings": {"theme": {"style": "grafico", "resolution": "800x600"}}}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        d = r.get_json()
+        self.assertEqual(d["settings"]["theme"]["style"], "grafico")
+        self.assertEqual(d["settings"]["theme"]["resolution"], "800x600")
+        self.assertEqual(d["settings"]["theme_bg_url"], "/pxe/inject/theme/bg-800x600.png")
+        for plat in ("efi", "bios"):
+            self.assertIn("--picture http://10.10.0.254/pxe/inject/theme/bg-800x600.png", d["preview"][plat])
+        self.assertEqual(self.S.load()["menu"]["theme"]["style"], "grafico")
+
+    def test_18_api_tema_sempre_completo(self):
+        """Anche da una config vecchia (senza style/resolution) la GUI riceve valori utilizzabili."""
+        cfg = self.S.load()
+        cfg["menu"]["theme"] = {"bg": "#101010"}       # come una config salvata prima di questa versione
+        self.S.save(cfg)
+        full = self.client.get("/api/menu").get_json()
+        d = full["settings"]
+        self.assertEqual(d["theme"]["style"], "testo")
+        self.assertEqual(d["theme"]["resolution"], "1024x768")
+        self.assertEqual(d["theme"]["bg"], "#101010")
+        self.assertEqual(d["theme_styles"], ["testo", "grafico", "compatibile"])
+        self.assertEqual(d["theme_resolutions"], ["1024x768", "800x600", "640x480"])
+        self.assertNotIn("--picture", full["preview"]["efi"])   # stile testo: nessuno sfondo
 
 
 if __name__ == "__main__":

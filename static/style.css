@@ -236,6 +236,13 @@ td.actions-cell{white-space:nowrap;text-align:right}
 .tprev-menu .it{color:var(--t-fg)}
 .tprev-menu .sel{background:var(--t-accent);color:var(--t-bg);border-radius:2px}
 .tprev-menu .dim{color:var(--t-muted);margin-top:8px}
+/* anteprima del menu di boot coerente con lo stile scelto: l'immagine e la fascia del logo sono
+   disegnate nello sfondo PNG, quindi esistono solo nello stile "grafico". */
+.tprev.st-testo img,.tprev.st-compatibile img{display:none}
+.tprev.st-testo .tprev-logo,.tprev.st-compatibile .tprev-logo{display:none}
+.tprev.st-testo .tprev-menu,.tprev.st-compatibile .tprev-menu{top:3.2%;bottom:3.2%;left:2.4%;right:2.4%}
+.tprev.st-compatibile{font-family:var(--mono,monospace)}
+.tprev.st-compatibile .tprev-menu .sel{border-radius:0}
 
 /* ---------- pannello laterale ---------- */
 .drawer-overlay{position:fixed;inset:0;background:rgba(5,8,12,.45);z-index:40}

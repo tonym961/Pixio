@@ -26,11 +26,21 @@ EOH
 cat > config/local/console.h <<'EOH'
 #define CONSOLE_FRAMEBUFFER
 EOH
+# Tastiera USB: nelle build BIOS iPXE dipende dal supporto legacy del firmware, che su molti PC recenti
+# e' disattivato e lascia il menu senza tastiera. Con i driver USB nativi la tastiera funziona comunque.
+# In UEFI resta quella del firmware, che funziona gia' bene.
+cat > config/local/usb.h <<'EOH'
+#define USB_HCD_XHCI
+#define USB_HCD_EHCI
+#define USB_HCD_UHCI
+#define USB_KEYBOARD
+EOH
 NPROC=$(nproc)
 make -j"$NPROC" NO_WERROR=1 EMBED=/opt/pixio/ipxe/embed.built.ipxe \
   bin/undionly.kpxe bin/ipxe.pxe bin-x86_64-efi/ipxe.efi bin-x86_64-efi/snponly.efi bin-i386-efi/ipxe.efi bin/ipxe.lkrn 2>&1 | tail -5 || true
 mkdir -p "$OUT"
 cp bin/undionly.kpxe "$OUT/undionly.kpxe"
+cp bin/ipxe.pxe "$OUT/ipxe-bios.pxe"      # build completa: ha i driver USB, quindi la tastiera funziona
 cp bin/ipxe.pxe "$OUT/ipxe.pxe"
 cp bin-x86_64-efi/ipxe.efi "$OUT/ipxe.efi"
 cp bin-x86_64-efi/snponly.efi "$OUT/snponly.efi"
