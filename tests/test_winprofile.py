@@ -191,15 +191,24 @@ class ValidazioneTest(unittest.TestCase):
         self._ko("chiave di prodotto", product_key="VK7JG NPHTM C97JM 9MPGT 3V66T!")
         self.assertEqual(WP.validate(base_settings(product_key=""))["product_key"], "")
 
-    def test_password_obbligatoria(self):
-        s = WP.defaults()          # admin_user impostato, password vuota
+    def test_password_facoltativa_sui_client(self):
+        """Sui client l'account senza password è legittimo; su Server il criterio di complessità lo vieta."""
+        s = WP.defaults()          # admin_user impostato, password vuota, target client
+        out = WP.validate(s)
+        self.assertEqual(out["admin_password"], "")
+        self.assertEqual(out["admin_user"], WP.DEFAULTS["admin_user"])
+        # secondo utente senza password: ammesso sui client
+        s2 = base_settings(extra_user={"name": "ospite", "password": "", "group": "Users"})
+        self.assertEqual(WP.validate(s2)["extra_user"]["name"], "ospite")
+        # su Windows Server serve la password, per l'amministratore e per il secondo utente
         with self.assertRaises(ValueError) as ctx:
-            WP.validate(s)
-        self.assertIn("password", str(ctx.exception).lower())
+            WP.validate(base_settings(target="server", admin_user="amministratore", admin_password=""))
+        self.assertIn("obbligatoria", str(ctx.exception).lower())
+        with self.assertRaises(ValueError):
+            WP.validate(base_settings(target="server", admin_password="Prova1234!",
+                                      extra_user={"name": "ospite", "password": "", "group": "Users"}))
         # utente vuoto ma password presente: incoerente
         self._ko("nessun nome utente", admin_user="")
-        # secondo utente senza password
-        self._ko("indica la password", extra_user__name="ospite")
 
     def test_utente_non_valido(self):
         self._ko("non sono ammessi i caratteri", admin_user="dominio\\tecnico")
@@ -677,8 +686,12 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Riservato di sistema", r.get_json()["xml"])
 
+        # senza password va bene sui client, ma non con target server
         r = self.client.post("/api/winprofiles/preview", headers=self.h,
                              json={"settings": {"admin_user": "tec", "admin_password": ""}})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post("/api/winprofiles/preview", headers=self.h,
+                             json={"settings": {"target": "server", "admin_user": "tec", "admin_password": ""}})
         self.assertEqual(r.status_code, 400)
 
     def test_salva_come_risposta(self):

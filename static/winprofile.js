@@ -897,7 +897,7 @@
         </div>
         <div class="row2">
           ${campo('wp-admin', 'Amministratore locale', s.admin_user, { maxlength: 20, placeholder: 'amministratore', hint: 'Max 20 caratteri. Con <span class="mono">Administrator</span> viene impostata la password dell\'account predefinito invece di crearne uno nuovo.' })}
-          ${password('wp-admin-pw', 'Password dell\'amministratore', s.admin_password, 'Obbligatoria se c\'è un nome utente: senza, Windows si ferma alle schermate finali.')}
+          ${password('wp-admin-pw', 'Password dell\'amministratore', s.admin_password, 'Puoi lasciarla vuota: l\'utente accede senza password (comodo in laboratorio, da evitare in rete aziendale). Su Windows Server è obbligatoria, perché il criterio di complessità non ammette account senza password.')}
         </div>
         ${spunta('wp-autologon', 'Accesso automatico dopo l\'installazione', !!s.autologon, 'Windows salva questa password anche nel registro del PC. Utile per far girare i comandi al primo accesso senza intervento.')}
         <div class="field" id="wp-autologon-box" ${s.autologon ? '' : 'hidden'}>

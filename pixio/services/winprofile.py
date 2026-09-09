@@ -764,9 +764,11 @@ def validate(settings, rifiuta_incompatibili=True):
     admin_pw = _pw(s.get("admin_password"))
     if admin:
         _check_user_name(admin, "Nome dell'amministratore locale")
-        if not admin_pw:
-            raise ValueError(f"Indica la password dell'utente {admin}: senza password Windows non "
-                             "completa l'installazione automatica")
+        if not admin_pw and out.get("target") == "server":
+            # Windows Server applica di serie il criterio di complessità: un account senza password
+            # farebbe fallire l'installazione automatica.
+            raise ValueError(f"Su Windows Server la password dell'utente {admin} è obbligatoria: "
+                             "il criterio di complessità impedisce di creare account senza password")
         _check_password(admin_pw, "Password dell'amministratore")
     elif admin_pw:
         raise ValueError("C'è una password ma nessun nome utente amministratore")
@@ -796,8 +798,9 @@ def validate(settings, rifiuta_incompatibili=True):
         _check_user_name(eu_name, "Nome del secondo utente")
         if eu_name.lower() == admin.lower():
             raise ValueError("Il secondo utente ha lo stesso nome dell'amministratore")
-        if not eu_pw:
-            raise ValueError(f"Indica la password dell'utente {eu_name}")
+        if not eu_pw and out.get("target") == "server":
+            raise ValueError(f"Su Windows Server la password dell'utente {eu_name} è obbligatoria: "
+                             "il criterio di complessità impedisce di creare account senza password")
         _check_password(eu_pw, "Password del secondo utente")
         if eu_group not in LOCAL_GROUPS:
             raise ValueError("Gruppo non valido: " + ", ".join(LOCAL_GROUPS))
@@ -1023,7 +1026,10 @@ def _pass(root, nome):
 
 def _password_el(parent, tag, valore):
     """Blocco password in chiaro (PlainText true): è l'unico modo per farlo funzionare senza
-    l'offuscamento base64 di Windows, che comunque non è una protezione."""
+    l'offuscamento base64 di Windows, che comunque non è una protezione.
+    Con password vuota l'elemento non viene scritto: l'account resta senza password."""
+    if not valore:
+        return None
     p = _el(parent, tag)
     _el(p, "Value", valore)
     _el(p, "PlainText", "true")
