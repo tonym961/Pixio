@@ -250,6 +250,9 @@
                 <input id="m-submenu_threshold" type="number" min="1" max="100" value="${esc(s.submenu_threshold != null ? s.submenu_threshold : 8)}">
                 <div class="hint">I sottomenu compaiono quando le voci avviabili superano questo numero. Da 1 a 100.</div></div>
             </div>
+            <div class="field"><label for="m-answer_timeout">Scelta dell'installazione: timeout (s)</label>
+              <input id="m-answer_timeout" type="number" min="0" max="120" value="${esc(s.answer_timeout != null ? s.answer_timeout : 10)}">
+              <div class="hint">Quando una ISO ha più di un'installazione automatica collegata (Catalogo → Dettagli), dopo averla scelta il PC mostra un menu con le installazioni disponibili: allo scadere di questi secondi parte da sola la predefinita. 0 = attende la scelta. Massimo 120 s.</div></div>
           </form>
           ${themeHtml(s, entries, groups)}
           <div class="eyebrow" style="margin:6px 0 8px">Ordine delle voci</div>
@@ -356,6 +359,11 @@
     if (submenus === 'auto' && (isNaN(threshold) || threshold < 1 || threshold > 100)) {
       P.toast('Soglia dei sottomenu non valida: da 1 a 100 voci', 'bad'); $('#m-submenu_threshold', r).focus(); return;
     }
+    const answerTimeout = parseInt($('#m-answer_timeout', r).value, 10);
+    if (isNaN(answerTimeout) || answerTimeout < 0 || answerTimeout > 120) {
+      P.toast('Timeout della scelta dell\'installazione non valido: da 0 a 120 secondi', 'bad');
+      $('#m-answer_timeout', r).focus(); return;
+    }
     const theme = readTheme(); if (!theme) return;
     const settings = {
       title: title || 'PIXIO - Avvio da rete',
@@ -368,6 +376,7 @@
       groups,
       submenus,
       submenu_threshold: isNaN(threshold) ? 8 : Math.min(100, Math.max(1, threshold)),
+      answer_timeout: answerTimeout,
       theme,
     };
     P.setBusy(btn, true, 'Salvataggio…');

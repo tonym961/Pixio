@@ -20,6 +20,7 @@ def _settings(cfg):
     if str(m.get("submenus") or "").lower() not in ipxe_menu.SUBMENU_MODES:
         m["submenus"] = "auto"
     m["submenu_threshold"] = ipxe_menu.submenu_threshold(m)
+    m["answer_timeout"] = ipxe_menu.answer_timeout(m)
     t = T.theme(cfg)
     m["theme"] = t
     m["theme_bg_url"] = T.bg_web(t)       # l'anteprima della GUI carica lo sfondo della risoluzione scelta
@@ -64,6 +65,14 @@ def put_menu():
         if not 1 <= t <= 100:
             return jsonify({"error": "Soglia dei sottomenu tra 1 e 100 voci"}), 400
         m["submenu_threshold"] = t
+    if "answer_timeout" in s:
+        try:
+            t = int(s["answer_timeout"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "Timeout della scelta dell'installazione non valido"}), 400
+        if not 0 <= t <= ipxe_menu.MAX_ANSWER_TIMEOUT:
+            return jsonify({"error": f"Timeout della scelta tra 0 e {ipxe_menu.MAX_ANSWER_TIMEOUT} secondi"}), 400
+        m["answer_timeout"] = t
     if "theme" in s and isinstance(s["theme"], dict):
         from ..services import theme as T
         th = dict(m.get("theme") or {})

@@ -7,6 +7,10 @@ from . import catalog, recipes
 PLATFORMS = ("efi", "bios")
 SUBMENU_MODES = ("auto", "always", "never")
 DEFAULT_THRESHOLD = 8
+DEFAULT_ANSWER_TIMEOUT = 10      # secondi del menu "quale installazione" (docs/API.md sezione 17)
+MAX_ANSWER_TIMEOUT = 120
+MANUAL_LABEL = "manuale"         # etichetta della voce "Installazione guidata a mano"
+MANUAL_NAME = "Installazione guidata a mano"
 # Etichette gia' usate dallo script: i sottomenu non possono chiamarsi cosi'
 RESERVED_LABELS = ("menu", "memtest", "local", "shell", "reboot", "exit", "failed")
 
@@ -61,6 +65,15 @@ def submenu_threshold(m):
     except (TypeError, ValueError):
         t = DEFAULT_THRESHOLD
     return max(1, min(100, t))
+
+
+def answer_timeout(m):
+    """Secondi (0-120) del menu di scelta della risposta; 0 = attende la scelta senza partire da solo."""
+    try:
+        t = int(m.get("answer_timeout", DEFAULT_ANSWER_TIMEOUT))
+    except (TypeError, ValueError):
+        t = DEFAULT_ANSWER_TIMEOUT
+    return max(0, min(MAX_ANSWER_TIMEOUT, t))
 
 
 def submenus_on(m, count):
@@ -206,15 +219,69 @@ def menu_script(platform, mac=None, auto_boot=None, cfg=None, client_ip=""):
     return "\n".join(lines)
 
 
-def entry_script(slug, platform, cfg=None):
-    """Script della singola voce: (testo, warnings). Testo con shebang; se non avviabile, script che torna al menu."""
+def answer_choices(e):
+    """Voci del menu di scelta dell'installazione: [{label, name, answer}] (answer "" = avvio a mano).
+
+    Elenco vuoto o di una voce sola = niente menu, si avvia subito come prima della sezione 17."""
+    out = [{"label": f"ans-{n}", "name": i["name"], "answer": i["id"]}
+           for n, i in enumerate(catalog.answers_info(e), 1)]
+    if out and catalog.answer_manual(e):
+        out.append({"label": MANUAL_LABEL, "name": MANUAL_NAME, "answer": ""})
+    return out
+
+
+def answer_menu_script(e, platform, cfg=None, choices=None, mac=None):
+    """Menu iPXE "con quale installazione parto": una voce per risposta collegata, piu' l'avvio a mano.
+
+    Ogni voce richiama lo script della stessa ISO con ?answer=<id> (vuoto = nessuna risposta).
+    In caso di errore si esce con 1: il menu principale, che ha chiamato con '|| goto failed', ci riporta li'."""
+    cfg = cfg or S.load()
+    ip = cfg["network"]["server_ip"]
+    platform = _plat(platform) or "bios"
+    choices = answer_choices(e) if choices is None else choices
+    default = catalog.default_answer(e)
+    dflt = next((c["label"] for c in choices if c["answer"] and c["answer"] == default), choices[0]["label"])
+    IND = "   "
+    lines = ["#!ipxe", f"# Pixio - {_safe(e.get('name') or e['slug'])} - scelta dell'installazione ({platform})", ""]
+    lines.append(":menu")
+    lines.append(f"menu {_safe(e.get('name') or e['slug'])}   |   Con quale installazione parto?")
+    for c in choices:
+        if c["answer"] == "":
+            lines.append("item --gap")
+        nome = _safe(c["name"]) + (" (predefinita)" if c["label"] == dflt else "")
+        lines.append(f"item {c['label']} {IND}{nome}")
+    t = answer_timeout(cfg["menu"])
+    if t > 0:
+        lines.append(f"choose --default {dflt} --timeout {t * 1000} sel || goto {dflt}")
+    else:
+        lines.append(f"choose --default {dflt} sel || goto {dflt}")
+    lines.append("goto ${sel} || goto failed")
+    lines.append("")
+    for c in choices:
+        url = f"http://{ip}/boot/{e['slug']}.ipxe?platform={platform}&answer={c['answer']}"
+        if mac:
+            url += f"&mac={mac}"
+        lines += [f":{c['label']}", f"chain --autofree {url} || goto failed", ""]
+    lines += [":failed", "echo Avvio fallito. Torno al menu principale.", "sleep 5", "exit 1", ""]
+    return "\n".join(lines)
+
+
+def entry_script(slug, platform, cfg=None, answer=None, mac=None):
+    """Script della singola voce: (testo, warnings). Testo con shebang; se non avviabile, script che torna al menu.
+
+    answer: None = nessuna scelta ancora fatta (con due o piu' installazioni disponibili si genera il menu
+    di scelta), "" = nessuna risposta (installazione guidata a mano), id = quella risposta."""
     cfg = cfg or S.load()
     ip = cfg["network"]["server_ip"]
     platform = _plat(platform) or "bios"
     e = catalog.get(slug)
     if not e:
         return "#!ipxe\necho Voce non trovata\nsleep 3\nexit 1\n", ["voce non trovata"]
-    lines, warnings = recipes.render(e, ip, platform, _flags(cfg, e))
+    if answer is None:
+        choices = answer_choices(e)
+        if len(choices) >= 2:
+            return answer_menu_script(e, platform, cfg, choices, mac=mac), []
+    lines, warnings = recipes.render(e, ip, platform, _flags(cfg, e), catalog.resolve_answer(e, answer))
     if not lines:
         msg = "; ".join(warnings) or "non avviabile"
         return f"#!ipxe\necho Pixio: {_safe(e['name'])} - {_safe(msg)}\nsleep 5\nexit 1\n", warnings

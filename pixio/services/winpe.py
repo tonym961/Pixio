@@ -36,46 +36,81 @@ def winpeshl_ini():
 
 
 def install_cmd(slug, cfg=None, iso=None):
+    """Script eseguito dentro il WinPE: carica i driver, controlla la rete, mappa la share e lancia il setup.
+    I messaggi devono dire cosa non va: senza, un guasto sembra solo un'attesa infinita."""
     cfg = cfg or S.load()
     f = flags(cfg, iso if iso is not None else iso_for(slug))
     ip = cfg["network"]["server_ip"]
     wuser = cfg["windows"].get("smb_user") or "pxe"
     wpass = cfg["windows"].get("smb_password") or ""
-    L = ["@echo off", "title Pixio - avvio Windows", "echo Pixio: preparazione WinPE..."]
+    L = ["@echo off", "title Pixio - avvio Windows", "echo.", "echo Pixio: preparazione di Windows PE...", "echo."]
     infs = [name for _, name, _ in f["driver_files"] if name.lower().endswith(".inf")]
     if infs:
-        L.append("echo Carico i driver iniettati (rete/storage)...")
+        L.append("echo Carico i driver forniti da Pixio:")
         for name in infs:
-            L.append(f"drvload X:\\Windows\\System32\\{name} >nul 2>&1 && echo   ok {name} || echo   ERRORE {name}")
-    L.append("wpeinit")
+            L.append(f'drvload X:\\Windows\\System32\\{name} >nul 2>&1 && echo    ok {name} || echo    non caricato: {name}')
+        L.append("echo.")
+    L += [
+        "echo Avvio la rete...",
+        "wpeinit",
+        "echo.",
+        # senza indirizzo IP e' inutile insistere: manca il driver della scheda di rete
+        "set PIXIO_IP=",
+        'for /f "tokens=2 delims=:" %%a in (\'ipconfig ^| find "IPv4"\') do if not defined PIXIO_IP set PIXIO_IP=%%a',
+        "if not defined PIXIO_IP goto senzarete",
+        "echo Indirizzo ottenuto:%PIXIO_IP%",
+    ]
     if f["smb_export"]:
         L += [
+            f"echo Collego la cartella di installazione \\\\{ip}\\pxe ...",
             "set /a tries=0",
             ":retry",
             "set /a tries+=1",
             f"net use S: \\\\{ip}\\pxe {wpass} /user:{wuser} /persistent:no >nul 2>&1 && goto ok",
-            "if %tries% GEQ 30 goto fail",
-            "echo In attesa della rete (%tries%/30)...",
+            "if %tries% GEQ 10 goto nonraggiungibile",
+            "echo    tentativo %tries% di 10...",
             "ping -n 3 127.0.0.1 >nul",
             "goto retry",
             ":ok",
         ]
         for folder in f["setup_folders"]:
-            L.append(f"echo Carico i driver da \"{folder}\"...")
-            L.append(f"for /r \"S:\\drivers\\{folder}\" %%f in (*.inf) do drvload \"%%f\" >nul 2>&1")
+            L.append(f'echo Carico i driver della cartella "{folder}"...')
+            L.append(f'for /r "S:\\drivers\\{folder}" %%f in (*.inf) do drvload "%%f" >nul 2>&1')
         L += [
-            f"echo Avvio setup.exe da \\\\{ip}\\pxe\\iso\\{slug}",
+            "echo.",
+            f"echo Avvio il programma di installazione da \\\\{ip}\\pxe\\iso\\{slug}",
             f"S:\\iso\\{slug}\\setup.exe",
             "goto end",
-            ":fail",
-            f"echo Impossibile raggiungere \\\\{ip}\\pxe (utente {wuser}). Controlla rete e driver. Apro il prompt.",
+            ":nonraggiungibile",
+            "echo.",
+            f"echo PROBLEMA: la rete funziona ma la cartella \\\\{ip}\\pxe non risponde.",
+            "echo Verifica l'ultimo messaggio qui sotto e poi usa il prompt.",
+            f"net use S: \\\\{ip}\\pxe {wpass} /user:{wuser} /persistent:no",
+            "echo.",
             "cmd.exe",
+            "goto end",
         ]
     else:
         L += [
-            "echo Installazione Windows via rete non attiva: avvio il setup di WinPE (senza install.wim).",
-            "echo Per usare install.wim attiva l'opzione nelle Impostazioni di Pixio, oppure mappa una share (Shift+F10, net use).",
+            "echo Installazione via rete non attiva nelle impostazioni di Pixio:",
+            "echo avvio il programma di installazione del solo WinPE (senza immagine di Windows).",
             "X:\\setup.exe",
+            "goto end",
         ]
-    L.append(":end")
+    L += [
+        ":senzarete",
+        "echo.",
+        "echo PROBLEMA: Windows PE non ha ottenuto un indirizzo di rete.",
+        "echo Quasi sempre significa che manca il driver della scheda Ethernet di questo PC.",
+        "echo Scaricalo dal sito del produttore, caricalo nella pagina Driver di Pixio",
+        "echo e attiva \"Carica in WinPE all'avvio\" sulla sua cartella.",
+        "echo.",
+        "echo Schede rilevate:",
+        "wpeutil listnetworkadapters 2>nul || ipconfig /all",
+        "echo.",
+        "echo Premi un tasto per aprire il prompt dei comandi.",
+        "pause >nul",
+        "cmd.exe",
+        ":end",
+    ]
     return "\r\n".join(L) + "\r\n"

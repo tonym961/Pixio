@@ -297,6 +297,14 @@
   const THEAD_ROW = '<tr><th>Nel menu</th><th>Nome</th><th>Sorgente</th><th>Tipo rilevato</th><th>Dimensione</th>'
     + '<th>BIOS / UEFI</th><th>Stato</th><th><span class="sr-only">Azioni</span></th></tr>';
 
+  /* Badge delle installazioni automatiche: con più di una si mostra il numero, con una il nome. */
+  function answerPill(iso) {
+    const n = (iso.answers || []).length;
+    if (n > 1) return ' ' + P.pill(n + ' installazioni automatiche', 'acc');
+    if (!iso.answer_id) return '';
+    return ' ' + P.pill('automatica: ' + (iso.answer_name || iso.answer_id), 'acc');
+  }
+
   /* breve = vista a cartelle: sotto il nome basta il file, il percorso è già nell'intestazione della cartella. */
   function rowHtml(iso, breve) {
     const busy = CAT.busy.has(iso.slug);
@@ -305,7 +313,7 @@
       <td>${P.switchHtml(!!iso.enabled, `data-act="toggle" aria-label="Nel menu: ${esc(iso.name)}" ${busy ? 'disabled' : ''} ${iso.missing ? 'disabled title="File mancante"' : ''}`)}</td>
       <td><div class="iso-name">${esc(iso.name || iso.file)}</div><div class="iso-file mono">${esc((breve ? iso.file : iso.rel_path) || iso.rel_path || iso.file || '')}</div></td>
       <td>${sourcePill(iso)}</td><td>${esc(iso.type_name || typeName(iso.type))}${iso.group ? `<div class="hint">${esc(iso.group)}</div>` : ''}</td>
-      <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}${iso.answer_id ? ' ' + P.pill('automatica: ' + (iso.answer_name || iso.answer_id), 'acc') : ''}</td>
+      <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}${answerPill(iso)}</td>
       <td class="actions-cell"><button class="btn small" type="button" data-act="details">Dettagli${noRecipe ? ' \u26a0' : ''}</button></td></tr>`;
   }
 
@@ -369,7 +377,7 @@
       parts.push([i.slug, i.name, i.file, i.rel_path, i.source, i.source_name, i.enabled ? 1 : 0, i.mounted ? 1 : 0,
         i.missing ? 1 : 0, i.type, i.type_name, i.group, i.size, (i.platforms || []).join('+'),
         i.custom_recipe ? 1 : 0, c.status || '', c.progress != null ? Math.floor(c.progress) : '',
-        i.answer_id || '', i.answer_name || ''].join('\u0001'));
+        i.answer_id || '', i.answer_name || '', (i.answers || []).length].join('\u0001'));
     });
     return parts.join('\u0002');
   }
@@ -593,25 +601,103 @@
     return { buone, altre };
   }
 
-  function answerFieldHtml(iso) {
-    const { buone, altre } = answersFor(iso);
+  const MAX_ANSWERS = 8;                 // stesso limite del server (docs/API.md sezione 17)
+
+  /* Stato locale dell'elenco risposte del pannello: si salva con "Salva", come gli altri campi. */
+  function answersStateOf(iso) {
+    return { ids: (iso.answers || []).slice(0, MAX_ANSWERS), def: iso.answer_id || null, manual: iso.answer_manual !== false };
+  }
+
+  function answersChanged(iso, st) {
+    const prima = answersStateOf(iso);
+    return st.ids.join('\u0001') !== prima.ids.join('\u0001') || (st.def || null) !== prima.def || st.manual !== prima.manual;
+  }
+
+  /* Elenco delle installazioni automatiche collegate: la spunta segna quella che parte da sola. */
+  function answersBlockHtml(iso, st) {
+    const kinds = ANSWER_KINDS[iso.type] || [];
+    const tutte = CAT.answers || [];
+    const byId = {};
+    tutte.forEach((a) => { byId[a.id] = a; });
+    const liberi = tutte.filter((a) => !st.ids.includes(a.id));
+    const buone = liberi.filter((a) => kinds.includes(a.kind));
+    const altre = liberi.filter((a) => !kinds.includes(a.kind));
     const prof = profilesFor(iso);
-    if (!(CAT.answers || []).length && !prof.length) {
-      return `<div class="field"><span class="field-label">Installazione automatica</span>
-        <div class="hint">Nessuna risposta né profilo disponibile. Creane uno in Preset → Windows o Debian.</div></div>`;
-    }
-    const opt = (a) => `<option value="${esc(a.id)}" ${a.id === iso.answer_id ? 'selected' : ''}>${esc(a.name)} (${esc(a.kind)})</option>`;
-    return `<div class="field"><label for="d-answer">Installazione automatica</label>
-      <select id="d-answer">
-        <option value="">Nessuna: installazione guidata a mano</option>
-        ${buone.length ? `<optgroup label="Adatte a questa immagine">${buone.map(opt).join('')}</optgroup>` : ''}
-        ${altre.length ? `<optgroup label="Altre risposte">${altre.map(opt).join('')}</optgroup>` : ''}
-        ${prof.length ? `<optgroup label="Profili: la risposta viene creata al salvataggio">${prof.map((p) => `<option value="profilo:${esc(p.api)}:${esc(p.id)}">${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
-      </select>
-      <div class="hint">La risposta viene servita al PC durante l'installazione: per Windows finisce nel WinPE come autounattend.xml, per Linux diventa il file di preconfigurazione sulla riga di comando del kernel.</div></div>`;
+    const opt = (a) => `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.kind)})</option>`;
+    const pieno = st.ids.length >= MAX_ANSWERS;
+    const righe = st.ids.map((id) => {
+      const a = byId[id] || { id, name: id, kind: '' };
+      const def = id === st.def;
+      return `<li class="ans-row${def ? ' def' : ''}">
+        <input type="radio" name="d-ans-def" id="d-ans-${esc(id)}" value="${esc(id)}" data-ans="def" ${def ? 'checked' : ''}>
+        <label for="d-ans-${esc(id)}"><span class="nm">${esc(a.name)}</span>${a.kind ? ' ' + P.pill(a.kind, def ? 'acc' : 'neutral') : ''}${def ? '<span class="ans-def-tag">parte da sola</span>' : ''}</label>
+        <button class="btn small" type="button" data-ans="del" data-id="${esc(id)}" aria-label="Togli ${esc(a.name)}">Togli</button></li>`;
+    }).join('');
+    const voci = st.ids.length + (st.manual && st.ids.length ? 1 : 0);
+    return `<span class="field-label">Installazioni automatiche</span>
+      ${st.ids.length ? `<ul class="ans-list">${righe}</ul>`
+    : '<div class="hint">Nessuna risposta collegata: il PC parte con l\'installazione normale e fa tutte le domande a schermo.</div>'}
+      ${tutte.length || prof.length ? `<div class="ans-add">
+        <select id="d-ans-add" aria-label="Risposta da aggiungere" ${pieno ? 'disabled' : ''}>
+          <option value="">Aggiungi un'installazione…</option>
+          ${buone.length ? `<optgroup label="Adatte a questa immagine">${buone.map(opt).join('')}</optgroup>` : ''}
+          ${altre.length ? `<optgroup label="Altre risposte">${altre.map(opt).join('')}</optgroup>` : ''}
+          ${prof.length ? `<optgroup label="Profili: la risposta viene creata subito">${prof.map((p) => `<option value="profilo:${esc(p.api)}:${esc(p.id)}">${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
+        </select>
+        <button class="btn" type="button" data-ans="add" ${pieno ? 'disabled' : ''}>Aggiungi</button>
+      </div>` : '<div class="hint">Nessuna risposta né profilo disponibile. Creane uno in Preset → Windows o Debian.</div>'}
+      ${pieno ? `<div class="hint">Raggiunto il massimo di ${MAX_ANSWERS} installazioni per ISO.</div>` : ''}
+      <label class="ans-manual"><input type="checkbox" id="d-ans-manual" data-ans="manual" ${st.manual ? 'checked' : ''}>
+        Mostra anche "Installazione guidata a mano" (avvio senza risposta)</label>
+      <div class="hint">La risposta viene servita al PC durante l'installazione: per Windows finisce nel WinPE come autounattend.xml, per Linux diventa il file di preconfigurazione sulla riga di comando del kernel.
+      ${voci > 1 ? ' Con più di una voce, dopo la scelta della ISO il PC mostra un menu con queste installazioni: allo scadere del timeout parte da sola la predefinita (il timeout si imposta in Menu di boot).' : ''}</div>`;
+  }
+
+  /* I clic sull'elenco cambiano solo lo stato locale (e ridisegnano il riquadro): il PATCH lo fa "Salva".
+     Unica eccezione, la risposta generata da un profilo, che va creata sul momento per avere il suo id. */
+  function bindAnswers(body, iso, st) {
+    const box = $('#d-answers-box', body);
+    if (!box) return;
+    const redraw = () => { box.innerHTML = answersBlockHtml(iso, st); };
+    box.addEventListener('change', (e) => {
+      const el = e.target.closest('[data-ans]');
+      if (!el) return;
+      if (el.dataset.ans === 'def') { st.def = el.value; redraw(); }
+      if (el.dataset.ans === 'manual') st.manual = el.checked;
+    });
+    box.addEventListener('click', async (e) => {
+      const b = e.target.closest('button[data-ans]');
+      if (!b) return;
+      if (b.dataset.ans === 'del') {
+        st.ids = st.ids.filter((x) => x !== b.dataset.id);
+        if (st.def === b.dataset.id) st.def = st.ids[0] || null;
+        redraw();
+        return;
+      }
+      const sel = $('#d-ans-add', box);
+      let id = (sel && sel.value) || '';
+      if (!id) { P.toast('Scegli una risposta o un profilo da aggiungere', 'info'); return; }
+      if (id.startsWith('profilo:')) {
+        const p = id.split(':');
+        P.setBusy(b, true, 'Creo la risposta…');
+        try {
+          const r = await P.post(`/api/${p[1]}/${encodeURIComponent(p[2])}/save-answer`);
+          id = (r && r.answer_id) || '';
+          await loadAnswers(true);                 // l'elenco va riletto: c'è una risposta in più
+          P.toast(`Risposta "${(r && r.answer_name) || id}" creata dal profilo`);
+        } catch (err) { P.fail(err); P.setBusy(b, false); return; }
+        P.setBusy(b, false);
+      }
+      if (!id || st.ids.includes(id)) return;
+      if (st.ids.length >= MAX_ANSWERS) { P.toast(`Al massimo ${MAX_ANSWERS} installazioni automatiche per ISO`, 'bad'); return; }
+      st.ids.push(id);
+      if (!st.def) st.def = id;
+      redraw();
+    });
   }
 
   function renderDrawer(iso, groups) {
+    const ansSt = answersStateOf(iso);
     const cr = iso.custom_recipe || null;
     const cache = iso.cache || {};
     const det = iso.detect || {};
@@ -642,7 +728,7 @@
           <div class="field"><label for="d-group">Gruppo</label><select id="d-group">${groups.map((g) => `<option value="${esc(g)}" ${g === iso.group ? 'selected' : ''}>${esc(g)}</option>`).join('')}${iso.group && !groups.includes(iso.group) ? `<option value="${esc(iso.group)}" selected>${esc(iso.group)}</option>` : ''}<option value="__new">Nuovo gruppo…</option></select><input id="d-group-new" placeholder="Nome del nuovo gruppo" hidden aria-label="Nome del nuovo gruppo"></div>
           <div class="field"><label for="d-type">Tipo (ricetta)</label><select id="d-type">${types.map((t) => `<option value="${esc(t.id)}" ${t.id === (iso.type || 'unknown') ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>
         </div>
-        ${answerFieldHtml(iso)}
+        <div class="field" id="d-answers-box">${answersBlockHtml(iso, ansSt)}</div>
         <dl class="kv">
           <dt>Rilevato</dt><dd>${esc(det.label || iso.type_name || '—')}${det.version ? ' · versione ' + esc(det.version) : ''}</dd>
           ${(det.files || []).length ? `<dt>File chiave</dt><dd class="mono" style="font-size:12px">${det.files.map(esc).join('<br>')}</dd>` : ''}
@@ -672,6 +758,7 @@
       </div>`;
 
     const body = P.drawer.body;
+    bindAnswers(body, iso, ansSt);
     $('#d-group', body).addEventListener('change', (e) => { const n = $('#d-group-new', body); n.hidden = e.target.value !== '__new'; if (!n.hidden) n.focus(); });
     $$('[data-plat]', body).forEach((b) => b.addEventListener('click', () => {
       $$('[data-plat]', body).forEach((x) => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
@@ -695,21 +782,10 @@
         let group = $('#d-group', body).value; if (group === '__new') group = $('#d-group-new', body).value.trim();
         if (group && group !== iso.group) patch.group = group;
         const type = $('#d-type', body).value; if (type && type !== iso.type) patch.type = type;
-        const ansEl = $('#d-answer', body);
-        let daProfilo = null;
-        if (ansEl) {
-          let ans = ansEl.value || null;
-          if (ans && ans.startsWith('profilo:')) { daProfilo = ans.split(':'); ans = null; }
-          if (!daProfilo && (ans || null) !== (iso.answer_id || null)) patch.answer_id = ans;
-        }
-        if (daProfilo) {
-          P.setBusy(b, true, 'Creo la risposta…');
-          try {
-            const r = await P.post(`/api/${daProfilo[1]}/${encodeURIComponent(daProfilo[2])}/save-answer`);
-            patch.answer_id = r && r.answer_id;
-            CAT.answers = null;              // l'elenco va riletto: c'è una risposta in più
-            P.toast(`Risposta "${(r && r.answer_name) || patch.answer_id}" creata dal profilo`);
-          } catch (err) { P.fail(err); P.setBusy(b, false); return; }
+        if (answersChanged(iso, ansSt)) {
+          patch.answers = ansSt.ids;
+          patch.answer_id = ansSt.def;         // sempre una di quelle collegate, oppure null se l'elenco è vuoto
+          patch.answer_manual = ansSt.manual;
         }
         if ($('#d-cr-on', body).checked) {
           const kernel = $('#d-cr-kernel', body).value.trim();

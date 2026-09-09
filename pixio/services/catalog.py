@@ -385,6 +385,8 @@ def detach_answer(answer_id):
 
 def _check_answer_ids(ids):
     """Valida un elenco di id di risposta: esistenti, senza doppioni, entro il massimo."""
+    if len(ids) > MAX_ANSWERS:
+        raise ValueError(f"Al massimo {MAX_ANSWERS} risposte per la stessa ISO")
     idx = answers_index()
     out = []
     for a in ids:
@@ -394,8 +396,6 @@ def _check_answer_ids(ids):
         if aid not in idx:
             raise ValueError(f"Risposta non trovata: {aid}")
         out.append(aid)
-    if len(out) > MAX_ANSWERS:
-        raise ValueError(f"Al massimo {MAX_ANSWERS} risposte per la stessa ISO")
     return out
 
 
@@ -413,6 +413,8 @@ def _apply_answers_patch(e, patch):
         e["answers"] = answers_of(e)          # migrazione implicita prima di toccare la predefinita
     if "answer_id" in patch:
         aid = str(patch["answer_id"] or "").strip()[:64] or None
+        if not aid and "answers" not in patch:
+            e["answers"] = []          # come prima della sezione 17: answer_id vuoto = nessuna automatica
         if aid:
             _check_answer_ids([aid])
         if aid and "answers" in patch and aid not in e["answers"]:

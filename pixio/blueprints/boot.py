@@ -73,14 +73,17 @@ def boot_entry(slug):
         return _text("#!ipxe\necho slug non valido\nexit 1\n"), 400
     platform = request.args.get("platform", "bios")
     mac = _mac()
-    text, warnings = ipxe_menu.entry_script(slug, platform)
+    # ?answer=<id> = installazione scelta nel menu, ?answer= (vuoto) = avvio a mano, parametro assente = da scegliere
+    answer = request.args.get("answer")[:64] if "answer" in request.args else None
+    text, warnings = ipxe_menu.entry_script(slug, platform, answer=answer, mac=mac.replace(":", "-") if mac else None)
     if mac:
         try:
             from ..services import clients
             clients.record_boot(mac, slug)
         except Exception as e:  # noqa
             log.debug("record_boot: %s", e)
-    log.info("boot %s da %s (%s) %s", slug, request.remote_addr, platform, "; ".join(warnings))
+    log.info("boot %s da %s (%s)%s %s", slug, request.remote_addr, platform,
+             f" risposta={answer}" if answer is not None else "", "; ".join(warnings))
     return _text(text)
 
 
