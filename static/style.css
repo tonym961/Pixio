@@ -547,7 +547,8 @@ tr.drv-excluded td .mono{opacity:.6}
 .cat-src>summary{background:var(--surface-2)}
 .cat-src>summary:hover,.cat-dir>summary:hover{background:var(--surface)}
 .cat-src>summary .nm,.cat-dir>summary .nm{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
-.cat-src>summary .cnt,.cat-dir>summary .cnt{flex:none;display:flex;align-items:center;gap:8px}
+/* il conteggio resta visibile a destra anche quando l'albero scorre di lato su schermi stretti */
+.cat-src>summary .cnt,.cat-dir>summary .cnt{flex:none;display:flex;align-items:center;gap:8px;position:sticky;right:12px}
 .cat-dir{border-top:1px solid var(--line)}
 .cat-dir>summary{font-weight:500;padding-left:28px;background:var(--surface)}
 .cat-dir>summary .nm{font-family:var(--mono);font-size:12.5px}
