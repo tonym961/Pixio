@@ -2453,3 +2453,25 @@ Il design è sopra la media per una PMI: helper root a comandi chiusi (argparse+
 - Backup/esportazione della configurazione dalla GUI che escluda esplicitamente /etc/pixio/secret e /etc/pixio/sources/*.cred, con avviso che le credenziali CIFS vanno reinserite al ripristino
 - Documentazione nella GUI del modello di fiducia: PXE non è autenticato, chiunque nel segmento vede il catalogo e può avviare qualsiasi voce; consigliare VLAN dedicata o la modalità "solo client conosciuti" e account AD di sola lettura dedicato per le share remote
 
+
+## Avvio di Windows con wimboot: il bootloader "_EX" (9 set 2026)
+
+Le immagini di Windows dalla 24H2 in avanti contengono **due** bootloader UEFI dentro `boot.wim`:
+`\Windows\Boot\EFI\bootmgfw.efi`, firmato *Microsoft Windows Production PCA 2011*, e
+`\Windows\Boot\EFI_EX\bootmgfw_EX.efi`, firmato *Windows UEFI CA 2023*. wimboot 2.9.0
+(`src/efiboot.c`) prova **sempre per primo** quello `_EX` e ripiega sull'altro solo se `LoadImage()`
+fallisce: con Secure Boot disattivato `LoadImage()` riesce sempre, quindi viene scelto sempre `_EX`.
+
+Sulle immagini montate qui: hanno `_EX` la LTSC 2024, la 24H2, la 25H2 e Server 2025; non ce l'hanno
+la LTSC 2021, la LTSC IT pre e Server 2022.
+
+Perche' annotarlo: in una riproduzione in QEMU le tre immagini che l'utente aveva visto riavviarsi
+sono esattamente e solo quelle con `_EX`. La corrispondenza non e' una prova (il riavvio in QEMU si
+e' poi rivelato un artefatto della CPU emulata `qemu64`, che non ha SSE4.2 ne' POPCNT richiesti da
+Windows 11 24H2; con `-cpu max` tutte le prove arrivano a WinPE) e sul campo il WinPE della LTSC 2024
+poi e' partito. Resta pero' la strada da provare per prima se un firmware reale rifiuta di avviare
+il bootloader nuovo: si forza quello classico aggiungendo alla ricetta il file della ISO
+
+    initrd {http_iso}/efi/boot/bootx64.efi bootx64.efi
+
+verificato funzionante in laboratorio (wimboot scrive `found bootloader file bootx64.efi`).
