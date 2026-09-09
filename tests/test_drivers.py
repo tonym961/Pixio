@@ -417,7 +417,8 @@ class DriversApiTest(unittest.TestCase):
         self.assertTrue(per_nome["x64/rt2.inf"]["useful"])
         self.assertFalse(per_nome["x64/note.txt"]["useful"])
         # solo i .inf/.sys/.cat/.dll al primo livello finiscono in WinPE (invariato)
-        self.assertEqual(f["winpe_files"], 4)
+        # 5: i file utili contano anche quelli nelle sottocartelle (nomi appiattiti come fa wimboot)
+        self.assertEqual(f["winpe_files"], 5)
         self.assertTrue(drivers.is_useful("A.INF"))
         self.assertFalse(drivers.is_useful("AsusSetup.exe"))
         # una cartella vuota non ha ne' utili ne' scarti

@@ -84,7 +84,19 @@ def list_folders():
             continue
         files = _walk(p)
         f = flags.get(name, {})
-        inject = [x for x in files if "/" not in x["name"] and x["name"].lower().endswith(WINPE_EXT)]
+        esclusi = set(str(x) for x in (f.get("excluded") or []))
+        # conteggio coerente con winpe_inject_files(): sottocartelle comprese, 32 bit escluse, nomi appiattiti
+        inject, visti = [], set()
+        for x in sorted([y for y in files if y["name"].lower().endswith(WINPE_EXT) and not _inject_skip(y["name"])],
+                        key=lambda y: (_inject_rank(y["name"]), y["name"].lower())):
+            nome = x["name"].split("/")[-1].lower()
+            if nome in visti:
+                continue
+            visti.add(nome)
+            if x["name"] in esclusi:
+                x["excluded"] = True
+                continue
+            inject.append(x)
         useful = sum(1 for x in files if x["useful"])
         out.append({
             "name": name, "files": files, "count": len(files), "size": sum(x["size"] for x in files),
@@ -92,6 +104,7 @@ def list_folders():
             "inf_count": sum(1 for x in files if x["name"].lower().endswith(".inf")),
             "winpe_files": len(inject), "winpe_size": sum(x["size"] for x in inject),
             "winpe_inject": bool(f.get("winpe_inject")), "setup_load": bool(f.get("setup_load")),
+            "excluded": sorted(esclusi),
             "note": f.get("note", ""), "valid_name": bool(FOLDER_RE.match(name)),
         })
     return out
@@ -114,6 +127,33 @@ def delete_folder(name):
         d.setdefault("folders", {}).pop(name, None)
         return d
     update_json(C.DRIVERS_FILE, upd, default={})
+
+
+def excluded_of(name):
+    """File esclusi a mano dall'iniezione nel WinPE, per questa cartella."""
+    f = _flags()["folders"].get(name) or {}
+    return [str(x) for x in (f.get("excluded") or [])]
+
+
+def set_excluded(name, rel, escluso):
+    """Include o esclude un singolo file dall'iniezione nel WinPE."""
+    folder_path(name)
+    rel = str(rel).strip().lstrip("/")
+    if not rel or ".." in rel.split("/"):
+        raise ValueError("Nome file non valido")
+
+    def upd(d):
+        f = d.setdefault("folders", {}).setdefault(name, {})
+        ex = [x for x in (f.get("excluded") or []) if x != rel]
+        if escluso:
+            ex.append(rel)
+        f["excluded"] = ex
+        return d
+    update_json(C.DRIVERS_FILE, upd, default={})
+    for f in list_folders():
+        if f["name"] == name:
+            return f
+    return None
 
 
 def set_flags(name, patch):
@@ -213,24 +253,54 @@ def clean_folders(names):
     return {"cleaned": cleaned, "errors": errors}
 
 
+# Sottocartelle da saltare (architetture diverse da x64) e da preferire, nell'ordine.
+SKIP_DIRS = ("x86", "i386", "ia64", "arm", "arm64", "win32", "32bit", "wow64")
+PREFER_DIRS = ("x64", "amd64", "win11", "win10", "w11", "w10", "winx64", "64bit")
+
+
+def _inject_rank(rel):
+    """Ordine di preferenza fra file con lo stesso nome: prima la radice, poi le cartelle a 64 bit."""
+    parts = rel.lower().split("/")[:-1]
+    if not parts:
+        return 0
+    if any(p in PREFER_DIRS for p in parts):
+        return 1
+    return 2 + len(parts)
+
+
+def _inject_skip(rel):
+    """Salta le sottocartelle di altre architetture: iniettarle creerebbe conflitti di nome."""
+    parts = rel.lower().split("/")[:-1]
+    return any(p in SKIP_DIRS for p in parts)
+
+
 def winpe_inject_files():
-    """[(folder, filename, abs_path)] da iniettare nel WinPE (flag winpe_inject). Nomi duplicati: vince la prima cartella."""
-    out, seen, total = [], set(), 0
+    """[(cartella, nome_destinazione, percorso)] da iniettare nel WinPE (flag winpe_inject).
+
+    I file vengono presi anche dalle sottocartelle, perché i pacchetti driver sono spesso divisi per
+    architettura o versione di Windows. wimboot li mette tutti nella stessa cartella del WinPE, quindi il
+    nome viene appiattito: le sottocartelle a 32 bit si saltano e, a parità di nome, vince la radice o la
+    cartella a 64 bit (un .inf cerca i propri file per nome, senza percorso)."""
+    out, seen, total = [], {}, 0
     for f in list_folders():
         if not f["winpe_inject"]:
             continue
         base = os.path.join(C.DRIVERS_DIR, f["name"])
-        for x in f["files"]:
-            if "/" in x["name"] or not x["name"].lower().endswith(WINPE_EXT):
-                continue
-            key = x["name"].lower()
+        esclusi = set(f.get("excluded") or [])
+        candidati = [x for x in f["files"]
+                     if x["name"].lower().endswith(WINPE_EXT) and not _inject_skip(x["name"])
+                     and x["name"] not in esclusi]
+        candidati.sort(key=lambda x: (_inject_rank(x["name"]), x["name"].lower()))
+        for x in candidati:
+            nome = x["name"].split("/")[-1]
+            key = nome.lower()
             if key in seen:
                 continue
+            if total + x["size"] > MAX_INJECT_BYTES:
+                continue
             total += x["size"]
-            if total > MAX_INJECT_BYTES:
-                break
-            seen.add(key)
-            out.append((f["name"], x["name"], os.path.join(base, x["name"])))
+            seen[key] = True
+            out.append((f["name"], nome, os.path.join(base, *x["name"].split("/"))))
     return out
 
 

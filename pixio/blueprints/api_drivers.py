@@ -132,6 +132,16 @@ def delete_folder(name):
     return jsonify({"ok": True})
 
 
+@bp.route("/api/drivers/folders/<name>/files/<path:file>", methods=["PATCH"])
+def patch_file(name, file):
+    """Include o esclude un singolo file dall'iniezione nel WinPE: {excluded: true|false}"""
+    data = request.get_json(silent=True) or {}
+    if "excluded" not in data:
+        raise ValueError("Indica se il file va escluso")
+    folder = drivers.set_excluded(name, file, bool(data["excluded"]))
+    return jsonify({"ok": True, "folder": folder})
+
+
 @bp.route("/api/drivers/folders/<name>/clean", methods=["POST"])
 def clean_one(name):
     """Toglie dalla cartella i file che non servono al driver."""
