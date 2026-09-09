@@ -13,6 +13,11 @@ apply_to:     i driver RAID di un server non servono su un PC da ufficio. Ogni c
               / setup_load_folders(iso) filtrano in base alla voce di catalogo che si sta avviando
               (docs/API.md, sezione 15). Senza argomento si comportano come prima: nessun filtro.
 excluded:     elenco dei percorsi relativi esclusi a mano dall'iniezione nel WinPE.
+coerenza .inf: un pacchetto driver contiene spesso piu' copie dello stesso .inf e wimboot appiattisce tutto in
+              X:\\Windows\\System32, quindi drvload cerca i file per nome. Ogni .inf dichiara i propri file
+              (SourceDisksFiles, CopyFiles, ServiceBinary): fra piu' copie vince quella che li ha davvero
+              accanto, e i file dichiarati si prendono dalla cartella dell'.inf scelto. Un .inf che dichiara
+              file che non ci sono viene segnalato alla GUI in winpe_missing (docs/API.md, sezione 21).
 """
 import os
 import re
@@ -182,7 +187,7 @@ def list_folders():
         files = _walk(p)
         f = flags.get(name, {})
         esclusi = set(str(x) for x in (f.get("excluded") or []))
-        inject = _mark_inject(files, esclusi)
+        inject = _mark_inject(p, files, esclusi)
         useful = sum(1 for x in files if x["useful"])
         cand = sum(1 for x in files if x["winpe_cand"])
         out.append({
@@ -193,34 +198,64 @@ def list_folders():
             "winpe_candidates": cand, "excluded_files": sum(1 for x in files if x["excluded"]),
             "winpe_inject": bool(f.get("winpe_inject")), "setup_load": bool(f.get("setup_load")),
             "excluded": sorted(esclusi), "apply_to": _read_apply_to(f),
+            "winpe_missing": [{"inf": x["name"], "missing": list(x["inf_missing"])}
+                              for x in inject if x.get("inf_missing")],
             "note": f.get("note", ""), "valid_name": bool(FOLDER_RE.match(name)),
         })
     return out
 
 
-def _mark_inject(files, esclusi):
+def _mark_inject(base, files, esclusi):
     """Segna ogni file della cartella e ritorna quelli che finiscono davvero nel WinPE.
 
     Stessa logica di winpe_inject_files(): sottocartelle di altre architetture saltate, un solo file per nome
     (wimboot appiattisce tutto in X:\\Windows\\System32), i file esclusi a mano lasciano il posto al gemello.
+    Fra piu' copie dello stesso .inf vince quella completa, cioe' quella che ha accanto tutti i file che
+    dichiara; e i file dichiarati da un .inf scelto si prendono dalla sua stessa cartella, non da un'altra
+    copia (docs/API.md, sezione 21).
     Campi aggiunti a ogni file: winpe_cand (potrebbe essere iniettato), excluded (escluso a mano),
-    winpe (finisce davvero nel WinPE)."""
+    winpe (finisce davvero nel WinPE); sui .inf candidati anche inf_missing (file dichiarati che non stanno
+    accanto all'.inf)."""
     cand = []
+    presenti = set(x["name"].lower() for x in files)
     for x in files:
         x["excluded"] = x["name"] in esclusi
         x["winpe_cand"] = x["name"].lower().endswith(WINPE_EXT) and not _inject_skip(x["name"])
         x["winpe"] = False
+        if x["name"].lower().endswith(".inf"):
+            x["inf_missing"] = []
         if x["winpe_cand"] and not x["excluded"]:
             cand.append(x)
-    cand.sort(key=lambda y: (_inject_rank(y["name"]), y["name"].lower()))
-    inject, visti = [], set()
+    # ogni copia di un .inf dice di quali file ha bisogno: quelli che non le stanno accanto la rendono monca
+    for x in cand:
+        if not x["name"].lower().endswith(".inf"):
+            continue
+        x["inf_missing"] = [n for n in inf_needed_files(os.path.join(base, *x["name"].split("/")))
+                            if _sibling(x["name"], n.lower()) not in presenti]
+    # una copia completa batte una monca anche se sta in una cartella meno preferita
+    cand.sort(key=lambda y: (1 if y.get("inf_missing") else 0, _inject_rank(y["name"]), y["name"].lower()))
+    scelti = {}
+    for x in cand:
+        scelti.setdefault(x["name"].split("/")[-1].lower(), x)
+    # coerenza: i file dichiarati da un .inf scelto arrivano dalla cartella dell'.inf, non da un'altra copia
+    per_rel = {x["name"].lower(): x for x in cand}
+    bloccati = set()
     for x in cand:
         nome = x["name"].split("/")[-1].lower()
-        if nome in visti:
+        if not nome.endswith(".inf") or scelti.get(nome) is not x:
             continue
-        visti.add(nome)
-        x["winpe"] = True
-        inject.append(x)
+        for n in inf_needed_files(os.path.join(base, *x["name"].split("/"))):
+            n = n.lower()
+            fratello = per_rel.get(_sibling(x["name"], n))
+            if n in bloccati or fratello is None:
+                continue
+            scelti[n] = fratello
+            bloccati.add(n)
+    inject = []
+    for x in cand:
+        if scelti.get(x["name"].split("/")[-1].lower()) is x:
+            x["winpe"] = True
+            inject.append(x)
     return inject
 
 
@@ -394,6 +429,174 @@ def _inject_skip(rel):
     return any(p in SKIP_DIRS for p in parts)
 
 
+# ---------------------------------------------------------------------------
+# Lettura dei .inf: quali file dichiara come propri (docs/API.md, sezione 21)
+#
+# Un pacchetto driver contiene spesso piu' copie dello stesso .inf, di versioni diverse, e ogni copia ha
+# accanto i file che le servono. wimboot appiattisce tutto in X:\Windows\System32, quindi drvload cerca i
+# file per nome: se si inietta l'.inf di una copia e il .sys di un'altra (o non lo si inietta affatto) il
+# driver non si carica. Per sceglierne una che sta in piedi bisogna sapere quali file l'.inf dichiara.
+# Non serve un parser completo dell'INF: bastano i nomi citati.
+INF_MAX_BYTES = 4 * 1024 * 1024      # oltre questa dimensione non e' un .inf: non si legge
+_INF_NAME_RE = re.compile(r"^[A-Za-z0-9_.~()+#&\- ]{1,120}\.[A-Za-z0-9_]{1,12}$")
+_INF_SECTION_RE = re.compile(r"^\[([^\]]*)\]")
+_INF_CACHE = {}                      # (percorso, mtime, dimensione) -> {nome minuscolo: grafia originale}
+_INF_CACHE_MAX = 500
+
+
+def _inf_text(path):
+    """Testo di un .inf. I file INF di Windows sono UTF-16 con BOM oppure ANSI (cp1252)."""
+    with open(path, "rb") as fh:
+        raw = fh.read(INF_MAX_BYTES + 1)
+    if len(raw) > INF_MAX_BYTES:
+        return ""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", "replace")
+    if raw[:3] == b"\xef\xbb\xbf":
+        return raw[3:].decode("utf-8", "replace")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", "replace")
+
+
+def _inf_strip_comment(riga):
+    """Toglie il commento (";" fino a fine riga), rispettando le virgolette."""
+    virgolette = False
+    for i, c in enumerate(riga):
+        if c == '"':
+            virgolette = not virgolette
+        elif c == ";" and not virgolette:
+            return riga[:i]
+    return riga
+
+
+def _inf_lines(text):
+    """Righe logiche dell'.inf: commenti tolti e righe di continuazione ("\\" a fine riga) unite."""
+    out, acc = [], ""
+    for riga in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        riga = _inf_strip_comment(riga).rstrip()
+        if riga.endswith("\\"):
+            if len(acc) < 8000:
+                acc += riga[:-1]
+            continue
+        riga = (acc + riga).strip()
+        acc = ""
+        if riga:
+            out.append(riga)
+    if acc.strip():
+        out.append(acc.strip())
+    return out
+
+
+def _inf_file_name(tok):
+    """Nome file da un token dell'.inf, come scritto nell'.inf: via "%12%\\", "@", virgolette e percorso.
+
+    Ritorna "" se non e' un nome di file. La grafia originale serve per gli avvisi della GUI
+    ("manca iaStorAfs.sys" si legge meglio di "manca iastorafs.sys"); i confronti si fanno in minuscolo."""
+    t = str(tok or "").strip().strip('"').strip()
+    if t.startswith("@"):
+        t = t[1:].strip()
+    t = re.sub(r"^%[^%]*%", "", t).strip()
+    t = t.replace("\\", "/").split("/")[-1].strip().strip('"').strip()
+    return t if _INF_NAME_RE.match(t) else ""
+
+
+def _inf_declared_map(path):
+    """{nome minuscolo: grafia usata nell'.inf} dei file che l'.inf dichiara come propri.
+
+    Guarda le sezioni [SourceDisksFiles*], le righe CopyFiles (nomi diretti con "@" e sezioni di copia
+    referenziate) e le righe ServiceBinary. Un .inf illeggibile o troppo grande non dichiara nulla."""
+    try:
+        text = _inf_text(path)
+    except OSError:
+        return {}
+    sezioni, cur = {}, ""
+    for riga in _inf_lines(text):
+        m = _INF_SECTION_RE.match(riga)
+        if m:
+            cur = m.group(1).strip().lower()
+            sezioni.setdefault(cur, [])
+            continue
+        if cur:
+            sezioni[cur].append(riga)
+
+    nomi, copia = {}, set()
+    for sez, righe in sezioni.items():
+        sorgenti = sez.split(".")[0] == "sourcedisksfiles"
+        for riga in righe:
+            k, _sep, v = riga.partition("=")
+            if sorgenti:                      # "iaStorVD.sys = 1,,," -> il nome sta nella chiave
+                n = _inf_file_name(k)
+                if n:
+                    nomi.setdefault(n.lower(), n)
+                continue
+            chiave = k.strip().lower()
+            if chiave == "copyfiles":
+                for tok in v.split(","):
+                    tok = tok.strip()
+                    if not tok:
+                        continue
+                    if tok.startswith("@"):   # "CopyFiles=@file.sys": nome diretto
+                        n = _inf_file_name(tok)
+                        if n:
+                            nomi.setdefault(n.lower(), n)
+                    else:                     # altrimenti e' il nome di una sezione di copia
+                        copia.add(tok.strip('"').strip().lower())
+            elif chiave == "servicebinary":   # "ServiceBinary = %12%\iaStorAfs.sys"
+                n = _inf_file_name(v)
+                if n:
+                    nomi.setdefault(n.lower(), n)
+    # sezioni di copia: "file-destinazione, file-sorgente, ...": conta il file sorgente, se c'e'
+    for sez in copia:
+        for riga in sezioni.get(sez, []):
+            campi = [c.strip() for c in riga.split(",")]
+            n = _inf_file_name(campi[1]) if len(campi) > 1 and campi[1] else _inf_file_name(campi[0])
+            if n:
+                nomi.setdefault(n.lower(), n)
+    return nomi
+
+
+def inf_declared_files(path):
+    """Nomi (minuscoli, senza percorso) dei file che l'.inf dichiara come propri."""
+    return set(_inf_declared_cached(path))
+
+
+def _inf_declared_cached(path):
+    """_inf_declared_map con memoria per (percorso, mtime, dimensione): list_folders gira a ogni polling."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    key = (path, int(st.st_mtime), st.st_size)
+    v = _INF_CACHE.get(key)
+    if v is None:
+        if len(_INF_CACHE) >= _INF_CACHE_MAX:
+            _INF_CACHE.clear()
+        v = _inf_declared_map(path)
+        _INF_CACHE[key] = v
+    return v
+
+
+def inf_needed_files(path):
+    """File dichiarati dall'.inf che finirebbero anche loro nel WinPE (.inf/.sys/.cat), in ordine.
+
+    I nomi tornano con la grafia usata nell'.inf: i confronti vanno fatti in minuscolo."""
+    return sorted((orig for low, orig in _inf_declared_cached(path).items() if low.endswith(WINPE_EXT)),
+                  key=str.lower)
+
+
+def _dir_of(rel):
+    """Cartella (percorso relativo) che contiene il file; "" se sta al primo livello."""
+    return "/".join(rel.split("/")[:-1])
+
+
+def _sibling(rel, nome):
+    """Percorso relativo di "nome" preso accanto a "rel" (stessa cartella), in minuscolo."""
+    d = _dir_of(rel).lower()
+    return (d + "/" + nome) if d else nome
+
+
 def winpe_inject_files(iso=None):
     """[(cartella, nome_destinazione, percorso)] da iniettare nel WinPE (flag winpe_inject).
 
@@ -404,24 +607,63 @@ def winpe_inject_files(iso=None):
     architettura o versione di Windows. wimboot li mette tutti nella stessa cartella del WinPE, quindi il
     nome viene appiattito: le sottocartelle a 32 bit si saltano e, a parità di nome, vince la radice o la
     cartella a 64 bit (un .inf cerca i propri file per nome, senza percorso). I file esclusi a mano
-    (set_excluded) restano fuori."""
-    out, seen, total = [], set(), 0
+    (set_excluded) restano fuori.
+
+    Un .inf iniettato si porta dietro i file che dichiara presi dalla sua stessa cartella, anche quando un
+    file con quello stesso nome era già stato scelto da un'altra cartella: se un .inf ha bisogno del suo
+    iaStorAfs.sys deve avere quello che gli sta accanto, altrimenti drvload non lo carica (sezione 21).
+    La sostituzione rispetta comunque MAX_INJECT_BYTES: se il file di ricambio non ci sta, resta il primo."""
+    out, pos, dim, total = [], {}, [], 0     # pos: nome minuscolo -> indice in out; dim: dimensioni parallele
+
+    def metti(cartella, base, x, forza=False):
+        """Aggiunge il file all'elenco; con forza=True sostituisce il gemello già scelto altrove."""
+        nonlocal total
+        nome = x["name"].split("/")[-1]
+        key = nome.lower()
+        full = os.path.join(base, *x["name"].split("/"))
+        i = pos.get(key)
+        if i is not None:
+            if not forza or out[i][2] == full:
+                return
+            delta = x["size"] - dim[i]
+            if total + delta > MAX_INJECT_BYTES:
+                return
+            total += delta
+            dim[i] = x["size"]
+            out[i] = (cartella, nome, full)
+            return
+        if total + x["size"] > MAX_INJECT_BYTES:
+            return
+        total += x["size"]
+        pos[key] = len(out)
+        dim.append(x["size"])
+        out.append((cartella, nome, full))
+
+    cartelle = []
     for f in list_folders():
         if not f["winpe_inject"] or not apply_matches(f.get("apply_to"), iso):
             continue
         base = os.path.join(C.DRIVERS_DIR, f["name"])
         scelti = sorted([x for x in f["files"] if x.get("winpe")],
                         key=lambda x: (_inject_rank(x["name"]), x["name"].lower()))
+        cartelle.append((f, base, scelti))
         for x in scelti:
-            nome = x["name"].split("/")[-1]
-            key = nome.lower()
-            if key in seen:          # stesso nome gia' preso da un'altra cartella
+            metti(f["name"], base, x)
+    # secondo giro: ogni .inf iniettato tira dentro i file che dichiara, presi dalla sua cartella
+    bloccati = set()
+    for f, base, scelti in cartelle:
+        per_rel = {x["name"].lower(): x for x in f["files"]
+                   if x.get("winpe_cand") and not x.get("excluded")}
+        for x in scelti:
+            if not x["name"].lower().endswith(".inf"):
                 continue
-            if total + x["size"] > MAX_INJECT_BYTES:
-                continue
-            total += x["size"]
-            seen.add(key)
-            out.append((f["name"], nome, os.path.join(base, *x["name"].split("/"))))
+            for n in inf_needed_files(os.path.join(base, *x["name"].split("/"))):
+                n = n.lower()
+                fratello = per_rel.get(_sibling(x["name"], n))
+                if n in bloccati or fratello is None:
+                    continue
+                bloccati.add(n)      # il primo .inf che lo chiede se lo tiene: scelta stabile
+                metti(f["name"], base, fratello, forza=True)
     return out
 
 

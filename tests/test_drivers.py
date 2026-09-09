@@ -54,6 +54,82 @@ def _put_file(client, h, folder, name, payload, kind="driver", chunk=None, path=
     return client.post(f"/api/upload/{uid}/finish", headers=h)
 
 
+# Finti .inf per i test della sezione 21: dichiarano i propri file come fanno i pacchetti veri
+# (SourceDisksFiles, CopyFiles con riga di continuazione e nome diretto "@", ServiceBinary con %12%\).
+INF_PROVA = """; Finto pacchetto driver: dichiara prova.sys, aiuto.sys, prova.exe, prova.dll
+; il file finto.sys e' solo nominato in un commento
+[Version]
+Signature="$Windows NT$"
+Class=SCSIAdapter
+CatalogFile=prova.cat        ; il .cat lo cerca Windows da solo, non e' un file dichiarato
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles.amd64]
+prova.sys = 1,,,
+aiuto.sys = 1,,,
+prova.exe = 1,,,
+
+[DestinationDirs]
+Driver_files_copy = 12
+Extra_files_copy = 11
+
+[Driver_files_copy]
+prova.sys
+
+[Extra_files_copy]
+prova.dll
+
+[Prova_inst.NTamd64]
+CopyFiles=Driver_files_copy, \\
+          Extra_files_copy
+CopyFiles=@aiuto.sys
+
+[prova_service]
+ServiceBinary  = %12%\\prova.sys
+[aiuto_service]
+ServiceBinary = %12%\\aiuto.sys
+
+[Strings]
+DiskId1 = "Disco driver; di prova"
+"""
+
+# .inf che non porta file propri (solo registro), come le estensioni dei pacchetti Intel
+INF_SENZA_FILE = """[Version]
+Signature="$Windows NT$"
+Class=Extension
+CatalogFile=est.cat
+
+[Manufacturer]
+%INTEL% = INTEL,NTamd64
+
+[INTEL.NTamd64]
+%Desc% = Est_inst, PCI\\VEN_8086&DEV_0001
+
+[Est_inst.NTamd64]
+AddReg = est_addreg
+
+[est_addreg]
+HKR,,"Prova",0x00000000,"1"
+
+[Strings]
+INTEL = "Finta Intel"
+Desc = "Estensione di prova"
+"""
+
+
+def _leggi(path):
+    """Contenuto di un file, senza lasciarlo aperto."""
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def _inf_bytes(testo, encoding="utf-16"):
+    """Contenuto di un .inf: quelli veri sono UTF-16 con BOM oppure ANSI (cp1252), con fine riga CRLF."""
+    return testo.replace("\n", "\r\n").encode(encoding)
+
+
 def _zip_bytes(entries):
     """entries: [(nome, bytes)] -> contenuto zip."""
     buf = io.BytesIO()
@@ -698,6 +774,150 @@ class DriversApiTest(unittest.TestCase):
         # una ISO che non c'e' non fa saltare nulla (nessun filtro applicabile)
         self.assertIsNone(winpe.iso_for("mai-vista"))
         self.assertTrue(winpe.install_cmd("mai-vista"))
+        self._reset_drivers()
+
+    # ------------------------------------- coerenza fra .inf e i file che dichiara (docs/API.md, sezione 21)
+    def test_16_inf_declared_files(self):
+        """Lettura dei file dichiarati da un .inf: UTF-16 con BOM, ANSI, continuazioni, commenti."""
+        from pixio.services import drivers
+        tmp = tempfile.mkdtemp(prefix="pixio-inf-")
+        try:
+            def scrivi(nome, testo, encoding="utf-16"):
+                full = os.path.join(tmp, nome)
+                with open(full, "wb") as fh:
+                    fh.write(_inf_bytes(testo, encoding))
+                return full
+
+            # UTF-16 con BOM, come quasi tutti gli .inf dei pacchetti Intel
+            u16 = scrivi("prova.inf", INF_PROVA)
+            self.assertEqual(_leggi(u16)[:2], b"\xff\xfe")
+            self.assertEqual(sorted(drivers.inf_declared_files(u16)),
+                             ["aiuto.sys", "prova.dll", "prova.exe", "prova.sys"])
+            # solo quelli che finirebbero anche loro nel WinPE (.inf/.sys/.cat)
+            self.assertEqual(drivers.inf_needed_files(u16), ["aiuto.sys", "prova.sys"])
+            # il nome citato in un commento non conta, e il .cat di CatalogFile nemmeno
+            self.assertNotIn("finto.sys", drivers.inf_declared_files(u16))
+            self.assertNotIn("prova.cat", drivers.inf_declared_files(u16))
+            # ANSI (cp1252) con accenti: stessa lettura
+            ansi = scrivi("ansi.inf", INF_PROVA.replace("Disco driver", "Disco però"), "cp1252")
+            self.assertEqual(_leggi(ansi)[:2], b"; ")
+            self.assertEqual(drivers.inf_needed_files(ansi), ["aiuto.sys", "prova.sys"])
+            # UTF-8 con BOM: capita nei pacchetti riconfezionati
+            u8 = scrivi("utf8.inf", INF_PROVA, "utf-8-sig")
+            self.assertEqual(drivers.inf_needed_files(u8), ["aiuto.sys", "prova.sys"])
+            # la riga di continuazione: senza unirla Extra_files_copy (prova.dll) si perderebbe
+            self.assertIn("prova.dll", drivers.inf_declared_files(u16))
+            # .inf che non porta file propri (solo registro): non dichiara niente
+            senza = scrivi("senza.inf", INF_SENZA_FILE)
+            self.assertEqual(drivers.inf_declared_files(senza), set())
+            self.assertEqual(drivers.inf_needed_files(senza), [])
+            # la grafia dell'.inf si conserva per gli avvisi, i confronti restano in minuscolo
+            maiuscole = scrivi("maiuscole.inf", "[Prova_service]\nServiceBinary = %12%\\MioDriver.SYS\n")
+            self.assertEqual(drivers.inf_declared_files(maiuscole), {"miodriver.sys"})
+            self.assertEqual(drivers.inf_needed_files(maiuscole), ["MioDriver.SYS"])
+            # file illeggibile o troppo grande: nessuna dipendenza, nessuna eccezione
+            self.assertEqual(drivers.inf_declared_files(os.path.join(tmp, "mai-visto.inf")), set())
+            limite, drivers.INF_MAX_BYTES = drivers.INF_MAX_BYTES, 32
+            try:
+                self.assertEqual(drivers.inf_declared_files(scrivi("grande.inf", INF_PROVA)), set())
+            finally:
+                drivers.INF_MAX_BYTES = limite
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_17_inf_complete_copy_wins(self):
+        """Fra più copie dello stesso .inf vince quella che ha accanto i file che dichiara."""
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "Copie INF"
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+        # copia al primo livello: sarebbe la preferita, ma le manca aiuto.sys
+        _put_file(self.client, self.h, n, "prova.inf", _inf_bytes(INF_PROVA))
+        _put_file(self.client, self.h, n, "prova.sys", b"radice-sys")
+        _put_file(self.client, self.h, n, "prova.cat", b"radice-cat")
+        # copia completa in una sottocartella, meno preferita dall'ordine di sempre
+        for f, data in (("prova.inf", _inf_bytes(INF_PROVA)), ("prova.sys", b"pacchetto-sys"),
+                        ("aiuto.sys", b"pacchetto-aiuto")):
+            _put_file(self.client, self.h, n, f, data, path="pacchetto/x64/" + f)
+        self.client.patch(f"/api/drivers/folders/{n.replace(' ', '%20')}",
+                          json={"winpe_inject": True}, headers=self.h)
+
+        f = self._folders()[n]
+        per_nome = {x["name"]: x for x in f["files"]}
+        # ogni copia dice cosa le manca
+        self.assertEqual(per_nome["prova.inf"]["inf_missing"], ["aiuto.sys"])
+        self.assertEqual(per_nome["pacchetto/x64/prova.inf"]["inf_missing"], [])
+        # vince la copia completa, e si porta dietro i file che dichiara presi dalla sua cartella
+        self.assertFalse(per_nome["prova.inf"]["winpe"])
+        self.assertTrue(per_nome["pacchetto/x64/prova.inf"]["winpe"])
+        self.assertFalse(per_nome["prova.sys"]["winpe"])
+        self.assertTrue(per_nome["pacchetto/x64/prova.sys"]["winpe"])
+        self.assertTrue(per_nome["pacchetto/x64/aiuto.sys"]["winpe"])
+        # un file che l'.inf non dichiara resta scelto come prima: vince la radice
+        self.assertTrue(per_nome["prova.cat"]["winpe"])
+        # nessun avviso: la copia scelta è completa
+        self.assertEqual(f["winpe_missing"], [])
+        # e nell'iniezione vera i percorsi sono quelli della copia completa
+        scelti = {nome: p for _c, nome, p in drivers.winpe_inject_files()}
+        self.assertTrue(scelti["prova.inf"].endswith(os.path.join("pacchetto", "x64", "prova.inf")))
+        self.assertEqual(_leggi(scelti["prova.sys"]), b"pacchetto-sys")
+        self.assertEqual(_leggi(scelti["aiuto.sys"]), b"pacchetto-aiuto")
+        self.assertEqual(_leggi(scelti["prova.cat"]), b"radice-cat")
+
+        # un file dichiarato ma escluso a mano resta fuori: la scelta dell'utente vale
+        r = self.client.patch(f"/api/drivers/folders/{n}/files/pacchetto/x64/aiuto.sys",
+                              json={"excluded": True}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertNotIn("aiuto.sys", [x[1] for x in drivers.winpe_inject_files()])
+        self.client.patch(f"/api/drivers/folders/{n}/files/pacchetto/x64/aiuto.sys",
+                          json={"excluded": False}, headers=self.h)
+
+        # cartella diversa con lo stesso nome di file: l'.inf tiene il suo, non quello dell'altra cartella
+        a = "AAA doppioni"      # prima in ordine alfabetico: senza la regola vincerebbe il suo prova.sys
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": a}, headers=self.h).status_code, 201)
+        _put_file(self.client, self.h, a, "prova.sys", b"altra-cartella")
+        _put_file(self.client, self.h, a, "solo.inf", _inf_bytes(INF_SENZA_FILE))
+        self.client.patch(f"/api/drivers/folders/{a.replace(' ', '%20')}",
+                          json={"winpe_inject": True}, headers=self.h)
+        scelti = {nome: p for _c, nome, p in drivers.winpe_inject_files()}
+        self.assertEqual(_leggi(scelti["prova.sys"]), b"pacchetto-sys")
+        self.assertEqual(_leggi(scelti["aiuto.sys"]), b"pacchetto-aiuto")
+        self.assertIn("solo.inf", scelti)
+        self._reset_drivers()
+
+    def test_18_inf_missing_files_warning(self):
+        """Se nessuna copia è completa il file mancante viene segnalato, invece di scoprirlo con drvload."""
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "INF monco"
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+        _put_file(self.client, self.h, n, "prova.inf", _inf_bytes(INF_PROVA))
+        _put_file(self.client, self.h, n, "prova.sys", b"sys")
+        _put_file(self.client, self.h, n, "prova.inf", _inf_bytes(INF_PROVA), path="altra/prova.inf")
+        self.client.patch(f"/api/drivers/folders/{n.replace(' ', '%20')}",
+                          json={"winpe_inject": True}, headers=self.h)
+        f = self._folders()[n]
+        # nessuna copia ha aiuto.sys: si inietta comunque la migliore, ma con l'avviso
+        self.assertEqual(f["winpe_missing"], [{"inf": "prova.inf", "missing": ["aiuto.sys"]}])
+        self.assertEqual({x["name"]: x["inf_missing"] for x in f["files"] if x["name"].endswith(".inf")},
+                         {"prova.inf": ["aiuto.sys"], "altra/prova.inf": ["aiuto.sys", "prova.sys"]})
+        self.assertIn("prova.inf", [x[1] for x in drivers.winpe_inject_files()])
+        self.assertNotIn("aiuto.sys", [x[1] for x in drivers.winpe_inject_files()])
+        # lo stesso avviso arriva alla GUI da GET /api/drivers
+        d = self.client.get("/api/drivers", headers=self.h).get_json()
+        cart = [x for x in d["folders"] if x["name"] == n][0]
+        self.assertEqual(cart["winpe_missing"], [{"inf": "prova.inf", "missing": ["aiuto.sys"]}])
+        # messo il file accanto all'.inf l'avviso sparisce e il file viene iniettato
+        _put_file(self.client, self.h, n, "aiuto.sys", b"aiuto")
+        f = self._folders()[n]
+        self.assertEqual(f["winpe_missing"], [])
+        self.assertIn("aiuto.sys", [x[1] for x in drivers.winpe_inject_files()])
+        # il limite di dimensione resta rispettato: nessun file oltre MAX_INJECT_BYTES
+        vecchio, drivers.MAX_INJECT_BYTES = drivers.MAX_INJECT_BYTES, 1
+        try:
+            self.assertEqual(drivers.winpe_inject_files(), [])
+        finally:
+            drivers.MAX_INJECT_BYTES = vecchio
         self._reset_drivers()
 
     # ---------------------------------------------------------------- nessuna regressione su ISO e risposte

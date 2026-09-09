@@ -90,6 +90,7 @@ Oggetto ISO:
 ## Driver (libreria driver: `/srv/pixio/http/drivers`, share `\\<ip>\drivers` in scrittura, HTTP `/pxe/drivers/`)
 Servizio: `pixio/services/drivers.py` (list_folders, create_folder, delete_folder, set_flags, delete_file, winpe_inject_files, setup_load_folders).
 - `GET /api/drivers` → `{root, samba_path:"\\\\10.10.0.254\\drivers", samba_enabled, folders:[{name, files:[{name (relativo, può contenere /), size, mtime}], count, size, inf_count, winpe_files, winpe_size, winpe_inject:bool, setup_load:bool, note, valid_name:bool}]}`
+  (per ogni cartella anche `winpe_missing`, sezione 21; per ogni file `useful`, `winpe_cand`, `excluded`, `winpe` e, sui `.inf`, `inf_missing`)
 - `POST /api/drivers/folders {name}` → `{ok, folder}` (nome: lettere/numeri/spazi/. _ - ( ) +, max 64; 409 se esiste)
 - `PATCH /api/drivers/folders/<name> {winpe_inject?, setup_load?, note?}` → `{ok, folder}`
 - `DELETE /api/drivers/folders/<name>` → `{ok}` (cancella cartella e file; conferma nella UI)
@@ -411,6 +412,8 @@ dell'elenco espone `excluded`. Ogni file espone anche `winpe_cand` (potrebbe ess
 `.inf/.sys/.cat/.dll` fuori dalle sottocartelle di altre architetture) e `winpe` (ci finisce davvero: non è
 escluso e nessun altro file con lo stesso nome ha la precedenza). La cartella espone `winpe_files` (quanti ci
 finiscono davvero, esclusioni comprese), `winpe_candidates` ed `excluded_files`.
+La scelta fra due file con lo stesso nome non guarda più solo la cartella: fra più copie di uno stesso `.inf`
+vince quella completa, e i file che l'`.inf` dichiara si prendono dalla sua cartella (sezione 21).
 
 ### GUI
 - Sulla scheda della cartella: riga "Si applica a" con le tre modalità; scegliendo gruppi o ISO compare l'elenco con caselle,
@@ -586,3 +589,46 @@ Non viene cancellato né riscritto: `/answers/<id>/<file>` continua a servirlo, 
 lasciarlo modificare, e `save-answer` a rigenerarlo quando lo si chiede. È anche il ripiego
 dell'indirizzo dinamico: se il profilo non c'è più (o la generazione fallisce) il client scarica
 quel contenuto, così un PC in avvio non resta mai senza file di risposta.
+
+
+## 21. Il driver iniettato deve avere accanto i file che dichiara
+Motivo: due prove in macchina virtuale con `iaStorVD.inf` (Intel RST/VMD, il driver che serve a vedere il disco)
+si chiudevano con "non caricato". La libreria contiene più copie dello stesso `.inf`, di versioni diverse;
+Pixio ne sceglieva una sola per nome guardando solo la cartella (`_inject_rank`: prima la radice, poi le cartelle
+a 64 bit). Ma un `.inf` dichiara i propri file, e wimboot appiattisce tutto in `X:\Windows\System32`: `drvload`
+li cerca per nome. Se si inietta l'`.inf` di una copia e il `.sys` di un'altra — o se quel `.sys` non c'è — il
+driver non si carica, e l'errore si scopre solo davanti a un PC in installazione.
+
+### Lettura dei .inf
+`drivers.inf_declared_files(path)` restituisce i nomi (minuscoli, senza percorso) dei file che l'`.inf` dichiara
+come propri; `drivers.inf_needed_files(path)` è il sottoinsieme che finirebbe anche lui nel WinPE (`.inf .sys .cat`).
+Non è un parser INF completo, serve solo l'elenco dei nomi citati:
+- sezioni `[SourceDisksFiles*]`: il nome sta nella chiave (`iaStorVD.sys = 1,,,`);
+- righe `CopyFiles=`: i nomi diretti (`@RstMwService.exe`) e le sezioni di copia referenziate, dove ogni riga è
+  `file-destinazione, file-sorgente, ...` (conta il file sorgente, se c'è);
+- righe `ServiceBinary`, togliendo il prefisso di cartella (`%12%\iaStorAfs.sys` → `iaStorAfs.sys`).
+
+I file INF di Windows sono UTF-16 con BOM oppure ANSI (cp1252), hanno righe di continuazione con `\` a fine riga
+e commenti dopo `;` (non dentro le virgolette): tutto questo viene gestito. Un `.inf` illeggibile o più grande di
+`INF_MAX_BYTES` (4 MB) non dichiara nulla, e non fa fallire l'iniezione. Il risultato è in memoria per
+(percorso, mtime, dimensione), perché `list_folders()` gira a ogni aggiornamento della pagina.
+
+### Scelta della copia e coerenza
+- Fra più copie dello stesso `.inf` vince quella **completa**, cioè quella che ha accanto tutti i file che dichiara
+  (fra quelli con estensione iniettabile). Una copia completa batte una monca anche se sta in una cartella meno
+  preferita; a parità di completezza vale l'ordine di prima (`_inject_rank`).
+- Insieme all'`.inf` scelto vengono iniettati i file che dichiara **presi dalla sua stessa cartella**, anche se un
+  file con quel nome era già stato scelto da un'altra cartella o da un'altra cartella driver: la coerenza fra
+  `.inf` e i suoi file viene prima della preferenza di cartella. Se due `.inf` diversi chiedono lo stesso nome,
+  se lo tiene il primo (scelta stabile). Il limite `MAX_INJECT_BYTES` resta valido: se il file di ricambio non ci
+  sta, resta quello già scelto.
+- I file esclusi a mano (sezione 15) restano fuori comunque: la scelta del tecnico vale anche qui.
+
+### Segnalazione
+- Ogni file `.inf` candidato espone `inf_missing`: i file che dichiara e che non stanno nella sua cartella.
+- Ogni cartella espone `winpe_missing: [{inf: "<percorso relativo>", missing: ["nome", ...]}]`, con una voce per
+  ogni `.inf` che finirebbe davvero nel WinPE e a cui manca qualcosa (quindi nessuna copia è completa).
+- La pagina Driver mostra l'avviso sulla scheda della cartella, nello stile degli altri
+  (`"iaStorVD.inf (in RAID/RAPIDSTORAGE/Drivers) dichiara un file che non c'è nella sua cartella: manca
+  iaStorAfs.sys, il driver non si caricherebbe nel WinPE"`), e nel pannello dei file una pillola `manca <nome>`
+  sulla riga dell'`.inf`.
