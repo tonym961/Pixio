@@ -19,6 +19,9 @@ _guard = threading.Lock()
 TICK = 2.0
 MOUNT_CHECK_EVERY = 60
 CLEANUP_EVERY = 3600
+# la copia locale ha un suo ritmo: chi la attiva dalla GUI non deve aspettare un'ora
+# per capire se sta funzionando.
+CACHE_CHECK_EVERY = 300
 
 
 def _catalog():
@@ -87,6 +90,7 @@ def _loop():
     last_mount = time.monotonic()
     last_scan = time.monotonic()
     last_cleanup = time.monotonic()
+    last_cache = 0.0
     while not _stop.is_set():
         _safe("poll client", clients.poll)
         now = time.monotonic()
@@ -99,11 +103,12 @@ def _loop():
             cat_mod = _catalog()
             if cat_mod is not None and callable(getattr(cat_mod, "remount_enabled", None)):
                 _safe("remount ISO abilitate", cat_mod.remount_enabled)
+        if now - last_cache >= CACHE_CHECK_EVERY:
+            last_cache = now
+            _safe("copia locale automatica", _autocache_tick)
         if now - last_cleanup >= CLEANUP_EVERY:
             last_cleanup = now
             _safe("pulizia upload", uploads.cleanup)
-            _safe("copia locale automatica", _autocache_tick)
-            _safe("copia locale automatica", _autocache_tick)
         try:
             scan_cfg = S.load().get("scan", {})
         except Exception:  # noqa: BLE001

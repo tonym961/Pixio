@@ -44,7 +44,14 @@ def set_cache():
     if not isinstance(d, dict):
         raise ValueError("Corpo JSON non valido")
     incoming = d.get("settings") if isinstance(d.get("settings"), dict) else d
-    return jsonify({"ok": True, "settings": autocache.save_settings(incoming)})
+    prima = autocache.current_settings().get("auto")
+    settings = autocache.save_settings(incoming)
+    # Chi attiva la copia dalla GUI si aspetta che parta adesso, non al giro successivo
+    # del controllo periodico: senza questo sembra che l'opzione non funzioni.
+    job_id = None
+    if settings.get("auto") and not prima:
+        job_id = autocache.start().id
+    return jsonify({"ok": True, "settings": settings, "job_id": job_id})
 
 
 @bp.route("/api/cache/run", methods=["POST"])
