@@ -13,9 +13,14 @@ Rotte:
   POST   /api/winprofiles/preview              anteprima di impostazioni non ancora salvate
   POST   /api/winprofiles/<id>/preview         anteprima dell'autounattend.xml di un profilo salvato
   POST   /api/winprofiles/<id>/save-answer     genera l'XML e lo salva come risposta "windows"
+
+Anteprima e salvataggio accettano "iso": lo slug della ISO per cui si genera il file. Con quello
+l'edizione da installare viene confrontata con quelle che l'immagine contiene davvero, invece di
+scrivere un valore che farà fallire il programma di installazione (docs/API.md, sezione 19).
 """
 from flask import Blueprint, jsonify, request
 
+from .. import config as C
 from .. import settings as S
 from ..services import winprofile
 
@@ -57,10 +62,30 @@ def _tweaks():
         return {"categories": [], "items": []}
 
 
+def _con_isos(profiles):
+    """Aggiunge a ogni profilo le ISO su cui girerà, con le loro edizioni (docs/API.md, sez. 19).
+
+    È il collegamento che permette alla GUI di proporre una tendina invece di un campo libero: le
+    edizioni arrivano dalla cache del catalogo, quindi non si legge nessun file qui dentro."""
+    try:
+        legami = winprofile.iso_bindings()
+    except Exception:  # noqa: BLE001 - senza catalogo la pagina deve aprirsi lo stesso
+        legami = {}
+    for p in profiles:
+        p["isos"] = legami.get(p["id"], [])
+    return profiles
+
+
+def _iso_slug(data):
+    """Slug della ISO per cui generare l'XML, dal corpo della richiesta (vuoto = nessuna)."""
+    slug = str(data.get("iso") or data.get("iso_slug") or "").strip()
+    return slug if C.SLUG_RE.match(slug) else ""
+
+
 @bp.route("/api/winprofiles")
 def list_profiles():
     return jsonify({
-        "profiles": winprofile.list_profiles(),
+        "profiles": _con_isos(winprofile.list_profiles()),
         "defaults": winprofile.defaults(),
         "timezones": winprofile.timezones_list(),
         "languages": winprofile.languages_list(),
@@ -104,7 +129,7 @@ def get_profile(pid):
     p = winprofile.get(pid)
     if not p:
         return _err("Profilo non trovato", 404)
-    return jsonify(p)
+    return jsonify(_con_isos([p])[0])
 
 
 @bp.route("/api/winprofiles/<pid>", methods=["PUT"])
@@ -155,7 +180,8 @@ def preview_new():
     try:
         st = winprofile.validate(deep_merge(base, data.get("settings") or {}))
         xml = winprofile.render_autounattend(
-            {"name": data.get("name") or "anteprima", "settings": st}, _server_ip())
+            {"name": data.get("name") or "anteprima", "settings": st}, _server_ip(),
+            editions=winprofile.editions_for_iso(_iso_slug(data)))
     except ValueError as ex:
         return _err(str(ex))
     return jsonify({"xml": xml})
@@ -177,7 +203,8 @@ def preview_profile(pid):
         p = dict(p)
         p["settings"] = deep_merge(p["settings"], data["settings"])
     try:
-        xml = winprofile.render_autounattend(p, _server_ip())
+        xml = winprofile.render_autounattend(p, _server_ip(),
+                                             editions=winprofile.editions_for_iso(_iso_slug(data)))
     except ValueError as ex:
         return _err(str(ex))
     return jsonify({"xml": xml})
@@ -186,9 +213,10 @@ def preview_profile(pid):
 @bp.route("/api/winprofiles/<pid>/save-answer", methods=["POST"])
 def save_answer(pid):
     """Genera l'autounattend.xml e lo salva come risposta di tipo windows (services/answers.py)."""
-    answer_id = _body().get("answer_id") or None
+    data = _body()
+    answer_id = data.get("answer_id") or None
     try:
-        out = winprofile.save_as_answer(pid, answer_id, _server_ip())
+        out = winprofile.save_as_answer(pid, answer_id, _server_ip(), _iso_slug(data))
     except FileNotFoundError as ex:
         return _err(str(ex), 404)
     except FileExistsError as ex:

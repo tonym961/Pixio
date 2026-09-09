@@ -320,7 +320,7 @@
       "kind": "windows",
       "group": "edizione",
       "name": "Windows Server 2022 / 2025 Standard",
-      "description": "Server con interfaccia grafica (Desktop Experience) pronto per la produzione: Desktop remoto attivo con la regola del firewall, spooler di stampa senza connessioni remote in entrata (protezione consigliata dopo PrintNightmare), SMB1 disattivato, piano Prestazioni elevate, niente sospensione né ibernazione, aggiornamenti che non riavviano da soli. Nessun accesso automatico e nessuna app da rimuovere: su Server non ci sono Microsoft Store, Cortana, Copilot, widget né esperienze consumer. Per Windows Server 2025 correggi nome dell'edizione e chiave. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: fa scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza, che va applicata dopo. Con una ISO di Windows Server in inglese (spesso l'unica disponibile) l'installazione esce comunque in italiano: il modello attiva l'installazione automatica della lingua it-IT da Windows Update, quindi al primo accesso il server deve poter raggiungere internet e il cambio si vede dopo il riavvio successivo. Gli altri modelli non ce l'hanno perché partono da ISO già in italiano, dove il pacchetto lingua non serve.",
+      "description": "Server con interfaccia grafica (Desktop Experience) pronto per la produzione: Desktop remoto attivo con la regola del firewall, spooler di stampa senza connessioni remote in entrata (protezione consigliata dopo PrintNightmare), SMB1 disattivato, piano Prestazioni elevate, niente sospensione né ibernazione, aggiornamenti che non riavviano da soli. Nessun accesso automatico e nessuna app da rimuovere: su Server non ci sono Microsoft Store, Cortana, Copilot, widget né esperienze consumer. L'edizione da installare è volutamente vuota: il nome dell'immagine cambia con l'anno (Windows Server 2022 SERVERSTANDARD, Windows Server 2025 SERVERSTANDARD...) e sceglierlo qui a memoria fa fallire l'installazione sull'altra versione. Abbina il profilo alla ISO e scegli l'edizione dalla tendina, che elenca quelle davvero presenti nell'immagine. Per Windows Server 2025 correggi anche la chiave. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: fa scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza, che va applicata dopo. Con una ISO di Windows Server in inglese (spesso l'unica disponibile) l'installazione esce comunque in italiano: il modello attiva l'installazione automatica della lingua it-IT da Windows Update, quindi al primo accesso il server deve poter raggiungere internet e il cambio si vede dopo il riavvio successivo. Gli altri modelli non ce l'hanno perché partono da ISO già in italiano, dove il pacchetto lingua non serve.",
       "settings": {
         "target": "server",
         "language": "it-IT",
@@ -338,7 +338,7 @@
           "keyboard": "it-IT"
         },
         "architecture": "amd64",
-        "edition_index": "Windows Server 2022 SERVERSTANDARD",
+        "edition_index": "",
         "product_key": "VDYBN-27WPP-V4HQT-9VMD4-VMK7H",
         "computer_name": "SRV-*",
         "organization": "",

@@ -1,4 +1,4 @@
-"""API catalogo ISO."""
+"""API catalogo ISO (docs/API.md: Catalogo ISO, sezioni 16, 17 e 19)."""
 from flask import Blueprint, jsonify, request
 
 from .. import config as C
@@ -59,6 +59,39 @@ def patch_iso(slug):
     except HelperError as ex:
         return _err(f"Operazione fallita: {ex}", 500)
     return jsonify(e)
+
+
+@bp.route("/api/catalog/<slug>/editions")
+def iso_editions(slug):
+    """Edizioni dentro sources/install.wim della ISO (docs/API.md, sezione 19).
+
+    Risponde con la cache: leggere davvero il file costa un wiminfo su 4 GB, spesso su una share,
+    e lo fa il POST qui sotto dentro un job."""
+    if not C.SLUG_RE.match(slug):
+        return _err("slug non valido")
+    e = catalog.get(slug)
+    if not e:
+        return _err("ISO non trovata", 404)
+    info = e.get("editions_info") or {}
+    return jsonify({"slug": slug, "name": e.get("name") or e.get("file") or slug,
+                    "type": e.get("type"), "editions": e.get("editions") or [],
+                    "file": info.get("file", ""), "updated": info.get("updated", ""),
+                    "error": info.get("error", "")})
+
+
+@bp.route("/api/catalog/<slug>/editions", methods=["POST"])
+def refresh_iso_editions(slug):
+    """Rilegge le edizioni dalla ISO. Job in background: la lettura può essere lenta."""
+    if not C.SLUG_RE.match(slug):
+        return _err("slug non valido")
+    e = catalog.get(slug)
+    if not e:
+        return _err("ISO non trovata", 404)
+    if (e.get("type") or "") != "windows":
+        return _err("Le edizioni si leggono solo dalle immagini di installazione Windows")
+    j = jobs.start("editions", slug, lambda job: catalog.refresh_editions(slug, force=True),
+                   message=f"Lettura delle edizioni di {e.get('name') or slug}")
+    return jsonify({"ok": True, "job_id": j.id})
 
 
 @bp.route("/api/catalog/<slug>/redetect", methods=["POST"])

@@ -21,6 +21,14 @@
    "Generici" (per tipo di postazione), ognuno con la descrizione e il tipo di Windows a cui si
    riferisce. Scegliendone uno il form si riempie per intero, selettore "Tipo di Windows" compreso.
 
+   Il campo "Edizione da installare" (settings.edition_index, docs/API.md sezione 19) non è più a
+   testo libero quando si sa su quale immagine finirà il profilo: se la risposta generata dal
+   profilo è collegata a una ISO nel catalogo, la GUI mostra una tendina con le edizioni che quella
+   install.wim contiene davvero, ognuna con il suo indice, più "Chiedi durante l'installazione" e
+   "Scrivi un valore a mano". Se l'edizione salvata nel profilo non è fra quelle dell'immagine
+   compare un avviso con l'elenco di quelle buone — prima di avviare l'installazione, non dopo che
+   il setup si è piantato — e l'elenco dei profili mostra la pillola "edizione non nell'immagine".
+
    Il riquadro "Lingua da installare" della stessa sezione (settings.language_install, docs/API.md
    sezione 13) serve alle ISO che contengono una lingua sola: la ISO parte in inglese e il PC si
    ritrova in italiano da solo, senza installare a mano il pacchetto lingua. Interruttore, lingua,
@@ -108,9 +116,10 @@
       const dk = s.disk || {};
       const dettagli = [s.computer_name || '—', dk.mode || 'auto-uefi', s.language || 'it-IT'].join(' · ');
       const tipo = s.target && s.target !== 'client' ? ` <span class="pill neutral">${esc(targetPill(s.target))}</span>` : '';
+      const edKo = edizioneNonValida(p) ? ' <span class="pill warn" title="L\'edizione scelta non è dentro l\'immagine abbinata">edizione non nell\'immagine</span>' : '';
       return `<li data-id="${esc(p.id)}" class="${p.id === sel ? 'sel' : ''}" style="${p.id === sel ? 'border-color:var(--accent)' : ''}">
         <div style="min-width:0;flex:1">
-          <div class="drv-name">${esc(p.name)}${tipo}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
+          <div class="drv-name">${esc(p.name)}${tipo}${edKo}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
           <div class="hint">${esc(dettagli)}</div>
         </div>
         <button class="btn small" type="button" data-act="apri" data-id="${esc(p.id)}">Apri</button>
@@ -235,10 +244,205 @@
   }
 
   function open(p) {
-    W.cur = { id: p.id, name: p.name, note: p.note || '', preset: '', settings: merge(defaults(), p.settings || {}) };
+    // isos = le ISO su cui girerà questo profilo (GET /api/winprofiles): servono alla tendina
+    // "Edizione da installare", che senza di loro non saprebbe quali edizioni esistono davvero
+    W.cur = { id: p.id, name: p.name, note: p.note || '', preset: '', isos: p.isos || [],
+              settings: merge(defaults(), p.settings || {}) };
     W.dirty = false;
     renderList();
     renderEditor();
+  }
+
+  // ---------------------------------------------------------------- edizione da installare
+  /* settings.edition_index (docs/API.md, sezione 19) finisce nell'autounattend.xml come nome
+     dell'immagine dentro install.wim oppure come suo indice. Scritto a mano è la causa più
+     frequente di installazioni che si fermano a metà: una ISO LTSC, per esempio, non contiene
+     nessun "Windows 11 Pro", e il setup si pianta con "impossibile trovare l'immagine".
+     Quando il profilo è abbinato a una ISO — cioè la risposta che genera è collegata a quella ISO
+     nel catalogo — Pixio sa quali edizioni ci sono davvero e le mette in una tendina, con l'indice
+     accanto. Resta sempre la possibilità di scrivere un valore a mano, perché lo stesso profilo
+     può essere usato su ISO diverse. Senza nessuna ISO da cui leggere il campo resta libero, con i
+     nomi tipici del tipo di Windows scelto come suggerimento. */
+
+  /** ISO abbinate al profilo di cui si conoscono le edizioni. */
+  function isosProfilo() {
+    return ((W.cur && W.cur.isos) || []).filter((i) => i && (i.editions || []).length);
+  }
+
+  /** Edizioni proposte: quelle delle ISO abbinate, senza doppioni, con indice e ISO di provenienza. */
+  function edizioniProfilo() {
+    const out = []; const visti = {};
+    isosProfilo().forEach((iso) => {
+      (iso.editions || []).forEach((im) => {
+        const nome = im.name || im.display_name || '';
+        if (!nome) return;
+        const k = nome.toLowerCase();
+        if (visti[k]) { if (visti[k].isos.indexOf(iso.name) < 0) visti[k].isos.push(iso.name); return; }
+        visti[k] = { value: nome, index: im.index, display: im.display_name || '', isos: [iso.name] };
+        out.push(visti[k]);
+      });
+    });
+    return out;
+  }
+
+  /** Stessa regola del server (winprofile.match_edition): un numero è l'indice, un testo il nome. */
+  function trovaEdizione(voci, valore) {
+    const v = String(valore == null ? '' : valore).trim();
+    if (!v || !voci.length) return null;
+    if (/^\d+$/.test(v)) return voci.find((x) => String(x.index) === String(Number(v))) || null;
+    const basso = v.toLowerCase();
+    return voci.find((x) => String(x.value).toLowerCase() === basso)
+      || voci.find((x) => String(x.display || '').toLowerCase() === basso) || null;
+  }
+
+  /** Nomi di immagine tipici del tipo di Windows scelto, dal server (targets[].editions). */
+  function edizioniSuggerite(t) {
+    const v = targets().find((x) => x.id === (t || twTarget()));
+    return (v && v.editions) || [];
+  }
+
+  function edizioneEtichetta(x) {
+    const iso = x.isos.length > 1 ? ` — ${x.isos.join(', ')}` : '';
+    return `${x.index} · ${x.value}${x.display && x.display !== x.value ? ` (${x.display})` : ''}${iso}`;
+  }
+
+  /** Regola gemella di winprofile.edition_target_warning: vale quando non c'è nessuna ISO da cui
+      leggere le edizioni vere e prende il caso più frequente ("Windows 11 Pro" su un profilo LTSC). */
+  function avvisoTipoEdizione(target, valore) {
+    const v = String(valore || '').trim();
+    if (!v || /^\d+$/.test(v)) return '';
+    const basso = v.toLowerCase();
+    const ltsc = basso.indexOf('ltsc') >= 0 || basso.indexOf('ltsb') >= 0;
+    const server = basso.indexOf('server') >= 0;
+    const t = String(target || 'client');
+    const nome = twTargetNome(t);
+    if ((t === '10-ltsc' || t === '11-ltsc') && !ltsc) {
+      return `Il profilo è per ${nome}, ma "${v}" non è un'edizione LTSC: quelle immagini contengono solo edizioni Enterprise LTSC.`;
+    }
+    if (t === 'server' && !server) return `Il profilo è per ${nome}, ma "${v}" non è un'edizione di Windows Server.`;
+    if (t === 'client' && (ltsc || server)) {
+      return `Il profilo è per ${nome}, ma "${v}" è un'edizione ${ltsc ? 'LTSC' : 'di Windows Server'}.`;
+    }
+    return '';
+  }
+
+  /** L'edizione di un profilo non sta in piedi: o non è dentro le ISO abbinate, o non c'entra con
+      il tipo di Windows scelto. Va detto nell'elenco, prima di aprire il profilo. */
+  function edizioneNonValida(p) {
+    const s = (p && p.settings) || {};
+    const val = String(s.edition_index || '').trim();
+    if (!val) return false;
+    const voci = [];
+    ((p && p.isos) || []).forEach((iso) => (iso.editions || []).forEach((im) => voci.push({
+      value: im.name || im.display_name || '', index: im.index, display: im.display_name || '',
+    })));
+    if (voci.length) return !trovaEdizione(voci, val);
+    return !!avvisoTipoEdizione(s.target, val);
+  }
+
+  /** Edizioni di una sola ISO, nella forma che vuole trovaEdizione(). */
+  function edizioniDiIso(iso) {
+    return (iso.editions || []).map((im) => ({
+      value: im.name || im.display_name || '', index: im.index, display: im.display_name || '',
+    }));
+  }
+
+  function edizioneAvvisoHtml(voci, valore) {
+    const val = String(valore || '').trim();
+    if (!val) return '';
+    if (!voci.length) {
+      const msg = avvisoTipoEdizione(twTarget(), val);
+      return msg ? `<div class="alert warn" style="margin-top:8px">${esc(msg)}
+        Abbina il profilo a una ISO (collega la sua risposta a un'immagine nel Catalogo) per
+        scegliere l'edizione da un elenco invece di scriverla a memoria.</div>` : '';
+    }
+    const isos = isosProfilo();
+    const mancanti = isos.filter((iso) => !trovaEdizione(edizioniDiIso(iso), val));
+    if (!mancanti.length) return '';
+    const nomi = mancanti.map((i) => i.name).join(', ');
+    if (mancanti.length < isos.length) {
+      // il profilo è usato su più ISO: l'edizione c'è in alcune e in altre no
+      return `<div class="alert warn" style="margin-top:8px">
+        L'edizione <strong>${esc(val)}</strong> non è dentro ${esc(nomi)}: su quelle immagini
+        l'edizione la chiederà il programma di installazione. Sulle altre l'installazione resta
+        automatica.</div>`;
+    }
+    return `<div class="alert warn" style="margin-top:8px">
+      L'edizione <strong>${esc(val)}</strong> non è dentro
+      ${esc(nomi || 'l\'immagine abbinata')}: con questo valore il programma di installazione si
+      ferma con "impossibile trovare l'immagine". Edizioni disponibili:
+      <span class="mono">${voci.map((x) => esc(`${x.index} ${x.value}`)).join(' · ')}</span>.
+      Scegline una dalla tendina, oppure lascia "Chiedi durante l'installazione".</div>`;
+  }
+
+  function campoEdizione(s) {
+    const val = String(s.edition_index || '').trim();
+    const voci = edizioniProfilo();
+    if (!voci.length) {
+      // nessuna ISO abbinata: campo libero, con i nomi tipici del tipo di Windows come aiuto
+      const sugg = edizioniSuggerite(s.target);
+      return `<div class="field" id="wp-edition-field">
+        <label for="wp-edition">Edizione da installare</label>
+        <input id="wp-edition" value="${esc(val)}" maxlength="64" list="wp-edition-lista"
+               placeholder="${esc(sugg[0] || 'Windows 11 Pro oppure 6')}">
+        <datalist id="wp-edition-lista">${sugg.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
+        <div class="hint">Nome esatto dell'immagine dentro <span class="mono">install.wim</span>
+          oppure il suo indice. Vuoto = il setup chiede. Questo profilo non è ancora abbinato a
+          nessuna ISO: collega la sua risposta a un'immagine nel Catalogo e qui comparirà la tendina
+          con le edizioni davvero presenti. I nomi si leggono anche nei dettagli della ISO, oppure
+          con <span class="mono">dism /Get-WimInfo /WimFile:install.wim</span>.</div>
+        <div id="wp-edition-avviso">${edizioneAvvisoHtml([], val)}</div></div>`;
+    }
+    const scelta = trovaEdizione(voci, val);
+    const manuale = !!val && !scelta;
+    const isos = isosProfilo().map((i) => i.name).join(', ');
+    return `<div class="field" id="wp-edition-field">
+      <label for="wp-edition-sel">Edizione da installare</label>
+      <select id="wp-edition-sel">
+        <option value="" ${!val ? 'selected' : ''}>Chiedi durante l'installazione</option>
+        <optgroup label="${esc(isos)}">
+          ${voci.map((x) => `<option value="${esc(x.value)}" ${scelta === x ? 'selected' : ''}>${esc(edizioneEtichetta(x))}</option>`).join('')}
+        </optgroup>
+        <option value="__manuale" ${manuale ? 'selected' : ''}>Scrivi un valore a mano…</option>
+      </select>
+      <input id="wp-edition" value="${esc(val)}" maxlength="64" style="margin-top:6px"
+             placeholder="Nome dell'immagine oppure indice" ${manuale ? '' : 'hidden'}>
+      <div class="hint">Elenco letto da <span class="mono">install.wim</span> di
+        ${esc(isos)}; il numero è l'indice dell'immagine. "Scrivi un valore a mano" serve quando lo
+        stesso profilo va usato anche su altre ISO.</div>
+      <div id="wp-edition-avviso">${edizioneAvvisoHtml(voci, val)}</div></div>`;
+  }
+
+  /** Ridisegna il campo (cambio del tipo di Windows: cambiano i nomi suggeriti). */
+  function edizioneRidisegna() {
+    const box = $('#wp-editor', W.root);
+    const campoEd = box && $('#wp-edition-field', box);
+    if (!campoEd || !W.cur) return;
+    const val = ($('#wp-edition', box) || {}).value || '';
+    const s = Object.assign({}, W.cur.settings, { edition_index: val, target: twTarget() });
+    campoEd.outerHTML = campoEdizione(s);
+    bindEdizione(box);
+  }
+
+  /** Tendina e campo libero si tengono allineati: il valore vero è sempre in #wp-edition. */
+  function bindEdizione(box) {
+    const sel = $('#wp-edition-sel', box);
+    const txt = $('#wp-edition', box);
+    const avviso = $('#wp-edition-avviso', box);
+    const aggiorna = () => { if (avviso) avviso.innerHTML = edizioneAvvisoHtml(edizioniProfilo(), txt ? txt.value.trim() : ''); };
+    if (txt) txt.addEventListener('input', aggiorna);
+    if (!sel || !txt) return;
+    sel.addEventListener('change', () => {
+      if (sel.value === '__manuale') {
+        txt.hidden = false;
+        txt.focus();
+      } else {
+        txt.value = sel.value;
+        txt.hidden = true;
+      }
+      aggiorna();
+      anteprima(true);
+    });
   }
 
   // ---------------------------------------------------------------- pezzi di form
@@ -805,6 +1009,7 @@
     twRenderCategorie();
     twConteggi();
     appsAggiorna();
+    edizioneRidisegna();
     anteprima(true);
   }
 
@@ -882,7 +1087,7 @@
         </div>
         <div class="row3">
           ${tendina('wp-arch', 'Architettura', s.architecture, meta.architectures || ['amd64', 'x86'], '<span class="mono">amd64</span> per tutti i PC moderni a 64 bit.')}
-          ${campo('wp-edition', 'Edizione da installare', s.edition_index, { maxlength: 64, placeholder: 'Windows 11 Pro oppure 6', hint: 'Nome esatto dell\'immagine dentro <span class="mono">install.wim</span> oppure il suo indice. Vuoto = il setup chiede.' })}
+          ${campoEdizione(s)}
           ${campo('wp-key', 'Chiave di prodotto', s.product_key, { mono: true, maxlength: 29, placeholder: 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX', hint: 'Vuota: nessuna richiesta durante il setup (si attiva dopo o con la chiave del firmware).' })}
         </div>
         ${riquadroLingua(s)}
@@ -998,6 +1203,7 @@
     box.addEventListener('change', sporca);
     twRender();
     twBind(box);
+    bindEdizione(box);
     appsAggiorna();
     anteprima(true);
   }
@@ -1088,9 +1294,13 @@
       return;
     }
     try {
+      // con una sola ISO abbinata l'anteprima è quella vera: il server confronta l'edizione con
+      // quelle dell'immagine e non scrive un InstallFrom che farebbe fallire il setup
+      const isos = isosProfilo();
+      const iso = isos.length === 1 ? isos[0].slug : '';
       const r = W.cur.id
-        ? await P.post(idUrl(W.cur.id) + '/preview', { settings })
-        : await P.post('/api/winprofiles/preview', { name: v('wp-name') || W.cur.name, preset: W.cur.preset || '', settings });
+        ? await P.post(idUrl(W.cur.id) + '/preview', { settings, iso })
+        : await P.post('/api/winprofiles/preview', { name: v('wp-name') || W.cur.name, preset: W.cur.preset || '', settings, iso });
       if (gettone !== W.previewSeq) return;      // ne è partita una più recente
       pre.textContent = r.xml || '';
     } catch (e) {

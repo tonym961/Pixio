@@ -176,6 +176,9 @@ def _public(answer_id, m):
         "kind_name": kind_info(k)["name"], "note": m.get("note", ""),
         "created": m.get("created"), "main_file": main, "files": files,
         "size": sum(f["size"] for f in files), "used_by": _used_by(answer_id),
+        # profilo che l'ha generata (vuoto per le risposte scritte a mano): serve a ritrovare
+        # da che ISO leggere le edizioni e ad avvisare quando l'edizione scelta non c'è
+        "profile": str(m.get("profile") or ""),
     }
 
 
@@ -187,7 +190,8 @@ def index():
     for i, m in _meta()["answers"].items():
         if isinstance(m, dict) and ANSWER_ID_RE.match(i):
             k = m.get("kind") if m.get("kind") in KIND_IDS else "generic"
-            out[i] = {"id": i, "name": m.get("name") or i, "kind": k}
+            out[i] = {"id": i, "name": m.get("name") or i, "kind": k,
+                      "profile": str(m.get("profile") or "")}
     return out
 
 
@@ -285,9 +289,12 @@ def create(data):
         if not os.path.exists(mp):
             _write_file(answer_id, "meta-data", "")
 
+    profilo = str(data.get("profile") or "").strip()[:64]
+
     def upd(d):
         d.setdefault("answers", {})[answer_id] = {
             "name": name, "kind": k["id"], "note": note, "main_file": main, "created": _now(),
+            "profile": profilo,
         }
         return d
     update_json(C.ANSWERS_FILE, upd, default={})
@@ -295,7 +302,7 @@ def create(data):
 
 
 def update(answer_id, data):
-    """Aggiorna metadati e/o contenuto. data: {name?, note?, content?, filename?}."""
+    """Aggiorna metadati e/o contenuto. data: {name?, note?, content?, filename?, profile?}."""
     a = get(answer_id)
     if not a:
         raise FileNotFoundError("Risposta non trovata")
@@ -310,6 +317,8 @@ def update(answer_id, data):
         if data["note"] is not None and not isinstance(data["note"], str):
             raise ValueError("Nota non valida: atteso testo")
         patch["note"] = (data["note"] or "").replace("\r", " ").replace("\n", " ").strip()[:200]
+    if "profile" in data:
+        patch["profile"] = str(data.get("profile") or "").strip()[:64]
     written = None
     if "content" in data:
         target = check_filename(data.get("filename") or a["main_file"] or kind_info(a["kind"])["main_file"])

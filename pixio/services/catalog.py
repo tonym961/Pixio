@@ -360,17 +360,12 @@ def _profili_per_risposta():
         return {}
 
 
-def editions_labels(editions):
-    """Elenco leggibile delle edizioni: "1 Windows 11 Pro, 2 Windows 11 Home"."""
-    return ", ".join(f"{im.get('index')} {im.get('name') or im.get('display_name') or ''}".strip()
-                     for im in editions)
-
-
 def _avvisi_edizione(e, editions, profili):
     """Avvisi per i profili collegati che installano un'edizione che in questa immagine non c'è.
 
     Va visto prima di avviare l'installazione: dopo, il setup si ferma con "impossibile trovare
-    l'immagine" e il PC resta lì."""
+    l'immagine" e il PC resta lì. Il testo lo scrive winprofile.edition_warning(), così è lo stesso
+    ovunque."""
     if not editions or not profili:
         return []
     try:
@@ -380,12 +375,11 @@ def _avvisi_edizione(e, editions, profili):
     out = []
     for aid in answers_of(e):
         p = profili.get(aid)
-        ed = (p or {}).get("edition_index")
-        if not ed or winprofile.match_edition(editions, ed) is not None:
+        msg = winprofile.edition_warning(editions, (p or {}).get("edition_index"))
+        if not msg:
             continue
-        out.append(f"Il profilo \"{p['name']}\" installa l'edizione \"{ed}\", che in questa "
-                   f"immagine non c'è. Edizioni disponibili: {editions_labels(editions)}. "
-                   "Correggila nella pagina Windows prima di avviare l'installazione.")
+        out.append(f"Profilo \"{p['name']}\": {msg} Correggi l'edizione nella pagina Windows "
+                   "prima di avviare l'installazione.")
     return out
 
 

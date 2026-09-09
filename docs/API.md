@@ -40,13 +40,15 @@ Oggetto ISO:
  enabled (nel menu), mounted, cache:{wanted:bool, status:"none"|"copying"|"ready"|"error", path, progress},
  group (nome gruppo menu), order (int), custom_recipe (null | {kernel, initrds:[str], cmdline, platforms:[..]}),
  answers ([id risposta], max 8), answer_id (predefinita, dentro answers), answer_manual (bool), answers_info ([{id,name,kind}] in lettura),
- detect:{files:[str], version, label}, warnings:[str], first_seen, last_seen, missing (bool: file sparito dalla sorgente)}
+ detect:{files:[str], version, label}, editions ([{index,name,display_name}] dentro install.wim, sezione 19),
+ editions_info:{file, updated, error}, warnings:[str], first_seen, last_seen, missing (bool: file sparito dalla sorgente)}
 ```
 - `GET /api/catalog` → `{isos:[...ordinate per group/order/name], last_scan, scanning:bool}`
 - `POST /api/catalog/scan` → `{ok, job_id}` (scansione di tutte le sorgenti, rilevamento tipo delle nuove ISO)
 - `GET /api/catalog/<slug>` → ISO + `{recipe_preview:{efi:"...script ipxe...", bios:"..."}}`
 - `PATCH /api/catalog/<slug> {name?, enabled?, group?, order?, type?, custom_recipe?, cache_wanted?, answers?, answer_id?, answer_manual?}` → ISO aggiornata. Abilitare = montare in loop (+ eventuale copia locale); disabilitare = smontare.
 - `POST /api/catalog/<slug>/redetect` → rileva di nuovo il tipo
+- `GET /api/catalog/<slug>/editions` → edizioni dentro `install.wim` (dalla cache, sezione 19); `POST` sullo stesso indirizzo le rilegge in un job
 - `POST /api/catalog/reorder {order:[slug,...]}`
 - `DELETE /api/catalog/<slug>` → SOLO per sorgente "local": elimina il file dalla libreria. Per sorgenti remote: 400.
 
@@ -205,8 +207,9 @@ Il generatore produce un `autounattend.xml` valido con i passaggi windowsPE (loc
 oobeSystem (utente locale, autologon, OOBE saltato, FirstLogonCommands). Le password vengono scritte in chiaro nel file (avvisare nella GUI).
 - `GET /api/winprofiles` → `{profiles:[...], defaults:{...}, timezones:[...], languages:[...], apps:[{id,name}]}`
 - `POST /api/winprofiles {name, settings}` → 201; `GET|PUT|DELETE /api/winprofiles/<id>`
-- `POST /api/winprofiles/<id>/preview` → `{xml}` (anteprima del file generato, senza salvare)
-- `POST /api/winprofiles/<id>/save-answer {answer_id?}` → genera l'XML e lo salva come risposta di tipo windows (`services/answers.py`), creandola se manca; risposta `{ok, answer_id, answer_name}`
+- `POST /api/winprofiles/<id>/preview {settings?, iso?}` → `{xml}` (anteprima del file generato, senza salvare)
+- `POST /api/winprofiles/<id>/save-answer {answer_id?, iso?}` → genera l'XML e lo salva come risposta di tipo windows (`services/answers.py`), creandola se manca; risposta `{ok, answer_id, answer_name}`
+- `iso` (slug del catalogo) fa generare il file per quell'immagine: l'edizione da installare viene confrontata con quelle che contiene davvero (sezione 19)
 
 ## 9. Personalizzazione Debian e preset
 Servizio `pixio/services/debprofile.py`, profili in `/var/lib/pixio/debprofiles.json`, stessa struttura dei profili Windows
@@ -476,3 +479,68 @@ Ogni cartella driver può quindi valere solo per certi modelli.
 - GUI: nella riga "Si applica a" della cartella, in aggiunta alle scelte attuali, un campo "Solo su questi modelli"
   con i modelli visti selezionabili e la possibilità di aggiungerne a mano; il riassunto della scheda lo riporta
   ("solo Windows Server · solo OptiPlex 7060").
+
+## 19. Edizione da installare scelta da un elenco, non a memoria
+`settings.edition_index` di un profilo Windows finisce in `<InstallFrom>` come nome dell'immagine
+(`/IMAGE/NAME`) o come indice (`/IMAGE/INDEX`) dentro `sources/install.wim`. Scritto a mano è la
+causa più frequente di installazioni che si fermano a metà: una ISO Enterprise LTSC, per esempio,
+non contiene nessun "Windows 11 Pro" e il programma di installazione si pianta con "impossibile
+trovare l'immagine". Pixio legge quindi le edizioni davvero presenti e le propone.
+
+### Rilevamento e cache
+- `detect.wim_images(path)` legge con `wiminfo` l'elenco delle immagini: `[{index, name, display_name}]`
+  nell'ordine di wiminfo, con l'indice 1-based, più la versione del formato. `wim_info()` resta
+  com'era (nomi e versione) e ora si appoggia a questa.
+- Il rilevamento di una ISO registra l'elenco in `detect.images`; la cache vera sta nel record del
+  catalogo, campo `editions: {images, file, updated, error, size, mtime}`.
+- La lettura è lenta (fino a 4 GB su una share CIFS) e non si fa mai dentro una richiesta della GUI:
+  si ricalcola quando la ISO viene montata (in un thread, il mount risponde subito), quando l'ISO
+  viene rilevata di nuovo, e su richiesta esplicita. `size`/`mtime` dicono se la cache vale ancora.
+- Se `install.wim` non c'è si prova `install.esd` (e le stesse sotto `x64/`); se non si riesce a
+  leggere niente l'elenco resta vuoto, l'errore finisce in `editions.error` e tutto continua a
+  funzionare come prima, con il campo a testo libero.
+
+### API
+- Ogni ISO del catalogo espone `editions: [{index, name, display_name}]` e
+  `editions_info: {file, updated, error}`.
+- `GET /api/catalog/<slug>/editions` → `{slug, name, type, editions, file, updated, error}` (dalla cache).
+- `POST /api/catalog/<slug>/editions` → `{ok, job_id}`: rilegge davvero il file, in un job (tipo `editions`).
+  400 se la ISO non è un'installazione Windows.
+- `GET /api/winprofiles` (e `GET /api/winprofiles/<id>`) aggiunge a ogni profilo
+  `isos: [{slug, name, answer_id, editions}]`: le ISO su cui girerà, cioè quelle a cui è collegata la
+  risposta generata dal profilo. Il legame è il campo `profile` della risposta, scritto da
+  `save-answer`; per le risposte create prima vale l'identificativo o il nome uguale a quello del profilo.
+- `POST /api/winprofiles/<id>/preview`, `POST /api/winprofiles/preview` e
+  `POST /api/winprofiles/<id>/save-answer` accettano `iso` (slug): l'XML viene generato per
+  quell'immagine.
+- `targets` di `GET /api/winprofiles` porta anche `editions`: i nomi di immagine tipici di quel tipo
+  di Windows, usati come suggerimento quando non c'è nessuna ISO da cui leggere quelli veri.
+
+### Generazione dell'autounattend.xml
+`render_autounattend(profile, server_ip, cfg=None, editions=None)`. Con `editions` (cioè quando si sa
+per quale immagine si sta generando) il valore di `edition_index` viene confrontato con le edizioni
+presenti — numero = indice, testo = nome o nome visualizzato, senza distinzione fra maiuscole e
+minuscole — e se non corrisponde:
+- immagine con una sola edizione: si installa quella;
+- immagine con più edizioni: `InstallFrom` non viene generato, così l'edizione la chiede il programma
+  di installazione invece di fallire.
+In tutti e due i casi finisce un avviso nei log di Pixio (`pixio.winprofile`). Senza `editions` il
+comportamento è quello di prima.
+
+### Segnalazione all'utente
+- Pagina Windows: "Edizione da installare" diventa una tendina con le edizioni dell'immagine abbinata
+  (ognuna con il suo indice), più "Chiedi durante l'installazione" e "Scrivi un valore a mano…" per
+  chi usa lo stesso profilo su ISO diverse. Senza ISO abbinata resta un campo libero, con i nomi
+  tipici del tipo di Windows come suggerimento e la spiegazione di dove trovare quello giusto.
+- Se il valore salvato non è fra le edizioni dell'immagine compare un avviso con l'elenco di quelle
+  buone, e l'elenco dei profili mostra la pillola "edizione non nell'immagine". Senza ISO abbinata
+  vale la regola `winprofile.edition_target_warning()`, che riconosce i casi palesi (un nome non
+  LTSC su un profilo LTSC, un nome di Server su un profilo client).
+- Dettagli della ISO: riga "Edizioni" con nomi e indici, e negli avvisi in cima al pannello una riga
+  per ogni profilo collegato che installa un'edizione che lì non c'è.
+
+### Preset
+I modelli per edizione portano un `edition_index` coerente con il proprio `target`
+(`win11-ltsc` → "Windows 11 Enterprise LTSC 2024", `win10-ltsc` → "Windows 10 Enterprise LTSC 2021",
+`win11-pro` → "Windows 11 Pro"). `winserver` copre più versioni di Windows Server, il cui nome
+immagine cambia con l'anno: il campo è vuoto e l'edizione si sceglie dalla tendina della ISO.

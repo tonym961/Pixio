@@ -681,7 +681,8 @@
         const p = id.split(':');
         P.setBusy(b, true, 'Creo la risposta…');
         try {
-          const r = await P.post(`/api/${p[1]}/${encodeURIComponent(p[2])}/save-answer`);
+          // per questa ISO: il server confronta l'edizione scelta con quelle dell'immagine
+          const r = await P.post(`/api/${p[1]}/${encodeURIComponent(p[2])}/save-answer`, { iso: iso.slug });
           id = (r && r.answer_id) || '';
           await loadAnswers(true);                 // l'elenco va riletto: c'è una risposta in più
           P.toast(`Risposta "${(r && r.answer_name) || id}" creata dal profilo`);
@@ -732,6 +733,7 @@
         <dl class="kv">
           <dt>Rilevato</dt><dd>${esc(det.label || iso.type_name || '—')}${det.version ? ' · versione ' + esc(det.version) : ''}</dd>
           ${(det.files || []).length ? `<dt>File chiave</dt><dd class="mono" style="font-size:12px">${det.files.map(esc).join('<br>')}</dd>` : ''}
+          ${(iso.editions || []).length ? `<dt>Edizioni</dt><dd>${iso.editions.map((im) => `<span class="mono">${esc(String(im.index))}</span> ${esc(im.name || im.display_name || '')}`).join('<br>')}<div class="hint">Nomi e indici dentro <span class="mono">${esc((iso.editions_info || {}).file || 'install.wim')}</span>: sono i valori che il profilo Windows può usare come "Edizione da installare".</div></dd>` : ''}
           <dt>Visto</dt><dd>prima volta ${esc(P.fmtDate(iso.first_seen))} · ultima ${esc(P.fmtDate(iso.last_seen))}</dd>
         </dl>
       </div>
@@ -753,7 +755,7 @@
         <pre class="code mono" id="d-preview" style="max-height:260px">${esc(preview.efi || '(nessuna anteprima)')}</pre></div>
       </div>
       <div class="drawer-sec actions" style="justify-content:space-between">
-        <span class="actions"><button class="btn primary" type="button" data-d="save">Salva</button><button class="btn" type="button" data-d="redetect">Rileva di nuovo</button></span>
+        <span class="actions"><button class="btn primary" type="button" data-d="save">Salva</button><button class="btn" type="button" data-d="redetect">Rileva di nuovo</button>${iso.type === 'windows' ? '<button class="btn" type="button" data-d="editions" title="Rilegge nomi e indici delle immagini dentro install.wim">Rileggi edizioni</button>' : ''}</span>
         ${iso.source === 'local' ? '<button class="btn danger" type="button" data-d="delete">Elimina file</button>' : ''}
       </div>`;
 
@@ -808,6 +810,15 @@
           const r = await P.post(`/api/catalog/${encodeURIComponent(slug)}/redetect`);
           if (r && r.job_id) await P.watchJob(r.job_id);
           P.toast('Rilevamento eseguito');
+          await load(); openDetails(slug);
+        } catch (err) { P.fail(err); P.setBusy(b, false); }
+      } else if (act === 'editions') {
+        // lettura vera del file (non la cache): può metterci, quindi è un job
+        P.setBusy(b, true, 'Lettura…');
+        try {
+          const r = await P.post(`/api/catalog/${encodeURIComponent(slug)}/editions`);
+          if (r && r.job_id) await P.watchJob(r.job_id);
+          P.toast('Edizioni rilette');
           await load(); openDetails(slug);
         } catch (err) { P.fail(err); P.setBusy(b, false); }
       } else if (act === 'delete') {

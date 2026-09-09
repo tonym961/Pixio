@@ -42,6 +42,7 @@ ai client via HTTP senza autenticazione. È il funzionamento previsto dal contra
 lettere. Anche il bypass dei requisiti di Windows 11 non è una configurazione supportata da Microsoft.
 """
 import copy
+import logging
 import os
 import re
 import threading
@@ -51,6 +52,8 @@ import xml.etree.ElementTree as ET
 
 from .. import config as C
 from ..storage import read_json, update_json, deep_merge
+
+log = logging.getLogger("pixio.winprofile")
 
 # ---------------------------------------------------------------- costanti e valori predefiniti
 
@@ -151,6 +154,23 @@ TARGET_MOTIVI = {
                "Store e le app che ne dipendono, Cortana, Copilot, widget e notizie, Teams e Chat, "
                "contenuti consigliati, esperienze consumer, Xbox, OneDrive preinstallato, "
                "aggiornamenti di funzionalità)",
+}
+
+# Nomi delle immagini più comuni per ogni tipo di Windows (docs/API.md, sezione 19). Non sono
+# valori predefiniti ma suggerimenti: l'elenco vero lo dà install.wim della ISO abbinata al
+# profilo, e questi servono solo quando la ISO non si conosce, per non far scrivere a memoria un
+# nome che in quell'immagine non esiste. Le LTSC, per esempio, non contengono nessun "Windows 11
+# Pro": chi lo scrive vede fallire l'installazione a metà.
+TARGET_EDITIONS = {
+    # sulle ISO client il nome cambia con la ISO (Home, Pro, Education...): meglio farlo scegliere
+    "client": [],
+    "10-ltsc": ["Windows 10 Enterprise LTSC 2021", "Windows 10 Enterprise N LTSC 2021",
+                "Windows 10 Enterprise LTSC 2019", "Windows 10 Enterprise N LTSC 2019"],
+    "11-ltsc": ["Windows 11 Enterprise LTSC 2024", "Windows 11 Enterprise N LTSC 2024"],
+    # i nomi dei server contengono l'anno: quello giusto dipende dalla ISO che si sta usando
+    "server": ["Windows Server 2025 SERVERSTANDARD", "Windows Server 2025 SERVERDATACENTER",
+               "Windows Server 2022 SERVERSTANDARD", "Windows Server 2022 SERVERDATACENTER",
+               "Windows Server 2019 SERVERSTANDARD", "Windows Server 2016 SERVERSTANDARD"],
 }
 
 # Avvio dei servizi come lo scrive il registro (chiave Start): 2 automatico, 3 manuale, 4 disabilitato.
@@ -369,8 +389,12 @@ def groups_list():
 
 
 def targets_list():
-    """Tipi di Windows per la tendina della GUI: [{id, name}] (docs/API.md, sezioni 11 e 12)."""
-    return [{"id": t, "name": TARGET_LABELS[t]} for t in TARGETS]
+    """Tipi di Windows per la tendina della GUI: [{id, name, editions}] (docs/API.md, sez. 11, 12 e 19).
+
+    `editions` sono i nomi di immagine tipici di quel tipo di Windows: la GUI li propone quando il
+    profilo non è abbinato a nessuna ISO da cui leggere quelli veri."""
+    return [{"id": t, "name": TARGET_LABELS[t], "editions": list(TARGET_EDITIONS.get(t) or [])}
+            for t in TARGETS]
 
 
 def target_ha_store(target):
@@ -385,6 +409,169 @@ def check_target(valore, default="client"):
         raise ValueError("Tipo di Windows non valido: " + ", ".join(TARGETS) + ". "
                          + "; ".join("%s = %s" % (x, TARGET_LABELS[x]) for x in TARGETS))
     return t
+
+
+# ---------------------------------------------------------------- edizione da installare
+# `settings["edition_index"]` finisce in <InstallFrom> come nome dell'immagine (/IMAGE/NAME) o come
+# indice (/IMAGE/INDEX). Se quel valore nell'install.wim non c'è, il setup si ferma con
+# "impossibile trovare l'immagine" a metà installazione: quando l'immagine di destinazione è nota
+# (docs/API.md, sezione 19) conviene accorgersene prima, e in generazione non scrivere niente
+# invece di scrivere qualcosa che fallirà di sicuro.
+
+def match_edition(editions, valore):
+    """Immagine di `editions` che corrisponde a `valore`, oppure None.
+
+    Il confronto è quello che fa il setup, più tollerante sulle maiuscole: un numero vale come
+    indice, un testo come nome dell'immagine, e vale anche il nome visualizzato, che è quello che
+    la gente legge nelle schermate di installazione."""
+    v = _txt(valore)
+    if not v or not editions:
+        return None
+    if v.isdigit():
+        n = int(v)
+        return next((im for im in editions if int(im.get("index") or 0) == n), None)
+    basso = v.lower()
+    for chiave in ("name", "display_name"):
+        im = next((im for im in editions if _txt(im.get(chiave)).lower() == basso), None)
+        if im is not None:
+            return im
+    return None
+
+
+def editions_labels(editions):
+    """Elenco leggibile delle edizioni: "1 Windows 11 Pro, 2 Windows 11 Home"."""
+    return ", ".join(f"{im.get('index')} {_txt(im.get('name')) or _txt(im.get('display_name'))}".strip()
+                     for im in (editions or []))
+
+
+def edition_warning(editions, valore):
+    """Avviso da mostrare quando l'edizione scelta non è dentro l'immagine, altrimenti "".
+
+    Vuoto anche quando l'elenco delle edizioni non si conosce: senza elenco non si può dire che
+    un valore sia sbagliato."""
+    v = _txt(valore)
+    if not v or not editions or match_edition(editions, v) is not None:
+        return ""
+    return (f"L'edizione \"{v}\" non è dentro questa immagine. "
+            f"Edizioni disponibili: {editions_labels(editions)}.")
+
+
+def edition_for_image(valore, editions, nome_profilo=""):
+    """Valore da scrivere in InstallFrom sapendo quali edizioni contiene l'immagine.
+
+    Regola: se il valore corrisponde si usa così com'è; se l'immagine ha una sola edizione si usa
+    quella (l'intenzione era chiaramente installare l'unica presente); se ne ha più d'una si torna
+    a stringa vuota, cioè InstallFrom non viene generato e l'edizione la chiede il setup — una
+    domanda in più è sempre meglio di un'installazione che si pianta."""
+    v = _txt(valore)
+    if not v or not editions or match_edition(editions, v) is not None:
+        return v
+    chi = f"profilo \"{nome_profilo}\": " if nome_profilo else ""
+    if len(editions) == 1:
+        solo = _txt(editions[0].get("name")) or str(editions[0].get("index") or 1)
+        log.warning("%sl'edizione \"%s\" non è nell'immagine, si installa l'unica presente (\"%s\")",
+                    chi, v, solo)
+        return solo
+    log.warning("%sl'edizione \"%s\" non è nell'immagine (disponibili: %s): InstallFrom non "
+                "generato, l'edizione la chiede il programma di installazione",
+                chi, v, editions_labels(editions))
+    return ""
+
+
+def edition_target_warning(target, valore):
+    """Avviso quando il nome dell'edizione non c'entra col tipo di Windows del profilo, altrimenti "".
+
+    Non sostituisce il confronto con l'immagine (l'elenco vero lo dà install.wim), ma prende il
+    caso più frequente anche quando la ISO non si conosce: "Windows 11 Pro" su un profilo LTSC,
+    che nessuna ISO Enterprise LTSC contiene."""
+    v = _txt(valore)
+    t = _txt(target).lower() or "client"
+    if not v or v.isdigit() or t not in TARGETS:
+        return ""
+    basso = v.lower()
+    ltsc = "ltsc" in basso or "ltsb" in basso
+    server = "server" in basso
+    if t in ("10-ltsc", "11-ltsc") and not ltsc:
+        return (f"Il profilo è per {TARGET_LABELS[t]}, ma \"{v}\" non è un'edizione LTSC: quelle "
+                "immagini contengono solo edizioni Enterprise LTSC.")
+    if t == "server" and not server:
+        return f"Il profilo è per {TARGET_LABELS[t]}, ma \"{v}\" non è un'edizione di Windows Server."
+    if t == "client" and (ltsc or server):
+        etichetta = "LTSC" if ltsc else "di Windows Server"
+        return f"Il profilo è per {TARGET_LABELS[t]}, ma \"{v}\" è un'edizione {etichetta}."
+    return ""
+
+
+def editions_for_iso(slug):
+    """Edizioni note di una ISO del catalogo, dalla cache. [] se la ISO non c'è o non si sa nulla."""
+    slug = _txt(slug)
+    if not slug:
+        return []
+    try:
+        from . import catalog
+        e = (catalog.load() or {}).get("isos", {}).get(slug)
+        return catalog.editions_of(e) if isinstance(e, dict) else []
+    except Exception:  # noqa: BLE001 - senza catalogo si genera come se la ISO non si conoscesse
+        return []
+
+
+def profiles_by_answer():
+    """{answer_id: {id, name, edition_index, target}} dei profili che hanno generato le risposte.
+
+    Il collegamento vero è il campo `profile` che save_as_answer() scrive nella risposta; per le
+    risposte create prima si ripiega sull'identificativo (nasce dallo stesso nome del profilo) e
+    sul nome uguale, che è come le genera Pixio."""
+    try:
+        idx = _answers().index()
+    except Exception:  # noqa: BLE001
+        return {}
+    profili = {p["id"]: p for p in list_profiles()}
+    per_nome = {_txt(p["name"]).lower(): p for p in profili.values()}
+    out = {}
+    for aid, a in idx.items():
+        if a.get("kind") != "windows":
+            continue
+        p = profili.get(_txt(a.get("profile"))) or profili.get(aid) \
+            or per_nome.get(_txt(a.get("name")).lower())
+        if p is None:
+            continue
+        st = p.get("settings") or {}
+        out[aid] = {"id": p["id"], "name": p["name"], "edition_index": _txt(st.get("edition_index")),
+                    "target": _txt(st.get("target")) or "client"}
+    return out
+
+
+def iso_bindings():
+    """{profile_id: [{slug, name, answer_id, editions}]}: le ISO su cui girerà ogni profilo.
+
+    Un profilo è legato a una ISO tramite la risposta che ha generato: è quella l'immagine da cui
+    leggere le edizioni per la tendina "Edizione da installare" della GUI."""
+    per_risposta = profiles_by_answer()
+    if not per_risposta:
+        return {}
+    try:
+        from . import catalog
+        isos = (catalog.load() or {}).get("isos") or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for slug, e in isos.items():
+        if not isinstance(e, dict) or (e.get("type") or "") != "windows":
+            continue
+        collegate = catalog.answers_of(e)
+        if not collegate:
+            continue
+        edizioni = catalog.editions_of(e)
+        for aid in collegate:
+            p = per_risposta.get(aid)
+            if not p:
+                continue
+            out.setdefault(p["id"], []).append({
+                "slug": slug, "name": e.get("name") or e.get("file") or slug,
+                "answer_id": aid, "editions": edizioni})
+    for voci in out.values():
+        voci.sort(key=lambda x: (x["name"] or "").lower())
+    return out
 
 
 # ---------------------------------------------------------------- catalogo delle ottimizzazioni
@@ -1645,11 +1832,14 @@ def _pass_oobe(root, st, arch, em=None):
     return sp
 
 
-def render_autounattend(profile, server_ip="", cfg=None):
+def render_autounattend(profile, server_ip="", cfg=None, editions=None):
     """Genera l'autounattend.xml del profilo. Ritorna una stringa indentata e verificata.
 
     `profile` è il profilo completo ({name, settings}) oppure le sole impostazioni.
     `server_ip` serve per il percorso della share driver di Pixio.
+    `editions` sono le edizioni dell'immagine per cui si sta generando ([{index, name}], di norma
+    da catalog.editions_of): quando si sa su quale ISO andrà il file, un'edizione che lì non esiste
+    non viene scritta (docs/API.md, sezione 19). Senza `editions` non cambia niente rispetto a prima.
     """
     # la generazione non fa fallire niente per colpa delle ottimizzazioni non compatibili con il
     # tipo di Windows del profilo: le salta e basta (docs/API.md, sezione 11)
@@ -1667,6 +1857,8 @@ def render_autounattend(profile, server_ip="", cfg=None):
             cfg = {}
     if not server_ip:
         server_ip = ((cfg.get("network") or {}).get("server_ip") if isinstance(cfg, dict) else "") or ""
+    if editions:
+        st["edition_index"] = edition_for_image(st["edition_index"], editions, nome)
     arch = st["architecture"]
 
     ET.register_namespace("", NS)
@@ -1832,19 +2024,24 @@ def _answers():
     return answers
 
 
-def save_as_answer(profile_id, answer_id=None, server_ip=""):
+def save_as_answer(profile_id, answer_id=None, server_ip="", iso_slug=""):
     """Genera l'autounattend.xml e lo salva come risposta di tipo windows.
 
     Con `answer_id` aggiorna una risposta esistente, altrimenti ne crea una nuova.
+    Con `iso_slug` il file viene generato per quella ISO: l'edizione da installare viene
+    confrontata con quelle che l'immagine contiene davvero (docs/API.md, sezione 19).
     Ritorna `{ok, answer_id, answer_name}`.
     """
     answers = _answers()
     prof = get(check_id(profile_id))
     if not prof:
         raise FileNotFoundError("Profilo non trovato")
-    xml = render_autounattend(prof, server_ip)
+    xml = render_autounattend(prof, server_ip, editions=editions_for_iso(iso_slug))
+    # `profile` lega la risposta al profilo che l'ha generata: serve agli avvisi sull'edizione e
+    # alla tendina della GUI, che così sa da quale ISO leggere le edizioni
     if answer_id:
-        a = answers.update(answer_id, {"content": xml, "filename": "autounattend.xml"})
+        a = answers.update(answer_id, {"content": xml, "filename": "autounattend.xml",
+                                       "profile": prof["id"]})
     else:
         a = answers.create({
             "name": prof["name"][:MAX_NAME],
@@ -1852,5 +2049,6 @@ def save_as_answer(profile_id, answer_id=None, server_ip=""):
             "note": ("Generata dal profilo Windows " + prof["name"])[:MAX_NOTE],
             "content": xml,
             "filename": "autounattend.xml",
+            "profile": prof["id"],
         })
     return {"ok": True, "answer_id": a["id"], "answer_name": a.get("name", a["id"])}
