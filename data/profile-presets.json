@@ -7,7 +7,7 @@
       "kind": "windows",
       "group": "edizione",
       "name": "Windows 11 Pro",
-      "description": "Per i PC aziendali e professionali nuovi, con TPM 2.0 e Secure Boot: installa direttamente l'edizione Pro senza far scegliere niente al tecnico. Privacy e telemetria al minimo, niente Copilot, widget, contenuti consigliati né app installate da sole; le app consumer del Microsoft Store (Xbox, giochi, Notizie, Meteo, Clipchamp, Teams personale…) vengono tolte, Esplora file è impostato da tecnico (estensioni e percorso completo, apertura su Questo PC, menu contestuale classico di Windows 11) e le prestazioni sono ritoccate con misura: effetti visivi ridotti, niente trasparenze, menu senza ritardo, avvio rapido spento. Ricerca, indicizzazione, Defender e Windows Update restano attivi. Nessun bypass dei requisiti: su hardware non compatibile usa il modello Laboratorio o la LTSC. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: serve solo a far scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza. La licenza (OEM, retail, MAK o KMS aziendale) si applica dopo, a sistema installato.",
+      "description": "Per i PC aziendali e professionali nuovi, con TPM 2.0 e Secure Boot. Privacy e telemetria al minimo, niente Copilot, widget, contenuti consigliati né app installate da sole, app consumer dello Store rimosse, Esplora file impostato da tecnico e prestazioni ritoccate con misura. Ricerca, indicizzazione, Defender e Windows Update restano attivi; nessun bypass dei requisiti (su hardware vecchio usa il modello Laboratorio o una LTSC). La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: fa scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza, che va applicata dopo.",
       "settings": {
         "target": "client",
         "language": "it-IT",
@@ -130,7 +130,7 @@
       "kind": "windows",
       "group": "edizione",
       "name": "Windows 11 Enterprise LTSC 2024",
-      "description": "Per le macchine che devono restare identiche per anni: PC di produzione, casse, chioschi, banchi di collaudo, PC che pilotano macchinari. La LTSC riceve solo aggiornamenti di sicurezza e non ha Microsoft Store, Cortana, Copilot, widget, Teams/Chat, Xbox né esperienze consumer, quindi qui non c'è nessuna app da rimuovere e nessuna ottimizzazione su quei componenti: restano telemetria, ricerca locale, Esplora file, prestazioni, servizi, aggiornamenti, sicurezza e rete. Il bypass dei requisiti di Windows 11 (TPM, Secure Boot, RAM, CPU) è attivo di proposito, perché la LTSC finisce quasi sempre su hardware più vecchio o su macchine industriali senza TPM 2.0: se installi su un PC recente e compatibile puoi toglierlo nella sezione Windows 11. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: serve solo a far scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza. La licenza (OEM, retail, MAK o KMS aziendale) si applica dopo, a sistema installato.",
+      "description": "Per le macchine che devono restare identiche per anni: produzione, casse, chioschi, banchi di collaudo, PC che pilotano macchinari. La LTSC riceve solo aggiornamenti di sicurezza e non ha Microsoft Store, Cortana, Copilot, widget, Teams, Xbox né esperienze consumer: nessuna app da rimuovere e nessuna ottimizzazione su quei componenti, restano telemetria, ricerca, Esplora file, prestazioni, servizi, aggiornamenti, sicurezza e rete. Il bypass dei requisiti di Windows 11 (TPM, Secure Boot, RAM, CPU) è attivo di proposito, perché la LTSC finisce quasi sempre su hardware più vecchio o industriale senza TPM 2.0: toglilo se il PC è recente. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: fa scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza, che va applicata dopo.",
       "settings": {
         "target": "11-ltsc",
         "language": "it-IT",
@@ -226,7 +226,7 @@
       "kind": "windows",
       "group": "edizione",
       "name": "Windows 10 Enterprise LTSC 2021",
-      "description": "Per il parco macchine che non può passare a Windows 11 (hardware senza TPM 2.0 o applicazioni gestionali legate a Windows 10) e per le postazioni che devono restare ferme: la LTSC 2021 riceve aggiornamenti di sicurezza fino al 2027 e non cambia interfaccia. Non ha Microsoft Store, Cortana, esperienze consumer né app preinstallate, quindi non c'è niente da rimuovere; sono escluse anche le ottimizzazioni specifiche di Windows 11 (barra applicazioni allineata a sinistra, menu contestuale classico, ricerca a icona). Restano telemetria al minimo, ricerca locale, Esplora file da tecnico, prestazioni, servizi, aggiornamenti senza riavvio automatico e sicurezza. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: serve solo a far scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza. La licenza (OEM, retail, MAK o KMS aziendale) si applica dopo, a sistema installato.",
+      "description": "Per il parco macchine che non può passare a Windows 11 (hardware senza TPM 2.0, gestionali legati a Windows 10) e per le postazioni che devono restare ferme: aggiornamenti di sicurezza fino al 2027, interfaccia che non cambia. Niente Microsoft Store, Cortana, esperienze consumer né app preinstallate, quindi nessuna app da rimuovere; escluse anche le voci specifiche di Windows 11. Restano telemetria al minimo, ricerca locale, Esplora file da tecnico, prestazioni, servizi, aggiornamenti e sicurezza. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: fa scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza, che va applicata dopo.",
       "settings": {
         "target": "10-ltsc",
         "language": "it-IT",
@@ -320,7 +320,7 @@
       "kind": "windows",
       "group": "edizione",
       "name": "Windows Server 2022 / 2025 Standard",
-      "description": "Server con interfaccia grafica (Desktop Experience) da mettere in produzione subito: Desktop remoto attivo con la regola del firewall, spooler di stampa senza connessioni remote in entrata (la protezione consigliata dopo PrintNightmare), SMB1 disattivato, piano di alimentazione Prestazioni elevate, niente sospensione né ibernazione e aggiornamenti che non riavviano da soli mentre qualcuno è connesso. Nessuna app da rimuovere: su Windows Server il Microsoft Store e le app consumer non ci sono, e le voci che riguardano Cortana, Copilot, widget o la barra applicazioni di Windows 11 sono escluse perché lì non farebbero nulla. Nessun accesso automatico: la password dell'amministratore va inserita a mano al primo avvio. Per Windows Server 2025 correggi il nome dell'edizione e la chiave. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: serve solo a far scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza. La licenza (OEM, retail, MAK o KMS aziendale) si applica dopo, a sistema installato. Con una ISO di Windows Server in inglese (spesso l'unica disponibile) l'installazione esce comunque in italiano: il modello attiva l'installazione automatica della lingua it-IT da Windows Update, quindi al primo accesso il server deve poter raggiungere internet e il cambio si vede dopo il riavvio successivo. Gli altri modelli non ce l'hanno perché partono da ISO già in italiano, dove il pacchetto lingua non serve.",
+      "description": "Server con interfaccia grafica (Desktop Experience) pronto per la produzione: Desktop remoto attivo con la regola del firewall, spooler di stampa senza connessioni remote in entrata (protezione consigliata dopo PrintNightmare), SMB1 disattivato, piano Prestazioni elevate, niente sospensione né ibernazione, aggiornamenti che non riavviano da soli. Nessun accesso automatico e nessuna app da rimuovere: su Server non ci sono Microsoft Store, Cortana, Copilot, widget né esperienze consumer. Per Windows Server 2025 correggi nome dell'edizione e chiave. La chiave indicata è la chiave pubblica di installazione (client KMS) documentata da Microsoft: fa scegliere l'edizione al programma di installazione, non attiva niente e non è una licenza, che va applicata dopo. Con una ISO di Windows Server in inglese (spesso l'unica disponibile) l'installazione esce comunque in italiano: il modello attiva l'installazione automatica della lingua it-IT da Windows Update, quindi al primo accesso il server deve poter raggiungere internet e il cambio si vede dopo il riavvio successivo. Gli altri modelli non ce l'hanno perché partono da ISO già in italiano, dove il pacchetto lingua non serve.",
       "settings": {
         "target": "server",
         "language": "it-IT",
@@ -413,7 +413,7 @@
       "kind": "windows",
       "group": "generico",
       "name": "Postazione aziendale",
-      "description": "PC da ufficio che entra nel dominio Active Directory: OOBE saltato, app di intrattenimento rimosse, nessun accesso automatico. Va bene su qualsiasi Windows 10 o 11 Pro/Enterprise con Microsoft Store: l'edizione la sceglie il programma di installazione (lascia il campo vuoto) oppure la fissi tu, e se vuoi chiave ed edizione già pronte parti dal modello \"Windows 11 Pro\". Compila dominio, utente di join e password prima di salvare. Per aggiungere al dominio attiva l'opzione e inserisci utente e password autorizzati.",
+      "description": "PC da ufficio che entra nel dominio Active Directory: OOBE saltato, app di intrattenimento rimosse, nessun accesso automatico. Va bene su qualsiasi Windows 10 o 11 Pro/Enterprise con Microsoft Store: l'edizione la sceglie il setup, oppure parti dal modello \"Windows 11 Pro\" se la vuoi già fissata con la chiave. Compila dominio, utente di join e password prima di salvare.",
       "settings": {
         "target": "client",
         "language": "it-IT",
@@ -597,97 +597,6 @@
           "niente-riavvio-automatico",
           "disattiva-autoplay",
           "disattiva-smb1"
-        ],
-        "services_extra": [],
-        "features_enable": [],
-        "features_disable": [],
-        "drivers_from_pixio": true
-      }
-    },
-    {
-      "id": "win-server",
-      "kind": "windows",
-      "group": "generico",
-      "name": "Windows Server",
-      "description": "Modello generico per qualsiasi Windows Server con interfaccia grafica (2016, 2019, 2022, 2025): nessun accesso automatico, Desktop remoto attivo con regola del firewall, disco partizionato per UEFI, nessuna chiave e nessuna edizione fissata (le indichi tu o le sceglie il setup). Se ti serve un server già tarato, con chiave pubblica di installazione, edizione, piano Prestazioni elevate e protezione dello spooler, parti dal modello \"Windows Server 2022 / 2025 Standard\". Con una ISO di Windows Server in inglese (spesso l'unica disponibile) l'installazione esce comunque in italiano: il modello attiva l'installazione automatica della lingua it-IT da Windows Update, quindi al primo accesso il server deve poter raggiungere internet e il cambio si vede dopo il riavvio successivo. Gli altri modelli non ce l'hanno perché partono da ISO già in italiano, dove il pacchetto lingua non serve.",
-      "settings": {
-        "target": "server",
-        "language": "it-IT",
-        "input_locale": "it-IT",
-        "timezone": "W. Europe Standard Time",
-        "language_install": {
-          "enabled": true,
-          "languages": [
-            "it-IT"
-          ],
-          "source": "windows-update",
-          "file_url": "",
-          "set_system": true,
-          "geo_id": 118,
-          "keyboard": "it-IT"
-        },
-        "architecture": "amd64",
-        "edition_index": "",
-        "product_key": "",
-        "computer_name": "SRV-*",
-        "organization": "",
-        "owner": "",
-        "admin_user": "Administrator",
-        "admin_password": "",
-        "autologon": false,
-        "autologon_count": 0,
-        "extra_user": {
-          "name": "",
-          "password": "",
-          "group": "Administrators"
-        },
-        "join_domain": {
-          "enabled": false,
-          "domain": "",
-          "ou": "",
-          "user": "",
-          "password": ""
-        },
-        "disk": {
-          "mode": "auto-uefi",
-          "wipe": true,
-          "efi_mb": 500,
-          "msr_mb": 16,
-          "recovery_mb": 0
-        },
-        "skip_oobe": true,
-        "bypass_requirements": false,
-        "disable_defender_prompt": false,
-        "hide_files_ext": true,
-        "disable_hibernate": true,
-        "power_scheme": "prestazioni",
-        "remove_apps": [],
-        "run_commands": [],
-        "tweaks": [
-          "telemetria-minima",
-          "servizi-telemetria",
-          "disattiva-ceip",
-          "disattiva-segnalazione-errori",
-          "mostra-estensioni-file",
-          "esplora-apre-questo-pc",
-          "effetti-visivi-ridotti",
-          "disattiva-trasparenze",
-          "disattiva-indicizzazione",
-          "piano-prestazioni-elevate",
-          "niente-sospensione-a-rete",
-          "spooler-senza-connessioni-remote",
-          "disattiva-assistenza-remota",
-          "disattiva-servizio-mappe",
-          "disattiva-programma-insider",
-          "niente-riavvio-automatico",
-          "disattiva-ottimizzazione-recapito",
-          "attiva-desktop-remoto",
-          "nascondi-ultimo-utente",
-          "disattiva-autoplay",
-          "disattiva-smb1",
-          "disattiva-powershell-2",
-          "disattiva-llmnr",
-          "consenti-ping"
         ],
         "services_extra": [],
         "features_enable": [],

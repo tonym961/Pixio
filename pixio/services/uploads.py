@@ -3,7 +3,9 @@
 Chunk in config.UPLOAD_TMP_DIR/<upload_id>/<n>, stato in UPLOAD_TMP_DIR/<upload_id>.json.
 kind "iso" (default): alla fine i chunk vengono assemblati in config.LIBRARY_DIR/<filename> e parte il rilevamento.
 kind "driver": destinazione config.DRIVERS_DIR/<folder>/<filename>; se il file è uno .zip viene estratto
-(in modo sicuro) nella cartella e poi cancellato.
+(in modo sicuro) nella cartella e poi cancellato. Con il campo facoltativo "path" (sottopercorso relativo,
+es. "x64/rt.inf") il file finisce in config.DRIVERS_DIR/<folder>/<path>: serve per caricare una cartella
+intera mantenendo le sue sottocartelle.
 kind "answer": destinazione config.ANSWERS_DIR/<id risposta>/<filename>, file di testo di pochi KB.
 """
 import datetime
@@ -27,7 +29,7 @@ log = logging.getLogger("pixio.uploads")
 CHUNK_SIZE = 8 * 1024 * 1024
 ALLOWED_EXT = (".iso", ".img", ".wim")
 DRIVER_EXT = (".inf", ".sys", ".cat", ".dll", ".exe", ".cab", ".zip", ".msi", ".txt", ".bin", ".dat",
-              ".ini", ".cfg", ".xml", ".json", ".7z")
+              ".ini", ".cfg", ".xml", ".json", ".7z", ".sepolicy")
 ANSWER_EXT = (".xml", ".cfg", ".ks", ".yaml", ".yml", ".txt", ".cmd", ".bat", ".ps1", ".reg",
               ".sh", ".conf", ".seed", ".json", ".ini")
 ANSWER_NOEXT = ("user-data", "meta-data", "vendor-data", "network-config")   # nomi cloud-init senza estensione
@@ -39,6 +41,9 @@ MAX_AGE = 7 * 86400              # upload abbandonati eliminati dopo 7 giorni
 READ_BLOCK = 1024 * 1024
 ZIP_MAX_BYTES = 2 * 1024 ** 3    # 2 GiB estratti al massimo
 ZIP_MAX_FILES = 20000
+MAX_SUBPATH_DEPTH = 6            # livelli massimi del campo "path" (sottocartelle + nome file)
+# stessi caratteri ammessi dai nomi file (vedi sanitize_filename)
+SUBPATH_SEG_RE = re.compile(r"^[\w.\-()+\[\] ]{1,200}$", re.UNICODE)
 
 _lock = threading.RLock()
 
@@ -87,6 +92,51 @@ def sanitize_filename(filename, kind="iso"):
     return name
 
 
+def check_subpath(path):
+    """Valida il sottopercorso relativo di un file dentro una cartella driver.
+
+    Ritorna la lista dei segmenti ([] se `path` è vuoto). Rifiuta percorsi assoluti (anche "C:\\..."),
+    "." e "..", nomi nascosti, più di MAX_SUBPATH_DEPTH livelli e caratteri non ammessi nei nomi file.
+    """
+    raw = str(path or "").replace("\\", "/").strip()
+    if not raw:
+        return []
+    if "\x00" in raw:
+        raise UploadError("Percorso non valido")
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
+        raise UploadError("Percorso non valido: non sono ammessi percorsi assoluti")
+    parts = [seg for seg in raw.split("/") if seg != ""]
+    if not parts:
+        raise UploadError("Percorso non valido")
+    if len(parts) > MAX_SUBPATH_DEPTH:
+        raise UploadError(f"Percorso troppo profondo: al massimo {MAX_SUBPATH_DEPTH} livelli di sottocartelle")
+    for seg in parts:
+        if seg in (".", ".."):
+            raise UploadError("Percorso non valido: '.' e '..' non sono ammessi")
+        if seg.startswith("."):
+            raise UploadError(f"Percorso non valido: '{seg}' è un nome nascosto")
+        if not SUBPATH_SEG_RE.match(seg):
+            raise UploadError(f"Percorso non valido: '{seg}' contiene caratteri non ammessi")
+        if seg != seg.rstrip(" ."):
+            raise UploadError(f"Percorso non valido: '{seg}' finisce con uno spazio o un punto")
+    return parts
+
+
+def driver_subdir(path, filename):
+    """Sottocartella (relativa, con '/') in cui mettere `filename` secondo il campo "path".
+
+    Accetta sia il percorso completo del file ("x64/rt.inf") sia la sola sottocartella ("x64").
+    """
+    parts = check_subpath(path)
+    if parts and parts[-1].lower() == str(filename or "").lower():
+        parts = parts[:-1]
+    return "/".join(parts)
+
+
+def _rel_name(subdir, filename):
+    return f"{subdir}/{filename}" if subdir else filename
+
+
 def _check_kind(kind):
     kind = str(kind or "iso").lower()
     if kind not in KINDS:
@@ -94,8 +144,11 @@ def _check_kind(kind):
     return kind
 
 
-def _driver_dir(folder):
-    """Percorso della cartella driver di destinazione: 400 se il nome non è valido, 404 se non esiste."""
+def _driver_dir(folder, subdir="", create=False):
+    """Cartella driver di destinazione: 400 se il nome non è valido, 404 se non esiste.
+
+    Con `subdir` ritorna la sottocartella indicata dal campo "path" (creandola se `create`).
+    """
     from . import drivers
     try:
         p = drivers.folder_path(str(folder or "").strip())
@@ -103,7 +156,28 @@ def _driver_dir(folder):
         raise UploadError(str(e), 400)
     if not os.path.isdir(p):
         raise UploadError("Cartella driver non trovata: creala prima dalla pagina Driver", 404)
-    return p
+    parts = check_subpath(subdir)
+    if not parts:
+        return p
+    target = os.path.join(p, *parts)
+    if not os.path.realpath(target).startswith(os.path.realpath(p) + os.sep):
+        raise UploadError("Percorso non consentito", 400)
+    if create:
+        cur = p
+        for seg in parts:
+            cur = os.path.join(cur, seg)
+            if not os.path.isdir(cur):
+                try:
+                    os.mkdir(cur)
+                except FileExistsError:
+                    raise UploadError(f"'{seg}' esiste già ed è un file, non una cartella", 409)
+                except OSError as e:
+                    raise UploadError(f"Impossibile creare la sottocartella '{seg}': {e}", 500)
+                try:
+                    os.chmod(cur, 0o2775)
+                except OSError:
+                    pass
+    return target
 
 
 def _answer_dir(folder):
@@ -121,7 +195,7 @@ def _answer_dir(folder):
 def _dest_dir(st):
     """Cartella di destinazione per lo stato `st` (crea LIBRARY_DIR se serve)."""
     if st.get("kind") == "driver":
-        return _driver_dir(st.get("folder"))
+        return _driver_dir(st.get("folder"), st.get("subdir", ""), create=True)
     if st.get("kind") == "answer":
         return _answer_dir(st.get("folder"))
     os.makedirs(C.LIBRARY_DIR, exist_ok=True)
@@ -195,6 +269,7 @@ def _public(st):
     rec = _received(st["upload_id"], st["size"], cs)
     return {"upload_id": st["upload_id"], "filename": st["filename"], "size": st["size"],
             "kind": st.get("kind", "iso"), "folder": st.get("folder"),
+            "path": _rel_name(st.get("subdir", ""), st["filename"]),
             "chunk_size": cs, "received": rec,
             "received_bytes": sum(_expected_len(st["size"], i, cs) for i in rec), "started": st.get("started")}
 
@@ -215,10 +290,20 @@ def list_uploads():
     return out
 
 
-def init(filename, size, kind="iso", folder=None):
-    """Crea (o riprende) un upload. Ritorna {upload_id, chunk_size, received:[int], resumed, kind, folder}."""
+def init(filename, size, kind="iso", folder=None, path=None):
+    """Crea (o riprende) un upload.
+
+    Ritorna {upload_id, chunk_size, received:[int], resumed, kind, folder, path}.
+    Per kind "driver" il campo facoltativo `path` è il sottopercorso dentro la cartella (es. "x64/rt.inf").
+    """
     kind = _check_kind(kind)
     name = sanitize_filename(filename, kind)
+    if kind == "driver":
+        subdir = driver_subdir(path, name)
+    else:
+        if str(path or "").strip():
+            raise UploadError("Il campo 'path' vale solo per i file driver")
+        subdir = ""
     try:
         size = int(size)
     except (TypeError, ValueError):
@@ -227,19 +312,23 @@ def init(filename, size, kind="iso", folder=None):
         raise UploadError("Dimensione non valida (max 64 GiB)")
     if kind == "answer" and size > ANSWER_MAX_SIZE:
         raise UploadError("File di risposta troppo grande (max 8 MiB)")
-    if kind in ("driver", "answer"):
+    if kind == "driver":
         folder = str(folder or "").strip()
-        dest_dir = _driver_dir(folder) if kind == "driver" else _answer_dir(folder)
+        free_dir = _driver_dir(folder)
+        dest_dir = _driver_dir(folder, subdir)      # può non esistere ancora: creata da finish
+    elif kind == "answer":
+        folder = str(folder or "").strip()
+        dest_dir = free_dir = _answer_dir(folder)
     else:
         folder = None
         os.makedirs(C.LIBRARY_DIR, exist_ok=True)
-        dest_dir = C.LIBRARY_DIR
+        dest_dir = free_dir = C.LIBRARY_DIR
     with _lock:
         cleanup()
         dest = os.path.join(dest_dir, name)
         if os.path.exists(dest):
             if kind == "driver":
-                where = f"nella cartella '{folder}'"
+                where = f"nella cartella '{folder}/{subdir}'" if subdir else f"nella cartella '{folder}'"
             elif kind == "answer":
                 where = f"nella risposta '{folder}'"
             else:
@@ -250,22 +339,24 @@ def init(filename, size, kind="iso", folder=None):
             if fn.endswith(".json"):
                 st = read_json(os.path.join(C.UPLOAD_TMP_DIR, fn), None)
                 if (isinstance(st, dict) and st.get("filename") == name and st.get("size") == size
-                        and st.get("kind", "iso") == kind and st.get("folder") == folder):
+                        and st.get("kind", "iso") == kind and st.get("folder") == folder
+                        and st.get("subdir", "") == subdir):
                     p = _public(st)
                     return {"upload_id": st["upload_id"], "chunk_size": st.get("chunk_size", CHUNK_SIZE),
-                            "received": p["received"], "resumed": True, "kind": kind, "folder": folder}
+                            "received": p["received"], "resumed": True, "kind": kind, "folder": folder,
+                            "path": _rel_name(subdir, name)}
         os.makedirs(C.UPLOAD_TMP_DIR, exist_ok=True)
-        free = shutil.disk_usage(dest_dir).free
+        free = shutil.disk_usage(free_dir).free
         if free < size + DISK_MARGIN:
             raise UploadError("Spazio su disco insufficiente per questo file", 507)
         upload_id = secrets.token_hex(8)
         os.makedirs(_chunk_dir(upload_id), exist_ok=True)
         st = {"upload_id": upload_id, "filename": name, "size": size, "chunk_size": CHUNK_SIZE,
-              "kind": kind, "folder": folder,
+              "kind": kind, "folder": folder, "subdir": subdir,
               "started": _now_iso(), "chunks": _nchunks(size, CHUNK_SIZE)}
         write_json(_state_path(upload_id), st)
         return {"upload_id": upload_id, "chunk_size": CHUNK_SIZE, "received": [], "resumed": False,
-                "kind": kind, "folder": folder}
+                "kind": kind, "folder": folder, "path": _rel_name(subdir, name)}
 
 
 def put_chunk(upload_id, n, stream):
@@ -448,6 +539,7 @@ def finish(upload_id):
         discard(upload_id)
         if st.get("kind") == "driver":
             folder = st.get("folder")
+            subdir = st.get("subdir", "")
             if st["filename"].lower().endswith(".zip"):
                 try:
                     n, files = extract_zip(dest, dest_dir)
@@ -456,14 +548,17 @@ def finish(upload_id):
                         os.unlink(dest)
                     except OSError:
                         pass
-                log.info("driver: zip %s estratto in '%s' (%d file)", st["filename"], folder, n)
-                return {"kind": "driver", "folder": folder, "path": dest_dir, "extracted": n, "files": files}
+                log.info("driver: zip %s estratto in '%s' (%d file)", st["filename"],
+                         f"{folder}/{subdir}" if subdir else folder, n)
+                return {"kind": "driver", "folder": folder, "path": dest_dir, "extracted": n,
+                        "files": [_rel_name(subdir, f) for f in files]}
             try:
                 os.chmod(dest, 0o664)
             except OSError:
                 pass
-            log.info("driver: caricato %s in '%s'", st["filename"], folder)
-            return {"kind": "driver", "folder": folder, "path": dest, "extracted": 0, "files": [st["filename"]]}
+            log.info("driver: caricato %s in '%s'", _rel_name(subdir, st["filename"]), folder)
+            return {"kind": "driver", "folder": folder, "path": dest, "extracted": 0,
+                    "files": [_rel_name(subdir, st["filename"])]}
         if st.get("kind") == "answer":
             folder = st.get("folder")
             try:

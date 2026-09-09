@@ -434,6 +434,7 @@ details.custom .inner{padding-top:10px}
    una lingua diversa da quella voluta — quindi si stacca dagli altri campi con un bordo e uno
    sfondo leggero, come le altre sotto-sezioni della pagina. */
 .wp-lang{margin-top:14px;padding:12px 14px 4px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+.wp-lang-t{font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px}
 .wp-lang .field.check{margin-bottom:8px}
 .wp-lang #wp-li-box{margin-top:6px}
 .wp-lang .alert{margin-bottom:12px}
@@ -449,13 +450,54 @@ details.custom .inner{padding-top:10px}
 .wn-gtitle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-top:4px}
 .wn-gnota{font-size:12px;color:var(--muted);margin:-4px 0 2px;overflow-wrap:anywhere}
 .wn-card{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-left:3px solid var(--line-strong);border-radius:8px;padding:9px 11px;background:var(--surface-2);cursor:pointer;min-width:0}
+/* la scheda è un <label> dentro un .field: senza questa riga eredita il grassetto delle etichette */
+.wn-card,.wn-card .b{font-weight:400;font-size:13px;color:var(--ink)}
 .wn-card:hover{border-color:var(--line-strong)}
 .wn-card>input{flex:none;width:auto;margin:3px 0 0;cursor:pointer}
 .wn-card .b{flex:1 1 auto;min-width:0;display:grid;gap:3px}
 .wn-card .t{font-weight:600;font-size:13.5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;overflow-wrap:anywhere}
-.wn-card .d{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+/* descrizione: quattro righe per scorrere l'elenco, tutta intera sulla scheda scelta */
+.wn-card .d{font-size:12px;color:var(--muted);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;line-clamp:4;overflow:hidden}
+.wn-card.on .d{display:block;overflow:visible}
 .wn-card .m{font-size:11px;color:var(--muted);font-family:var(--mono);overflow-wrap:anywhere}
 .wn-card.on{background:var(--accent-soft);border-color:var(--accent);border-left-color:var(--accent)}
 .wn-card .wn-tipo{font-weight:500}
 .wn-card.wn-vuoto{border-left-color:var(--line)}
 @media (max-width:900px){.wn-list{max-height:none}}
+
+/* Driver: caricamento di cartelle intere, scarto dei file inutili, azioni su più cartelle ------- */
+/* (docs/API.md, sezione 14) Barra di avanzamento della coda, riepilogo dei file saltati, casella di
+   selezione su ogni scheda cartella con barra delle azioni, file "non usati" in grigio. */
+#drv-queue{margin-bottom:12px}
+.drv-queue-card{display:grid;gap:8px;padding:12px 16px}
+.drv-q-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.drv-q-head b{font-size:14px}
+.drv-q-head .hint{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.drv-queue-card .meta{font-size:12.5px;color:var(--muted)}
+.drv-q-note{font-size:12.5px;background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:6px 10px}
+
+#drv-bulk{margin-bottom:12px}
+.drv-bulkbar{position:sticky;top:8px;z-index:3;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  border:1px solid var(--accent);background:var(--accent-soft);border-radius:10px;padding:10px 14px}
+.drv-bulk-n{font-weight:600;font-size:13.5px}
+.drv-bulk-g{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.drv-bulk-g .k{font-size:12.5px;color:var(--muted)}
+.drv-bulk-sp{flex:1 1 auto}
+.drv-bulk-names{flex-basis:100%;font-size:12px;overflow-wrap:anywhere}
+
+.drv-head-l{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.drv-pick{flex:none;display:flex;align-items:center;padding-top:2px;cursor:pointer}
+.drv-pick input{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--accent)}
+.drv-card.picked{border-color:var(--accent);background:var(--accent-soft)}
+.drv-card.picked .toggle-row,.drv-card.picked .drv-note{border-color:var(--line-strong)}
+#drv-list.drv-page-drag,.drv-page-drag #drv-list{outline:2px dashed var(--accent);outline-offset:6px;border-radius:12px}
+
+/* elenco file: quelli che non servono a installare il driver restano visibili ma spenti */
+tr.drv-unused td{opacity:.55}
+tr.drv-unused td .mono{text-decoration:line-through;text-decoration-color:var(--line-strong)}
+
+/* finestra di riepilogo prima del caricamento */
+.drv-all{display:flex;align-items:center;gap:8px;margin:10px 0 4px;font-weight:600;font-size:13.5px;cursor:pointer}
+.drv-all input{width:16px;height:16px;margin:0;cursor:pointer;accent-color:var(--accent)}
+td.drv-skip{color:var(--warn);font-weight:600}
+@media (max-width:900px){.drv-bulkbar{position:static}}

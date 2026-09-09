@@ -593,7 +593,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn(solo_client[0]["id"], r.get_json()["error"])
         r = self.client.post("/api/winprofiles", headers=self.h, json={
-            "name": "Server", "preset": "win-server",
+            "name": "Server", "preset": "winserver",
             "settings": {"admin_password": "Pw1234567"}})
         self.assertEqual(r.status_code, 201, r.get_json())
         self.assertEqual(r.get_json()["settings"]["target"], "server")
@@ -1081,7 +1081,7 @@ class PresetWindowsTest(unittest.TestCase):
             self.skipTest("modelli non installati")
 
     def test_almeno_sette_modelli(self):
-        for atteso in ("win-postazione-aziendale", "win-pc-singolo", "win-server", "win-laboratorio",
+        for atteso in ("win-postazione-aziendale", "win-pc-singolo", "winserver", "win-laboratorio",
                        "win-minimale", "win-privacy", "win-prestazioni"):
             self.assertIn(atteso, self.ids)
 
@@ -1123,7 +1123,7 @@ class PresetWindowsTest(unittest.TestCase):
 
     def test_target_dei_modelli(self):
         """Ogni modello windows dichiara un tipo di Windows valido e non contiene voci
-        incompatibili (docs/API.md, sezioni 11 e 12): win-server è server, i modelli generici sono
+        incompatibili (docs/API.md, sezioni 11 e 12): winserver è server, i modelli generici sono
         client, quelli per edizione dichiarano il proprio (10-ltsc, 11-ltsc, server)."""
         generici = ("win-postazione-aziendale", "win-pc-singolo", "win-laboratorio",
                     "win-minimale", "win-privacy", "win-prestazioni")
@@ -1136,7 +1136,7 @@ class PresetWindowsTest(unittest.TestCase):
             self.assertIn(atteso, WP.TARGETS, pid + ": tipo di Windows sbagliato")
             if pid in generici:
                 self.assertEqual(atteso, "client", pid + ": i modelli generici sono per i client")
-            if pid == "win-server":
+            if pid == "winserver":
                 self.assertEqual(atteso, "server", pid + ": tipo di Windows sbagliato")
             if not WP.target_ha_store(atteso):
                 self.assertEqual(s.get("remove_apps") or [], [],
@@ -1146,11 +1146,11 @@ class PresetWindowsTest(unittest.TestCase):
             self.assertEqual(fuori, [], f"{pid}: voci incompatibili con il tipo {atteso}: {fuori}")
             # il modello deve restare valido: la validazione rifiuta le voci incompatibili
             WP.validate(dict(s, admin_password=s.get("admin_password") or "PasswordDiProva1"))
-        server = WP.load_preset("win-server")["settings"]
+        server = WP.load_preset("winserver")["settings"]
         self.assertNotIn("ricerca-solo-locale", server["tweaks"])
         self.assertIn("attiva-desktop-remoto", server["tweaks"])
         self.assertEqual(server["remove_apps"], [],
-                         "win-server non deve rimuovere app: su Server non ci sono")
+                         "winserver non deve rimuovere app: su Server non ci sono")
 
 
 # ------------------------------------------------- tipo di Windows: client oppure server (sez. 11)

@@ -227,8 +227,8 @@ MAX_URL = 500
 # Da dove arriva il pacchetto lingua
 LANG_SOURCES = ("windows-update", "file")
 LANG_SOURCE_LABELS = {
-    "windows-update": "Windows Update (il PC deve raggiungere internet)",
-    "file": "Pacchetto caricato in Pixio (indirizzo http/https)",
+    "windows-update": "Windows Update",
+    "file": "Pacchetto caricato in Pixio",
 }
 
 # Lingue più comuni in Italia con il loro GeoId, quello che vuole Set-WinHomeLocation:

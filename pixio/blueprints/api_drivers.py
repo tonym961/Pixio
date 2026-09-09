@@ -1,6 +1,7 @@
 """API libreria driver: cartelle in DRIVERS_DIR, flag winpe_inject / setup_load, note, eliminazione file.
 
-L'upload dei file passa da /api/upload (kind:"driver", folder:"<nome>"), vedi api_upload.py.
+L'upload dei file passa da /api/upload (kind:"driver", folder:"<nome>", "path" per le sottocartelle),
+vedi api_upload.py. PATCH su /api/drivers/folders (senza nome) applica gli stessi flag a piu' cartelle.
 """
 import os
 import socket
@@ -71,18 +72,44 @@ def create_folder():
     return jsonify({"ok": True, "folder": _get_folder(name)}), 201
 
 
+def _flag_patch(d, fields=("winpe_inject", "setup_load")):
+    """Estrae i flag booleani dal corpo JSON (solleva ValueError se il tipo e' sbagliato)."""
+    patch = {}
+    for k in fields:
+        if k in d:
+            if not isinstance(d[k], bool):
+                raise ValueError(f"{k}: valore booleano atteso")
+            patch[k] = d[k]
+    return patch
+
+
+@bp.route("/api/drivers/folders", methods=["PATCH"])
+def patch_folders():
+    """Stessa modifica su piu' cartelle: {names:[...], winpe_inject?, setup_load?}."""
+    d = request.get_json(silent=True)
+    if not isinstance(d, dict):
+        raise ValueError("Corpo JSON non valido")
+    names = d.get("names")
+    if not isinstance(names, list) or not names:
+        raise ValueError("names: elenco di nomi di cartelle atteso")
+    if len(names) > 500:
+        raise ValueError("Troppe cartelle in una sola richiesta (max 500)")
+    if any(not isinstance(n, str) for n in names):
+        raise ValueError("names: i nomi delle cartelle devono essere testo")
+    patch = _flag_patch(d)
+    if not patch:
+        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load)")
+    res = drivers.set_flags_many(names, patch)
+    return jsonify({"ok": not res["errors"], "updated": res["updated"], "errors": res["errors"]})
+
+
 @bp.route("/api/drivers/folders/<name>", methods=["PATCH"])
 def patch_folder(name):
     _folder_or_404(name)
     d = request.get_json(silent=True)
     if not isinstance(d, dict):
         raise ValueError("Corpo JSON non valido")
-    patch = {}
-    for k in ("winpe_inject", "setup_load"):
-        if k in d:
-            if not isinstance(d[k], bool):
-                raise ValueError(f"{k}: valore booleano atteso")
-            patch[k] = d[k]
+    patch = _flag_patch(d)
     if "note" in d:
         if d["note"] is not None and not isinstance(d["note"], str):
             raise ValueError("note: testo atteso")

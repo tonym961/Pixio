@@ -1,6 +1,6 @@
 """API upload a chunk (riprendibile): ISO nella libreria locale (kind "iso", default), file driver
-in una cartella della libreria driver (kind "driver" + folder) o file aggiuntivo di una risposta
-automatica (kind "answer" + folder = id della risposta)."""
+in una cartella della libreria driver (kind "driver" + folder, con "path" facoltativo per le sottocartelle)
+o file aggiuntivo di una risposta automatica (kind "answer" + folder = id della risposta)."""
 from flask import Blueprint, jsonify, request
 
 from .. import settings as S
@@ -29,7 +29,11 @@ def list_uploads():
 def init():
     _check_enabled()
     d = request.get_json(silent=True) or {}
-    res = uploads.init(d.get("filename", ""), d.get("size", 0), kind=d.get("kind") or "iso", folder=d.get("folder"))
+    path = d.get("path")
+    if path is not None and not isinstance(path, str):
+        raise UploadError("path: testo atteso (sottopercorso dentro la cartella, es. \"x64/rt.inf\")")
+    res = uploads.init(d.get("filename", ""), d.get("size", 0), kind=d.get("kind") or "iso",
+                       folder=d.get("folder"), path=path)
     return jsonify(res)
 
 

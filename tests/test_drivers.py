@@ -1,6 +1,9 @@
 """Test della libreria driver: API cartelle (CRUD, flag, note), upload driver singolo, upload zip
 con estrazione sicura (rifiuto di '../' e percorsi assoluti), eliminazione file.
 
+Sezione 14 del contratto (docs/API.md): campo "path" per caricare cartelle intere mantenendo le
+sottocartelle, contatori useful_files / ignored_files, PATCH su piu' cartelle insieme.
+
 Esecuzione: cd /opt/pixio && python3 -m unittest tests.test_drivers
 I percorsi di config vengono reindirizzati in una directory temporanea in setUpClass e ripristinati alla fine,
 così il modulo convive con tests/test_plumbing.py nella stessa discovery.
@@ -30,9 +33,12 @@ def _fake_call(*args, stdin_text=None, timeout=180):
     return {"ok": True}
 
 
-def _put_file(client, h, folder, name, payload, kind="driver", chunk=None):
+def _put_file(client, h, folder, name, payload, kind="driver", chunk=None, path=None):
     """Upload completo via API (init + chunk + finish). Ritorna la risposta di finish."""
-    r = client.post("/api/upload/init", json={"filename": name, "size": len(payload), "kind": kind, "folder": folder}, headers=h)
+    body = {"filename": name, "size": len(payload), "kind": kind, "folder": folder}
+    if path is not None:
+        body["path"] = path
+    r = client.post("/api/upload/init", json=body, headers=h)
     assert r.status_code == 200, r.get_json()
     d = r.get_json()
     uid, cs = d["upload_id"], d["chunk_size"]
@@ -295,6 +301,206 @@ class DriversApiTest(unittest.TestCase):
         self.client.delete("/api/drivers/folders/Inject", headers=self.h)
         from pixio.storage import read_json
         self.assertNotIn("Inject", read_json(C.DRIVERS_FILE, {}).get("folders", {}))
+
+
+    # ---------------------------------------------------------------- sezione 14: sottopercorsi
+    def test_07_subpath_validation(self):
+        from pixio.services.uploads import UploadError, check_subpath, driver_subdir
+        # validi
+        self.assertEqual(check_subpath(""), [])
+        self.assertEqual(check_subpath(None), [])
+        self.assertEqual(check_subpath("x64/rt.inf"), ["x64", "rt.inf"])
+        self.assertEqual(check_subpath("x64\\win11\\rt.inf"), ["x64", "win11", "rt.inf"])
+        self.assertEqual(check_subpath("a/b/c/d/e/f"), ["a", "b", "c", "d", "e", "f"])
+        self.assertEqual(check_subpath("Intel (2.5G)/rt 640 [x64].sys"), ["Intel (2.5G)", "rt 640 [x64].sys"])
+        # la sottocartella si ricava dal percorso completo o dalla sola cartella
+        self.assertEqual(driver_subdir("x64/rt.inf", "rt.inf"), "x64")
+        self.assertEqual(driver_subdir("x64/RT.INF", "rt.inf"), "x64")
+        self.assertEqual(driver_subdir("x64", "rt.inf"), "x64")
+        self.assertEqual(driver_subdir("", "rt.inf"), "")
+        self.assertEqual(driver_subdir("x64/win11/rt.inf", "rt.inf"), "x64/win11")
+        # non validi
+        for bad in ("/etc/rt.inf", "../rt.inf", "x64/../../rt.inf", "..", ".", "./rt.inf",
+                    ".nascosta/rt.inf", "x64/.ssh/rt.inf", "C:/Windows/rt.inf", "c:rt.inf",
+                    "a/b/c/d/e/f/g.inf", "x*64/rt.inf", "x64/a?b.inf", "x64 /rt.inf", "x64./rt.inf",
+                    "rt.inf\x00", "a" * 201 + "/rt.inf"):
+            with self.assertRaises(UploadError, msg=bad):
+                check_subpath(bad)
+
+    def test_08_upload_with_path_creates_subfolders(self):
+        from pixio.services import uploads
+        uploads.CHUNK_SIZE = 1024
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": "Pacchetto RAID"}, headers=self.h).status_code, 201)
+        base = os.path.join(C.DRIVERS_DIR, "Pacchetto RAID")
+        # sottopercorsi rifiutati dall'API (400) e niente cartelle create
+        for bad in ("../fuori/rt.inf", "/etc/rt.inf", ".nascosta/rt.inf", "a/b/c/d/e/f/g.inf", "x*/rt.inf"):
+            r = self.client.post("/api/upload/init", json={"filename": "rt.inf", "size": 10, "kind": "driver",
+                                                          "folder": "Pacchetto RAID", "path": bad}, headers=self.h)
+            self.assertEqual(r.status_code, 400, bad)
+            self.assertIn("error", r.get_json())
+        r = self.client.post("/api/upload/init", json={"filename": "rt.inf", "size": 10, "kind": "driver",
+                                                      "folder": "Pacchetto RAID", "path": 5}, headers=self.h)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(os.listdir(base), [])
+        # upload in una sottocartella profonda: le cartelle vengono create da sole
+        payload = os.urandom(1024 * 2 + 7)
+        r = _put_file(self.client, self.h, "Pacchetto RAID", "iaStorVD.sys", payload, path="x64/Win11/iaStorVD.sys")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        d = r.get_json()
+        self.assertEqual((d["ok"], d["kind"], d["folder"], d["files"]), (True, "driver", "Pacchetto RAID", ["x64/Win11/iaStorVD.sys"]))
+        dest = os.path.join(base, "x64", "Win11", "iaStorVD.sys")
+        self.assertTrue(os.path.isfile(dest))
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), payload)
+        # l'elenco mostra il percorso relativo
+        f = self._folders()["Pacchetto RAID"]
+        self.assertIn("x64/Win11/iaStorVD.sys", [x["name"] for x in f["files"]])
+        # stesso nome in sottocartelle diverse: nessun conflitto
+        r = _put_file(self.client, self.h, "Pacchetto RAID", "iaStorVD.sys", b"x86", path="x86/iaStorVD.sys")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertTrue(os.path.isfile(os.path.join(base, "x86", "iaStorVD.sys")))
+        # stessa sottocartella e stesso nome -> 409
+        r = self.client.post("/api/upload/init", json={"filename": "iaStorVD.sys", "size": 5, "kind": "driver",
+                                                      "folder": "Pacchetto RAID", "path": "x86/iaStorVD.sys"}, headers=self.h)
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("x86", r.get_json()["error"])
+        # la ripresa tiene conto del path: stesso file, sottocartella diversa = upload diverso
+        big = os.urandom(1024 * 3)
+        r = self.client.post("/api/upload/init", json={"filename": "e1d.inf", "size": len(big), "kind": "driver",
+                                                      "folder": "Pacchetto RAID", "path": "x64/e1d.inf"}, headers=self.h)
+        uid = r.get_json()["upload_id"]
+        self.assertEqual(r.get_json()["path"], "x64/e1d.inf")
+        self.client.put(f"/api/upload/{uid}/chunk/0", data=big[:1024], headers=self.h, content_type="application/octet-stream")
+        r = self.client.post("/api/upload/init", json={"filename": "e1d.inf", "size": len(big), "kind": "driver",
+                                                      "folder": "Pacchetto RAID", "path": "x64/e1d.inf"}, headers=self.h)
+        self.assertEqual(r.get_json()["upload_id"], uid)
+        self.assertEqual(r.get_json()["received"], [0])
+        for other in ("x86/e1d.inf", None):
+            body = {"filename": "e1d.inf", "size": len(big), "kind": "driver", "folder": "Pacchetto RAID"}
+            if other:
+                body["path"] = other
+            r = self.client.post("/api/upload/init", json=body, headers=self.h)
+            self.assertEqual(r.status_code, 200, r.get_json())
+            self.assertNotEqual(r.get_json()["upload_id"], uid)
+            self.assertEqual(r.get_json()["received"], [])
+            self.client.delete(f"/api/upload/{r.get_json()['upload_id']}", headers=self.h)
+        self.client.delete(f"/api/upload/{uid}", headers=self.h)
+        self.assertEqual(self.client.get("/api/upload").get_json(), [])
+        # eliminazione di un file dentro la sottocartella
+        r = self.client.delete("/api/drivers/folders/Pacchetto%20RAID/files/x86/iaStorVD.sys", headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(os.path.exists(os.path.join(base, "x86", "iaStorVD.sys")))
+
+    # ---------------------------------------------------------------- sezione 14: file utili e scartati
+    def test_09_useful_and_ignored_counters(self):
+        from pixio.services import drivers, uploads
+        uploads.CHUNK_SIZE = 1024
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": "Pacchetto Asus"}, headers=self.h).status_code, 201)
+        # com'e' fatto davvero un pacchetto driver: driver veri + installatore, lingue, documentazione
+        utili = ["rt640x64.inf", "rt640x64.sys", "rt640x64.cat", "rtnicprop64.dll", "oem.cab", "cfg.bin", "tab.dat"]
+        scarti = ["AsusSetup.exe", "lingua.ini", "leggimi.txt", "setup.msi", "info.xml", "dati.json", "cfg.cfg"]
+        for n in utili + scarti:
+            self.assertEqual(_put_file(self.client, self.h, "Pacchetto Asus", n, b"x" * 20).status_code, 200, n)
+        # anche in sottocartella
+        self.assertEqual(_put_file(self.client, self.h, "Pacchetto Asus", "rt2.inf", b"x" * 10, path="x64/rt2.inf").status_code, 200)
+        self.assertEqual(_put_file(self.client, self.h, "Pacchetto Asus", "note.txt", b"x" * 10, path="x64/note.txt").status_code, 200)
+        f = self._folders()["Pacchetto Asus"]
+        self.assertEqual(f["count"], len(utili) + len(scarti) + 2)
+        self.assertEqual(f["useful_files"], len(utili) + 1)
+        self.assertEqual(f["ignored_files"], len(scarti) + 1)
+        self.assertEqual(f["useful_files"] + f["ignored_files"], f["count"])
+        per_nome = {x["name"]: x for x in f["files"]}
+        for n in utili:
+            self.assertTrue(per_nome[n]["useful"], n)
+        for n in scarti:
+            self.assertFalse(per_nome[n]["useful"], n)
+        self.assertTrue(per_nome["x64/rt2.inf"]["useful"])
+        self.assertFalse(per_nome["x64/note.txt"]["useful"])
+        # solo i .inf/.sys/.cat/.dll al primo livello finiscono in WinPE (invariato)
+        self.assertEqual(f["winpe_files"], 4)
+        self.assertTrue(drivers.is_useful("A.INF"))
+        self.assertFalse(drivers.is_useful("AsusSetup.exe"))
+        # una cartella vuota non ha ne' utili ne' scarti
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": "Vuota"}, headers=self.h).status_code, 201)
+        v = self._folders()["Vuota"]
+        self.assertEqual((v["useful_files"], v["ignored_files"]), (0, 0))
+
+    # ---------------------------------------------------------------- sezione 14: PATCH su piu' cartelle
+    def test_10_patch_many_folders(self):
+        for n in ("Multi A", "Multi B", "Multi C"):
+            self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+        # successo su tutte
+        r = self.client.patch("/api/drivers/folders", json={"names": ["Multi A", "Multi B"], "winpe_inject": True,
+                                                            "setup_load": True}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        d = r.get_json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["updated"], ["Multi A", "Multi B"])
+        self.assertEqual(d["errors"], {})
+        fs = self._folders()
+        for n in ("Multi A", "Multi B"):
+            self.assertTrue(fs[n]["winpe_inject"], n)
+            self.assertTrue(fs[n]["setup_load"], n)
+        self.assertFalse(fs["Multi C"]["winpe_inject"])
+        # nomi inesistenti o non validi: errore per nome, le altre passano lo stesso
+        r = self.client.patch("/api/drivers/folders", json={"names": ["Multi A", "Fantasma", "../fuori", "Multi C"],
+                                                            "winpe_inject": False}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        d = r.get_json()
+        self.assertFalse(d["ok"])
+        self.assertEqual(d["updated"], ["Multi A", "Multi C"])
+        self.assertEqual(sorted(d["errors"]), ["../fuori", "Fantasma"])
+        self.assertIn("non trovata", d["errors"]["Fantasma"])
+        self.assertIn("non valido", d["errors"]["../fuori"])
+        fs = self._folders()
+        self.assertFalse(fs["Multi A"]["winpe_inject"])
+        self.assertTrue(fs["Multi A"]["setup_load"])      # gli altri flag restano come sono
+        self.assertTrue(fs["Multi B"]["winpe_inject"])    # cartella non elencata: invariata
+        # corpo non valido
+        for bad in ({}, {"names": []}, {"names": "Multi A", "winpe_inject": True},
+                    {"names": ["Multi A"]}, {"names": ["Multi A"], "winpe_inject": "si"},
+                    {"names": [3], "winpe_inject": True}, {"names": ["x"] * 501, "winpe_inject": True},
+                    {"names": ["Multi A"], "note": "x"}):
+            r = self.client.patch("/api/drivers/folders", json=bad, headers=self.h)
+            self.assertEqual(r.status_code, 400, bad)
+            self.assertIn("error", r.get_json())
+        # spegnere tutto in blocco
+        r = self.client.patch("/api/drivers/folders", json={"names": ["Multi A", "Multi B", "Multi C"],
+                                                            "winpe_inject": False, "setup_load": False}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        fs = self._folders()
+        for n in ("Multi A", "Multi B", "Multi C"):
+            self.assertFalse(fs[n]["winpe_inject"] or fs[n]["setup_load"], n)
+
+    # ---------------------------------------------------------------- nessuna regressione su ISO e risposte
+    def test_11_iso_and_answers_unchanged(self):
+        from pixio.services import uploads
+        uploads.CHUNK_SIZE = 1024
+        # "path" vale solo per i driver
+        for kind in (None, "iso", "answer"):
+            body = {"filename": "x.iso" if kind in (None, "iso") else "x.xml", "size": 10, "path": "sub/x"}
+            if kind:
+                body["kind"] = kind
+            r = self.client.post("/api/upload/init", json=body, headers=self.h)
+            self.assertEqual(r.status_code, 400, kind)
+            self.assertIn("path", r.get_json()["error"])
+        # upload ISO completo: invariato (nessuna sottocartella, file nella libreria)
+        payload = os.urandom(1024 * 2 + 11)
+        r = self.client.post("/api/upload/init", json={"filename": "Prova (1).iso", "size": len(payload)}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        d = r.get_json()
+        self.assertEqual((d["kind"], d["folder"], d["received"]), ("iso", None, []))
+        uid, cs = d["upload_id"], d["chunk_size"]
+        for i in range((len(payload) + cs - 1) // cs):
+            self.assertEqual(self.client.put(f"/api/upload/{uid}/chunk/{i}", data=payload[i * cs:(i + 1) * cs],
+                                             headers=self.h, content_type="application/octet-stream").status_code, 200)
+        r = self.client.post(f"/api/upload/{uid}/finish", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["slug"], "prova-1")
+        dest = os.path.join(C.LIBRARY_DIR, "Prova (1).iso")
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), payload)
+        self.assertEqual(self.client.get("/api/upload").get_json(), [])
 
 
 if __name__ == "__main__":

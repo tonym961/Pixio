@@ -3,6 +3,10 @@
 winpe_inject: i file .inf/.sys/.cat/.dll al primo livello della cartella vengono iniettati nel WinPE via wimboot
               (finiscono in X:\\Windows\\System32) e caricati con drvload prima di wpeinit -> driver di rete/storage.
 setup_load:   dopo aver mappato la share, drvload ricorsivo di tutti i .inf della cartella prima di setup.exe.
+
+I pacchetti driver contengono spesso anche l'installatore .exe, file di lingua .ini, documentazione: file che
+non servono all'installazione automatica. USEFUL_EXT elenca le estensioni che servono davvero; ogni file ha il
+campo "useful" e ogni cartella i contatori useful_files / ignored_files (docs/API.md, sezione 14).
 """
 import os
 import re
@@ -14,7 +18,14 @@ from ..storage import read_json, update_json
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,63}$")
 FILE_RE = re.compile(r"^[^/\\\x00]{1,200}$")
 WINPE_EXT = (".inf", ".sys", ".cat", ".dll")
+# estensioni che servono davvero a installare un driver (tutto il resto e' scarto: .exe, .txt, .ini, ...)
+USEFUL_EXT = (".inf", ".sys", ".cat", ".dll", ".bin", ".dat", ".cab", ".sepolicy")
 MAX_INJECT_BYTES = 256 * 1024 * 1024
+
+
+def is_useful(name):
+    """True se il file serve all'installazione del driver (estensione in USEFUL_EXT)."""
+    return str(name or "").lower().endswith(USEFUL_EXT)
 
 
 def _flags():
@@ -55,8 +66,9 @@ def _walk(folder):
                 st = os.stat(full)
             except OSError:
                 continue
-            rel = os.path.relpath(full, folder)
-            out.append({"name": rel, "size": st.st_size, "mtime": int(st.st_mtime)})
+            rel = os.path.relpath(full, folder).replace(os.sep, "/")
+            out.append({"name": rel, "size": st.st_size, "mtime": int(st.st_mtime),
+                        "useful": is_useful(fn)})
             if len(out) >= 2000:
                 return out
     return out
@@ -73,8 +85,10 @@ def list_folders():
         files = _walk(p)
         f = flags.get(name, {})
         inject = [x for x in files if "/" not in x["name"] and x["name"].lower().endswith(WINPE_EXT)]
+        useful = sum(1 for x in files if x["useful"])
         out.append({
             "name": name, "files": files, "count": len(files), "size": sum(x["size"] for x in files),
+            "useful_files": useful, "ignored_files": len(files) - useful,
             "inf_count": sum(1 for x in files if x["name"].lower().endswith(".inf")),
             "winpe_files": len(inject), "winpe_size": sum(x["size"] for x in inject),
             "winpe_inject": bool(f.get("winpe_inject")), "setup_load": bool(f.get("setup_load")),
@@ -118,6 +132,37 @@ def set_flags(name, patch):
         if f["name"] == name:
             return f
     return None
+
+
+def set_flags_many(names, patch):
+    """Applica lo stesso patch a piu' cartelle. Ritorna {"updated": [nomi], "errors": {nome: messaggio}}."""
+    updated, errors, ok_names = [], {}, []
+    for raw in names:
+        name = str(raw or "").strip()
+        try:
+            p = folder_path(name)
+        except ValueError as e:
+            errors[str(raw)] = str(e)
+            continue
+        if not os.path.isdir(p):
+            errors[name] = "Cartella driver non trovata"
+            continue
+        ok_names.append(name)
+
+    if ok_names:
+        def upd(d):
+            folders = d.setdefault("folders", {})
+            for name in ok_names:
+                f = folders.setdefault(name, {})
+                for k in ("winpe_inject", "setup_load"):
+                    if k in patch:
+                        f[k] = bool(patch[k])
+                if "note" in patch:
+                    f["note"] = str(patch["note"])[:200]
+            return d
+        update_json(C.DRIVERS_FILE, upd, default={})
+        updated = ok_names
+    return {"updated": updated, "errors": errors}
 
 
 def delete_file(name, rel):

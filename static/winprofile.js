@@ -85,8 +85,8 @@
   }
   function sorgentiLingua() {
     return (W.meta && W.meta.lang_sources) || [
-      { id: 'windows-update', name: 'Windows Update (il PC deve raggiungere internet)' },
-      { id: 'file', name: 'Pacchetto caricato in Pixio (indirizzo http/https)' },
+      { id: 'windows-update', name: 'Windows Update' },
+      { id: 'file', name: 'Pacchetto caricato in Pixio' },
     ];
   }
   function apps() { return (W.meta && W.meta.apps) || []; }
@@ -153,7 +153,7 @@
     if (s.product_key) extra.push('chiave di installazione già pronta');
     if (s.bypass_requirements) extra.push('requisiti di Windows 11 aggirati');
     if (s.autologon) extra.push('accesso automatico');
-    return `<label class="wn-card${sel ? ' on' : ''}" data-preset="${esc(p.id)}">
+    return `<label class="wn-card${sel ? ' on' : ''}" data-preset="${esc(p.id)}" title="${esc(p.description || '')}">
       <input type="radio" name="wn-preset" value="${esc(p.id)}" ${sel ? 'checked' : ''}>
       <span class="b">
         <span class="t">${esc(p.name)} <span class="pill neutral wn-tipo">${esc(twTargetNome(t))}</span></span>
@@ -296,13 +296,14 @@
     if (!opz.some((o) => o.id === tag)) opz.unshift({ id: tag, name: tag });
     const altre = scelte.slice(1);
     return `<div class="wp-lang" id="wp-li">
+      <div class="wp-lang-t">Lingua da installare</div>
       ${spunta('wp-li-on', 'Installa la lingua di Windows dopo l\'installazione', on,
         'Da attivare quando la ISO è in una lingua diversa da quella che vuoi: per esempio una ISO '
         + 'di Windows Server in inglese su un server che deve parlare italiano. Il pacchetto lingua '
         + 'viene installato da solo al primo accesso, senza doverlo più fare a mano.')}
       <div id="wp-li-box" ${on ? '' : 'hidden'}>
         <div class="row3">
-          ${tendina('wp-li-lang', 'Lingua da installare', tag, opz,
+          ${tendina('wp-li-lang', 'Lingua', tag, opz,
             'La lingua che il PC deve parlare alla fine. Con le ISO già in italiano questo riquadro non serve.')}
           ${tendina('wp-li-source', 'Da dove prendere il pacchetto', sorgente, sorgentiLingua(),
             'Windows Update: nessun file da procurarsi, ma il PC deve raggiungere internet durante '
