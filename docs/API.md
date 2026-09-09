@@ -454,3 +454,23 @@ In lettura ogni ISO espone anche `answers_info: [{id, name, kind}]` per la GUI.
   pulsante per toglierla, e l'interruttore "Mostra anche l'installazione guidata a mano".
 - Nella tabella, il badge mostra il numero di installazioni automatiche disponibili quando sono più di una.
 - Pagina "Menu di boot": campo per `answer_timeout` con spiegazione.
+
+## 18. Driver abbinati al modello del PC
+iPXE conosce produttore e modello del PC (SMBIOS: `${manufacturer}`, `${product}`) e Pixio li riceve già come parametri
+nella richiesta del menu, dove finiscono nella scheda del client (per esempio "Dell Inc. OptiPlex 7060").
+Ogni cartella driver può quindi valere solo per certi modelli.
+- `apply_to` guadagna il campo `models`: elenco di testi liberi (massimo 30, 60 caratteri l'uno). La corrispondenza è
+  per sottostringa, senza distinzione fra maiuscole e minuscole e ignorando gli spazi doppi, sul testo
+  "<produttore> <modello>" del PC che sta avviando (per esempio "optiplex 7060" corrisponde a "Dell Inc. OptiPlex 7060").
+- La modalità `mode` accetta anche il valore `models`. Con `models` la cartella vale solo per i PC riconosciuti;
+  le altre modalità (`all`, `groups`, `isos`) restano come sono e si combinano con `models` quando questo non è vuoto:
+  se `models` è valorizzato, oltre alla condizione della modalità il PC deve corrispondere a uno dei modelli.
+- `drivers.winpe_inject_files(iso=None, machine=None)` e `setup_load_folders(iso=None, machine=None)` accettano il testo
+  del modello; senza, il filtro sui modelli non viene applicato (anteprime e chiamate generiche restano come prima).
+- Il menu passa il modello alla voce: `chain .../boot/<slug>.ipxe?platform=...&mac=...&machine=${manufacturer:uristring}%20${product:uristring}`;
+  `GET /boot/<slug>.ipxe` accetta `machine` (massimo 120 caratteri, ripulito) e lo usa per scegliere i driver.
+- `GET /api/drivers` espone i modelli già visti dai client (da `clients.json`, campo `hw`) per riempire un elenco di scelta
+  rapida nella GUI, in modo da non doverli scrivere a mano.
+- GUI: nella riga "Si applica a" della cartella, in aggiunta alle scelte attuali, un campo "Solo su questi modelli"
+  con i modelli visti selezionabili e la possibilità di aggiungerne a mano; il riassunto della scheda lo riporta
+  ("solo Windows Server · solo OptiPlex 7060").
