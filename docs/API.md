@@ -333,7 +333,7 @@ che non servono e sporcano l'elenco; e le cartelle vanno create a mano una per u
 - `GET /api/drivers` aggiunge per ogni cartella `useful_files` (numero di file con estensione utile) e `ignored_files`
   (numero di file presenti ma non usati per l'iniezione), e per ogni file il campo `useful` (booleano).
   La GUI mostra i file non utili in grigio con la dicitura "non usato", e nel riepilogo della cartella indica quanti file servono davvero.
-- L'iniezione nel WinPE resta limitata a `.inf .sys .cat .dll` al primo livello, come già documentato.
+- L'iniezione nel WinPE prende `.inf .sys .cat` anche dalle sottocartelle (nomi appiattiti, 32 bit escluse). Le `.dll` sono escluse di proposito: finirebbero in X:\Windows\System32 e nomi comuni come generic.dll possono sovrascrivere file di sistema e far riavviare il PC.
 
 ### Azioni su più cartelle insieme
 - Casella di selezione su ogni scheda cartella, con barra delle azioni: attiva o disattiva "Carica in WinPE all'avvio"

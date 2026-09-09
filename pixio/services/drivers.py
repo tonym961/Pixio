@@ -23,7 +23,11 @@ from ..storage import read_json, update_json
 
 FOLDER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,63}$")
 FILE_RE = re.compile(r"^[^/\\\x00]{1,200}$")
-WINPE_EXT = (".inf", ".sys", ".cat", ".dll")
+# Nel WinPE i file iniettati finiscono tutti in X:\Windows\System32: le .dll dei pacchetti driver
+# (co-installer e componenti in modalità utente) non servono a drvload e, con nomi comuni come
+# "generic.dll", rischiano di sovrascrivere file di sistema e far riavviare il PC. Restano comunque
+# nella cartella e raggiungibili dalla share con "Carica prima del setup".
+WINPE_EXT = (".inf", ".sys", ".cat")
 # estensioni che servono davvero a installare un driver (tutto il resto e' scarto: .exe, .txt, .ini, ...)
 USEFUL_EXT = (".inf", ".sys", ".cat", ".dll", ".bin", ".dat", ".cab", ".sepolicy")
 MAX_INJECT_BYTES = 256 * 1024 * 1024

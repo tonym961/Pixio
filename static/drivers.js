@@ -33,7 +33,7 @@
   const FLAGS = {
     winpe_inject: {
       label: "Carica in WinPE all'avvio",
-      help: 'I file .inf/.sys/.cat/.dll al primo livello della cartella vengono iniettati nel WinPE via wimboot e caricati con drvload prima della rete. Serve per schede di rete o controller storage che WinPE non riconosce (max 256 MB totali).',
+      help: 'I file .inf/.sys/.cat (anche nelle sottocartelle) vengono iniettati nel WinPE via wimboot e caricati con drvload prima della rete. Serve per schede di rete o controller storage che WinPE non riconosce (max 256 MB totali).',
     },
     setup_load: {
       label: 'Carica prima del setup di Windows',
@@ -544,7 +544,7 @@
   function warningsHtml(f) {
     const w = [];
     if (f.winpe_size > MAX_INJECT) w.push(`I file al primo livello della cartella pesano ${P.fmtBytes(f.winpe_size)}: oltre 256 MB WinPE ne carica solo una parte. Lascia nella cartella solo i file del driver che serve davvero.`);
-    if (f.winpe_inject && !f.winpe_files) w.push(`"${FLAGS.winpe_inject.label}" è attivo ma nella cartella non ci sono file .inf/.sys/.cat/.dll al primo livello: metti i file del driver direttamente nella cartella, non in sottocartelle.`);
+    if (f.winpe_inject && !f.winpe_files) w.push(`"${FLAGS.winpe_inject.label}" è attivo ma nella cartella non ci sono file .inf/.sys/.cat al primo livello: metti i file del driver direttamente nella cartella, non in sottocartelle.`);
     if (f.setup_load && !f.inf_count) w.push(`"${FLAGS.setup_load.label}" è attivo ma nella cartella non c'è nessun file .inf.`);
     if (active(f) && applyEmpty(f)) w.push(`"Si applica a" è su "${APPLY[applyOf(f).mode].label}" ma non hai scelto niente: questa cartella non verrà usata da nessuna immagine. Scegli almeno una voce o torna a "${APPLY.all.label}".`);
     if (!f.valid_name) w.push('Nome cartella non valido (ammessi lettere, numeri, spazi, . _ - ( ) +, max 64): rinominala dalla share, altrimenti non viene usata dal setup.');
@@ -589,7 +589,7 @@
           <label class="drv-pick" title="Seleziona la cartella per le azioni su più cartelle"><input type="checkbox" data-pick ${D.sel.has(f.name) ? 'checked' : ''} aria-label="Seleziona la cartella ${esc(f.name)}"></label>
           <div>
             <div class="drv-name"><span>${esc(f.name)}</span>${f.valid_name ? '' : P.pill('nome non valido', 'bad')}${f.winpe_inject ? P.pill('WinPE', 'acc') : ''}${f.setup_load ? P.pill('setup', 'acc') : ''}${P.pill(applySummary(f), applyEmpty(f) ? 'warn' : (applyOf(f).mode === 'all' ? 'neutral' : 'acc'))}</div>
-            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File .inf/.sys/.cat/.dll che finiscono davvero nel WinPE, esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
+            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File .inf/.sys/.cat che finiscono davvero nel WinPE, esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
           </div>
         </div>
         <div class="actions">
