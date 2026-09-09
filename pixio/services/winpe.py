@@ -32,7 +32,9 @@ def iso_for(slug):
 
 
 def winpeshl_ini():
-    return "[LaunchApps]\r\n\"install.cmd\"\r\n"
+    """Shell di Windows PE. Il percorso deve essere assoluto: se winpeshl non trova il programma esce
+    subito e Windows PE riavvia il PC senza spiegazioni."""
+    return "[LaunchApps]\r\n\"%SYSTEMDRIVE%\\Windows\\System32\\install.cmd\"\r\n"
 
 
 def install_cmd(slug, cfg=None, iso=None):
@@ -80,7 +82,7 @@ def install_cmd(slug, cfg=None, iso=None):
             "echo.",
             f"echo Avvio il programma di installazione da \\\\{ip}\\pxe\\iso\\{slug}",
             f"S:\\iso\\{slug}\\setup.exe",
-            "goto end",
+            "goto fine_setup",
             ":nonraggiungibile",
             "echo.",
             f"echo PROBLEMA: la rete funziona ma la cartella \\\\{ip}\\pxe non risponde.",
@@ -88,16 +90,22 @@ def install_cmd(slug, cfg=None, iso=None):
             f"net use S: \\\\{ip}\\pxe {wpass} /user:{wuser} /persistent:no",
             "echo.",
             "cmd.exe",
-            "goto end",
+            "goto fine_setup",
         ]
     else:
         L += [
             "echo Installazione via rete non attiva nelle impostazioni di Pixio:",
             "echo avvio il programma di installazione del solo WinPE (senza immagine di Windows).",
             "X:\\setup.exe",
-            "goto end",
+            "goto fine_setup",
         ]
     L += [
+        ":fine_setup",
+        "echo.",
+        "echo Il programma di installazione e' terminato.",
+        "echo Chiudendo questa finestra il PC si riavvia.",
+        "cmd.exe",
+        "goto prompt",
         ":senzarete",
         "echo.",
         "echo PROBLEMA: Windows PE non ha ottenuto un indirizzo di rete.",
@@ -111,6 +119,15 @@ def install_cmd(slug, cfg=None, iso=None):
         "echo Premi un tasto per aprire il prompt dei comandi.",
         "pause >nul",
         "cmd.exe",
+        "goto prompt",
+        ":prompt",
+        # Windows PE riavvia il PC appena questo script finisce: restiamo sempre su un prompt aperto,
+        # cosi' un errore resta leggibile invece di trasformarsi in un riavvio improvviso.
+        "echo.",
+        "echo Prompt di Pixio: scrivi exit per riavviare il PC.",
+        "cmd.exe",
+        "goto prompt",
         ":end",
+        "goto prompt",
     ]
     return "\r\n".join(L) + "\r\n"

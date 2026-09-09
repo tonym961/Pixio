@@ -7,6 +7,9 @@
 
   const M = { data: null, root: null, platform: 'efi', dragging: null, saving: false, bgStamp: Date.now() };
 
+  // Modalita' dei sottomenu per gruppo: valori accettati da /api/menu (auto | always | never).
+  const SUBMENU_MODES = [['auto', 'Automatici oltre N voci'], ['always', 'Sempre'], ['never', 'Mai']];
+
   // ---------------------------------------------------------------- tema (aspetto del menu iPXE)
   const THEME_DEFAULT = { bg: '#0B1220', accent: '#3FC1CF', fg: '#E6ECF2', muted: '#7C8A99', logo_text: 'PIXIO', subtitle: 'Avvio da rete', style: 'testo', resolution: '1024x768' };
   const THEME_COLORS = [['bg', 'Sfondo', 'Colore di fondo del menu'], ['accent', 'Accento', 'Titoli dei gruppi e voce selezionata'], ['fg', 'Testo', 'Voci normali'], ['muted', 'Testo attenuato', 'Note e piè di pagina']];

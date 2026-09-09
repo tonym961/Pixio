@@ -39,21 +39,22 @@ Oggetto ISO:
  type_name (etichetta italiana), category ("os"|"tool"|"unknown"), platforms (["bios","efi"] su cui la ricetta funziona),
  enabled (nel menu), mounted, cache:{wanted:bool, status:"none"|"copying"|"ready"|"error", path, progress},
  group (nome gruppo menu), order (int), custom_recipe (null | {kernel, initrds:[str], cmdline, platforms:[..]}),
+ answers ([id risposta], max 8), answer_id (predefinita, dentro answers), answer_manual (bool), answers_info ([{id,name,kind}] in lettura),
  detect:{files:[str], version, label}, warnings:[str], first_seen, last_seen, missing (bool: file sparito dalla sorgente)}
 ```
 - `GET /api/catalog` → `{isos:[...ordinate per group/order/name], last_scan, scanning:bool}`
 - `POST /api/catalog/scan` → `{ok, job_id}` (scansione di tutte le sorgenti, rilevamento tipo delle nuove ISO)
 - `GET /api/catalog/<slug>` → ISO + `{recipe_preview:{efi:"...script ipxe...", bios:"..."}}`
-- `PATCH /api/catalog/<slug> {name?, enabled?, group?, order?, type?, custom_recipe?, cache_wanted?}` → ISO aggiornata. Abilitare = montare in loop (+ eventuale copia locale); disabilitare = smontare.
+- `PATCH /api/catalog/<slug> {name?, enabled?, group?, order?, type?, custom_recipe?, cache_wanted?, answers?, answer_id?, answer_manual?}` → ISO aggiornata. Abilitare = montare in loop (+ eventuale copia locale); disabilitare = smontare.
 - `POST /api/catalog/<slug>/redetect` → rileva di nuovo il tipo
 - `POST /api/catalog/reorder {order:[slug,...]}`
 - `DELETE /api/catalog/<slug>` → SOLO per sorgente "local": elimina il file dalla libreria. Per sorgenti remote: 400.
 
 ## Menu di boot
-- `GET /api/menu` → `{settings:{title, timeout, default, show_local, show_shell, show_reboot, show_memtest, groups:[str], submenus, submenu_threshold, theme:{bg,accent,fg,muted,logo_text,subtitle,style,resolution}, theme_bg_url, theme_styles, theme_resolutions}, entries:[{slug,name,group,order,enabled,platforms,type_name}], preview:{efi:"#!ipxe ...", bios:"#!ipxe ..."}}`
+- `GET /api/menu` → `{settings:{title, timeout, default, show_local, show_shell, show_reboot, show_memtest, groups:[str], submenus, submenu_threshold, answer_timeout, theme:{bg,accent,fg,muted,logo_text,subtitle,style,resolution}, theme_bg_url, theme_styles, theme_resolutions}, entries:[{slug,name,group,order,enabled,platforms,type_name}], preview:{efi:"#!ipxe ...", bios:"#!ipxe ..."}}`
 - `PUT /api/menu {settings}` → `{ok}`
 - `GET /boot.ipxe` (pubblico) → script iPXE del menu, generato per il client (`${platform}` e `${mac}` valutati lato client via variabili iPXE: il server genera un unico script con `iseq ${platform} efi` dove serve). Query opzionali per l'anteprima: `?platform=efi|pcbios`.
-- `GET /boot/<slug>.ipxe` (pubblico) → script della singola voce (kernel/initrd/boot). Il menu fa `chain http://<ip>/boot/<slug>.ipxe`. `?mac=` opzionale per il log client.
+- `GET /boot/<slug>.ipxe` (pubblico) → script della singola voce (kernel/initrd/boot). Il menu fa `chain http://<ip>/boot/<slug>.ipxe`. `?mac=` opzionale per il log client. `?answer=<id>` sceglie l'installazione automatica fra quelle collegate (vuoto = nessuna); senza il parametro, con due o piu' voci si riceve il menu di scelta (sezione 17).
 
 ## Client PXE
 - `GET /api/clients` → `[{mac, ip, arch ("bios"|"efi64"|"efi32"|"arm64"|"?"), vendor_class, name, first_seen, last_seen, count, last_entry, auto_boot (slug|null)}]`
@@ -148,10 +149,11 @@ Oggetto risposta: `{id, name, kind, files:[{name,size,mtime}], main_file, note, 
 - `DELETE /api/answers/<id>`; `DELETE /api/answers/<id>/files/<name>`
 - Upload file aggiuntivi: `POST /api/upload/init {filename, size, kind:"answer", folder:"<id risposta>"}` poi chunk/finish (estensioni risposte: xml cfg ks yaml yml txt cmd bat ps1 reg sh conf seed json ini).
 - Associazione: `PATCH /api/catalog/<slug> {answer_id: "<id>"|null}` (campo `answer_id` nell'oggetto ISO, `answer_name` in lettura).
+  Dalla sezione 17 una ISO puo' averne piu' di una (`answers`): `answer_id` resta la predefinita e continua a funzionare da sola.
 - I file sono serviti ai client senza autenticazione su `http://<ip>/answers/<id>/<nome file>` (blueprint pubblico, solo lettura, nomi validati).
 Funzioni Python richieste da `answers.py` (usate dal codice di boot):
 `list_answers()`, `get(id)`, `create(data)`, `update(id, data)`, `delete(id)`, `folder_path(id)`, `public_url(server_ip, id, filename)`,
-`get_for_slug(slug)` (risposta associata a una ISO o None), `kernel_args(answer, iso_type, server_ip)` (stringa da aggiungere alla cmdline:
+`get_for_slug(slug, answer_id=None)` (risposta di una ISO: la predefinita, oppure quella scelta al boot; None se non c'e'), `kernel_args(answer, iso_type, server_ip)` (stringa da aggiungere alla cmdline:
 Debian `auto=true priority=critical url=<url preseed>`, Ubuntu `autoinstall ds=nocloud-net;s=<url cartella con slash finale>`,
 RHEL `inst.ks=<url kickstart>`, altrimenti ""), `winpe_files(answer, server_ip)` (lista `[(nome_destinazione, url)]` da iniettare nel WinPE, es. `autounattend.xml`).
 
