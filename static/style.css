@@ -415,3 +415,16 @@ details.custom .inner{padding-top:10px}
    che vinceva sulla regola responsive di .menu-grid e lasciava il form strettissimo sui telefoni */
 .menu-grid.wp-grid{grid-template-columns:minmax(260px,1fr) minmax(0,2.6fr)}
 @media (max-width:900px){.menu-grid.wp-grid{grid-template-columns:1fr}}
+
+/* Windows: distinzione client / server (docs/API.md, sezione 11) ------------------------------ */
+/* selettore "Tipo di Windows" in cima a "Lingua e area": è la scelta che decide tutta la sezione
+   Ottimizzazioni, quindi si vede più degli altri campi */
+#wp-target{font-weight:600}
+.tw-ed{font-weight:500;opacity:.85}
+/* avviso delle voci spuntate che sul tipo scelto non farebbero nulla */
+.tw-avviso{margin:0 0 12px}
+.tw-avviso .tw-inc{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.tw-avviso .tw-inc .pill{background:var(--surface);border-color:var(--line-strong);color:var(--ink);font-weight:500}
+/* campi disattivati perché non hanno senso sul tipo scelto (app dello Store su Server) */
+.wp-off{opacity:.55}
+.wp-off input,.wp-off textarea,.wp-off label{cursor:not-allowed}

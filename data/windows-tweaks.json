@@ -1,5 +1,5 @@
 {
-  "_nota": "Catalogo delle ottimizzazioni Windows in stile nLite (docs/API.md, sezione 10). File di sola lettura: fa parte del codice, non della configurazione. Percorsi e valori verificati sulla documentazione Microsoft e sui modelli amministrativi (ADMX): non aggiungere voci non verificate. Le chiavi HKLM sono criteri di sistema, quelle HKCU vengono scritte sul profilo predefinito (C:\\Users\\Default\\NTUSER.DAT) e valgono quindi per tutti gli utenti creati dopo l'installazione.",
+  "_nota": "Catalogo delle ottimizzazioni Windows in stile nLite (docs/API.md, sezione 10). File di sola lettura: fa parte del codice, non della configurazione. Percorsi e valori verificati sulla documentazione Microsoft e sui modelli amministrativi (ADMX): non aggiungere voci non verificate. Le chiavi HKLM sono criteri di sistema, quelle HKCU vengono scritte sul profilo predefinito (C:\\Users\\Default\\NTUSER.DAT) e valgono quindi per tutti gli utenti creati dopo l'installazione. Il campo \"editions\" elenca le piattaforme su cui la voce ha davvero effetto (\"10\", \"11\", \"server\" per Windows Server 2016-2025 con interfaccia grafica, docs/API.md sezione 11): le voci che toccano componenti assenti su Server (Cortana, Copilot, widget, Xbox, Microsoft Store, esperienze consumer, barra applicazioni di Windows 11) non hanno \"server\".",
   "version": 1,
   "categories": [
     {
@@ -63,11 +63,12 @@
       "id": "telemetria-minima",
       "category": "privacy",
       "name": "Telemetria al minimo",
-      "description": "Imposta il criterio Consenti telemetria a 0 (Sicurezza). Windows smette di inviare i dati diagnostici facoltativi; su Home e Pro il livello minimo effettivo resta \"dati richiesti\", solo Enterprise/Education arrivano davvero a zero. Si perdono le informazioni di Analisi desktop e alcune diagnosi automatiche degli errori.",
+      "description": "Imposta il criterio Consenti telemetria a 0 (Sicurezza). Windows smette di inviare i dati diagnostici facoltativi; su Home e Pro il livello minimo effettivo resta \"dati richiesti\", mentre Enterprise, Education e Windows Server arrivano davvero a zero. Si perdono le informazioni di Analisi desktop e alcune diagnosi automatiche degli errori.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -83,11 +84,12 @@
       "id": "servizi-telemetria",
       "category": "privacy",
       "name": "Ferma i servizi di telemetria",
-      "description": "Disabilita DiagTrack (Esperienze utente connesse e telemetria) e dmwappushservice (instradamento messaggi WAP). Nessuna funzione visibile all'utente viene persa, ma alcuni strumenti di gestione (Analisi desktop, Update Compliance) smettono di ricevere dati dal PC.",
+      "description": "Disabilita DiagTrack (Esperienze utente connesse e telemetria) e dmwappushservice (instradamento messaggi WAP). Nessuna funzione visibile all'utente viene persa, ma alcuni strumenti di gestione (Analisi desktop, Update Compliance) smettono di ricevere dati dal PC. DiagTrack c'è anche sulle installazioni Server; dmwappushservice può mancare sulle versioni più recenti e in quel caso la voce di registro resta senza effetto.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "services": [
         {
@@ -104,7 +106,7 @@
       "id": "niente-notifiche-feedback",
       "category": "privacy",
       "name": "Niente richieste di feedback",
-      "description": "Attiva il criterio \"Non visualizzare le notifiche di feedback\": Windows smette di chiedere all'utente com'è andata l'esperienza e non apre più l'Hub di feedback da solo.",
+      "description": "Attiva il criterio \"Non visualizzare le notifiche di feedback\": Windows smette di chiedere all'utente com'è andata l'esperienza e non apre più l'Hub di feedback da solo. Su Windows Server non si applica: l'Hub di feedback e le sue notifiche non sono installati.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -124,7 +126,7 @@
       "id": "disattiva-id-pubblicita",
       "category": "privacy",
       "name": "Disattiva l'ID pubblicità",
-      "description": "Blocca l'identificatore usato dalle app del Microsoft Store per mostrare annunci profilati, sia con il criterio di sistema sia nella preferenza del profilo utente. Gli annunci nelle app gratuite restano ma diventano generici.",
+      "description": "Blocca l'identificatore usato dalle app del Microsoft Store per mostrare annunci profilati, sia con il criterio di sistema sia nella preferenza del profilo utente. Gli annunci nelle app gratuite restano ma diventano generici. Su Windows Server non ci sono Microsoft Store né app che usano l'ID pubblicità: il criterio non cambierebbe nulla.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -151,7 +153,7 @@
       "id": "disattiva-cronologia-attivita",
       "category": "privacy",
       "name": "Disattiva la cronologia attività",
-      "description": "Windows non raccoglie più la Sequenza temporale (documenti e app aperti) e non la carica sul cloud. Si perde la ripresa delle attività fra dispositivi e la vista cronologica di Attività (WIN+TAB).",
+      "description": "Windows non raccoglie più la Sequenza temporale (documenti e app aperti) e non la carica sul cloud. Si perde la ripresa delle attività fra dispositivi e la vista cronologica di Attività (WIN+TAB). La Sequenza temporale è una funzione dei Windows client: sulle installazioni Server non esiste.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -185,7 +187,7 @@
       "id": "niente-esperienze-personalizzate",
       "category": "privacy",
       "name": "Niente esperienze personalizzate dai dati diagnostici",
-      "description": "Impedisce a Windows di usare i dati diagnostici per personalizzare consigli, annunci e suggerimenti mostrati nell'interfaccia. Applicato al profilo predefinito, vale per tutti gli utenti creati dopo l'installazione.",
+      "description": "Impedisce a Windows di usare i dati diagnostici per personalizzare consigli, annunci e suggerimenti mostrati nell'interfaccia. Applicato al profilo predefinito, vale per tutti gli utenti creati dopo l'installazione. Riguarda i suggerimenti personalizzati dell'interfaccia dei Windows client: su Server non vengono mostrati.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -205,7 +207,7 @@
       "id": "niente-personalizzazione-input",
       "category": "privacy",
       "name": "Niente raccolta di scrittura e digitazione",
-      "description": "Disattiva la personalizzazione dell'input: Windows non raccoglie più testo digitato, input penna e rubrica per migliorare i suggerimenti. Si perdono i suggerimenti di digitazione personalizzati e il dizionario personale; il riconoscimento vocale online smette di funzionare.",
+      "description": "Disattiva la personalizzazione dell'input: Windows non raccoglie più testo digitato, input penna e rubrica per migliorare i suggerimenti. Si perdono i suggerimenti di digitazione personalizzati e il dizionario personale; il riconoscimento vocale online smette di funzionare. Su Windows Server non ci sono dettatura, input penna né suggerimenti di digitazione: la voce vale solo sui client.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -239,11 +241,12 @@
       "id": "disattiva-posizione",
       "category": "privacy",
       "name": "Disattiva i servizi di posizione",
-      "description": "Spegne il rilevatore di posizione per tutto il sistema. Si perdono meteo locale, \"Trova il mio dispositivo\", fuso orario automatico e le mappe offline che usano la posizione: su un portatile aziendale in giro per l'Italia il fuso va impostato a mano.",
+      "description": "Spegne il rilevatore di posizione per tutto il sistema. Si perdono meteo locale, \"Trova il mio dispositivo\", fuso orario automatico e le mappe offline che usano la posizione: su un portatile aziendale in giro per l'Italia il fuso va impostato a mano. I criteri sono di sistema e valgono anche su Windows Server, dove il servizio di geolocalizzazione esiste ma è quasi sempre inutilizzato.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -273,7 +276,7 @@
       "id": "niente-sincronizzazione-impostazioni",
       "category": "privacy",
       "name": "Niente sincronizzazione delle impostazioni",
-      "description": "Blocca la sincronizzazione di tema, password, preferenze e lingua con l'account Microsoft e impedisce all'utente di riattivarla. Utile sui PC condivisi; l'utente dovrà rifare le proprie personalizzazioni su ogni macchina.",
+      "description": "Blocca la sincronizzazione di tema, password, preferenze e lingua con l'account Microsoft e impedisce all'utente di riattivarla. Utile sui PC condivisi; l'utente dovrà rifare le proprie personalizzazioni su ogni macchina. La sincronizzazione passa dall'account Microsoft, che su Windows Server non è previsto.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -300,7 +303,7 @@
       "id": "niente-cronologia-appunti",
       "category": "privacy",
       "name": "Niente cronologia e appunti condivisi",
-      "description": "Disattiva la cronologia degli appunti (WIN+V) e la condivisione degli appunti fra dispositivi: quello che si copia non resta in memoria né viene mandato al cloud. Si perde WIN+V.",
+      "description": "Disattiva la cronologia degli appunti (WIN+V) e la condivisione degli appunti fra dispositivi: quello che si copia non resta in memoria né viene mandato al cloud. Si perde WIN+V. Microsoft non prevede questa funzione sulle edizioni Server: la voce vale solo sui client.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -327,11 +330,12 @@
       "id": "disattiva-ceip",
       "category": "privacy",
       "name": "Disattiva il programma Analisi utilizzo software (CEIP)",
-      "description": "Spegne il Customer Experience Improvement Program: niente invio anonimo di statistiche d'uso. Nessun effetto sul funzionamento del PC.",
+      "description": "Spegne il Customer Experience Improvement Program: niente invio anonimo di statistiche d'uso. Nessun effetto sul funzionamento del PC. Vale anche su Windows Server, dove il CEIP è quello proposto da Server Manager.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -347,11 +351,12 @@
       "id": "disattiva-segnalazione-errori",
       "category": "privacy",
       "name": "Disattiva Segnalazione errori Windows",
-      "description": "Windows non invia più a Microsoft i rapporti sui blocchi delle applicazioni. Si perdono le soluzioni automatiche proposte dopo un crash e i dump caricati sul portale WER, utili per l'assistenza dei fornitori software.",
+      "description": "Windows non invia più a Microsoft i rapporti sui blocchi delle applicazioni. Si perdono le soluzioni automatiche proposte dopo un crash e i dump caricati sul portale WER, utili per l'assistenza dei fornitori software. Segnalazione errori Windows c'è anche sulle edizioni Server.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -367,7 +372,7 @@
       "id": "solo-account-locali",
       "category": "privacy",
       "name": "Solo account locali (niente account Microsoft)",
-      "description": "Impedisce di aggiungere o usare account Microsoft per accedere a Windows (criterio Account: blocca gli account Microsoft, valore 3). Si perdono sincronizzazione, Store con licenze personali e ripristino della password via cloud.",
+      "description": "Impedisce di aggiungere o usare account Microsoft per accedere a Windows (criterio Account: blocca gli account Microsoft, valore 3). Si perdono sincronizzazione, Store con licenze personali e ripristino della password via cloud. Su Windows Server l'accesso con account Microsoft non è previsto: il criterio non cambierebbe nulla.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -387,7 +392,7 @@
       "id": "disattiva-cortana",
       "category": "ricerca",
       "name": "Disattiva Cortana",
-      "description": "Attiva il criterio \"Consenti Cortana = disabilitato\": la ricerca resta ma non c'è più l'assistente vocale né l'elaborazione delle richieste sul cloud.",
+      "description": "Attiva il criterio \"Consenti Cortana = disabilitato\": la ricerca resta ma non c'è più l'assistente vocale né l'elaborazione delle richieste sul cloud. Cortana non è installata sulle edizioni Server: lì il criterio non ha nulla da spegnere.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -407,7 +412,7 @@
       "id": "ricerca-solo-locale",
       "category": "ricerca",
       "name": "Ricerca solo locale (niente risultati dal web)",
-      "description": "La casella di ricerca smette di interrogare Bing e il cloud: cerca solo file, app e impostazioni del PC. Si perdono i risultati web e le risposte rapide nel menu Start; la ricerca diventa sensibilmente più veloce.",
+      "description": "La casella di ricerca smette di interrogare Bing e il cloud: cerca solo file, app e impostazioni del PC. Si perdono i risultati web e le risposte rapide nel menu Start; la ricerca diventa sensibilmente più veloce. Su Windows Server la casella di ricerca non interroga Bing: la voce riguarda solo i client.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -441,7 +446,7 @@
       "id": "niente-evidenziazioni-ricerca",
       "category": "ricerca",
       "name": "Niente evidenziazioni nella ricerca",
-      "description": "Toglie le \"evidenziazioni della ricerca\" (ricorrenze, contenuti promozionali e immagini del giorno) dalla casella di ricerca della barra delle applicazioni.",
+      "description": "Toglie le \"evidenziazioni della ricerca\" (ricorrenze, contenuti promozionali e immagini del giorno) dalla casella di ricerca della barra delle applicazioni. Le evidenziazioni della ricerca esistono solo sui Windows client.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -461,7 +466,7 @@
       "id": "ricerca-solo-icona",
       "category": "ricerca",
       "name": "Barra applicazioni: ricerca come sola icona",
-      "description": "Sostituisce la casella di ricerca larga con una piccola lente. Si recupera spazio sulla barra delle applicazioni; la ricerca continua a funzionare con WIN+S. Preferenza del profilo utente, modificabile dall'utente.",
+      "description": "Sostituisce la casella di ricerca larga con una piccola lente. Si recupera spazio sulla barra delle applicazioni; la ricerca continua a funzionare con WIN+S. Preferenza del profilo utente, modificabile dall'utente. Riguarda la barra delle applicazioni di Windows 11, assente sulle edizioni Server.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -480,7 +485,7 @@
       "id": "disattiva-copilot",
       "category": "ricerca",
       "name": "Disattiva Copilot",
-      "description": "Attiva il criterio \"Disattiva Windows Copilot\" (sia per il computer sia per il profilo predefinito) e toglie il pulsante dalla barra delle applicazioni. L'assistente non è più raggiungibile con WIN+C.",
+      "description": "Attiva il criterio \"Disattiva Windows Copilot\" (sia per il computer sia per il profilo predefinito) e toglie il pulsante dalla barra delle applicazioni. L'assistente non è più raggiungibile con WIN+C. Copilot non è presente sulle edizioni Server.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -513,7 +518,7 @@
       "id": "niente-esperienze-consumer",
       "category": "suggerimenti",
       "name": "Niente esperienze consumer (app installate da sole)",
-      "description": "Attiva \"Disattiva le esperienze consumer Microsoft\": Windows smette di installare da solo app consigliate e giochi (Candy Crush, TikTok, Spotify...) al primo accesso di un nuovo utente. Criterio riconosciuto su Enterprise ed Education; su Pro l'effetto è parziale.",
+      "description": "Attiva \"Disattiva le esperienze consumer Microsoft\": Windows smette di installare da solo app consigliate e giochi (Candy Crush, TikTok, Spotify...) al primo accesso di un nuovo utente. Criterio riconosciuto su Enterprise ed Education; su Pro l'effetto è parziale. Le esperienze consumer e le app suggerite non esistono sulle installazioni Server.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -533,7 +538,7 @@
       "id": "niente-suggerimenti-windows",
       "category": "suggerimenti",
       "name": "Niente suggerimenti e trucchi di Windows",
-      "description": "Spegne i messaggi \"Suggerimenti per Windows\" e le notifiche promozionali che compaiono dopo l'accesso o dopo un aggiornamento.",
+      "description": "Spegne i messaggi \"Suggerimenti per Windows\" e le notifiche promozionali che compaiono dopo l'accesso o dopo un aggiornamento. I suggerimenti di Windows non vengono mostrati sulle edizioni Server.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -553,7 +558,7 @@
       "id": "niente-spotlight",
       "category": "suggerimenti",
       "name": "Niente Windows Spotlight",
-      "description": "Disattiva tutte le funzioni Spotlight per il profilo predefinito: immagini dinamiche, suggerimenti di terze parti, schermata di benvenuto dopo gli aggiornamenti e contenuti consigliati in Centro notifiche e Impostazioni. Si perdono gli sfondi \"Contenuti in evidenza\".",
+      "description": "Disattiva tutte le funzioni Spotlight per il profilo predefinito: immagini dinamiche, suggerimenti di terze parti, schermata di benvenuto dopo gli aggiornamenti e contenuti consigliati in Centro notifiche e Impostazioni. Si perdono gli sfondi \"Contenuti in evidenza\". Windows Spotlight è una funzione dei client: su Server non c'è.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -601,7 +606,7 @@
       "id": "niente-contenuti-consigliati",
       "category": "suggerimenti",
       "name": "Niente contenuti consigliati in Start e Impostazioni",
-      "description": "Azzera i canali di contenuti consigliati del Gestore recapito contenuti nel profilo predefinito: spariscono i riquadri promozionali dal menu Start, i suggerimenti nell'app Impostazioni e le proposte nella Sequenza temporale.",
+      "description": "Azzera i canali di contenuti consigliati del Gestore recapito contenuti nel profilo predefinito: spariscono i riquadri promozionali dal menu Start, i suggerimenti nell'app Impostazioni e le proposte nella Sequenza temporale. Il Gestore recapito contenuti non è presente sulle installazioni Server.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -656,7 +661,7 @@
       "id": "niente-app-automatiche",
       "category": "suggerimenti",
       "name": "Niente app installate automaticamente",
-      "description": "Blocca l'installazione silenziosa delle app suggerite e delle app preinstallate dal produttore per i nuovi profili. Da abbinare alla rimozione delle app già presenti nell'immagine.",
+      "description": "Blocca l'installazione silenziosa delle app suggerite e delle app preinstallate dal produttore per i nuovi profili. Da abbinare alla rimozione delle app già presenti nell'immagine. Su Windows Server non vengono installate app suggerite: non c'è niente da bloccare.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -697,7 +702,7 @@
       "id": "schermata-blocco-pulita",
       "category": "suggerimenti",
       "name": "Schermata di blocco senza pubblicità",
-      "description": "Toglie le immagini a rotazione di Spotlight e i \"suggerimenti e curiosità\" dalla schermata di blocco: resta lo sfondo scelto dall'amministratore. Preferenza del profilo predefinito.",
+      "description": "Toglie le immagini a rotazione di Spotlight e i \"suggerimenti e curiosità\" dalla schermata di blocco: resta lo sfondo scelto dall'amministratore. Preferenza del profilo predefinito. Le immagini a rotazione della schermata di blocco sono una funzione dei client.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -731,7 +736,7 @@
       "id": "start-senza-consigliati",
       "category": "suggerimenti",
       "name": "Menu Start senza sezione Consigliati",
-      "description": "Nasconde la sezione Consigliati del menu Start di Windows 11 e l'elenco \"Aggiunti di recente\". Il menu mostra solo le app aggiunte dall'amministratore.",
+      "description": "Nasconde la sezione Consigliati del menu Start di Windows 11 e l'elenco \"Aggiunti di recente\". Il menu mostra solo le app aggiunte dall'amministratore. Riguarda il menu Start di Windows 11: le edizioni Server hanno un altro menu.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -757,7 +762,7 @@
       "id": "store-senza-aggiornamenti-automatici",
       "category": "suggerimenti",
       "name": "Microsoft Store senza aggiornamenti automatici",
-      "description": "Imposta il criterio di download automatico dello Store su \"Disattivato\" (valore 2): le app Store non si aggiornano più da sole. Le app restano indietro e vanno aggiornate a mano: da usare solo dove c'è una gestione centralizzata del software.",
+      "description": "Imposta il criterio di download automatico dello Store su \"Disattivato\" (valore 2): le app Store non si aggiornano più da sole. Le app restano indietro e vanno aggiornate a mano: da usare solo dove c'è una gestione centralizzata del software. Il Microsoft Store non è presente sulle installazioni Server.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -777,7 +782,7 @@
       "id": "disattiva-onedrive",
       "category": "cloud",
       "name": "Disattiva OneDrive",
-      "description": "Attiva il criterio \"Impedisci l'utilizzo di OneDrive per l'archiviazione file\": la sincronizzazione si ferma, OneDrive sparisce da Esplora file e il salvataggio automatico di Desktop, Documenti e Immagini nel cloud non parte più. Il client resta installato.",
+      "description": "Attiva il criterio \"Impedisci l'utilizzo di OneDrive per l'archiviazione file\": la sincronizzazione si ferma, OneDrive sparisce da Esplora file e il salvataggio automatico di Desktop, Documenti e Immagini nel cloud non parte più. Il client resta installato. Su Windows Server OneDrive non è preinstallato: la voce è pensata per i client.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -804,7 +809,7 @@
       "id": "rimuovi-onedrive",
       "category": "cloud",
       "name": "Disinstalla il client OneDrive",
-      "description": "Chiude OneDrive e lancia la disinstallazione del client incluso in Windows. Chi usa OneDrive o SharePoint sincronizzato deve reinstallarlo a mano; non tocca i file già scaricati.",
+      "description": "Chiude OneDrive e lancia la disinstallazione del client incluso in Windows. Chi usa OneDrive o SharePoint sincronizzato deve reinstallarlo a mano; non tocca i file già scaricati. Su Windows Server il client OneDrive non è preinstallato: non c'è niente da disinstallare.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -820,7 +825,7 @@
       "id": "disattiva-widget",
       "category": "cloud",
       "name": "Disattiva i widget",
-      "description": "Attiva il criterio \"Consenti widget = disabilitato\" e toglie il pulsante dalla barra delle applicazioni: niente pannello meteo/notizie né popup al passaggio del mouse.",
+      "description": "Attiva il criterio \"Consenti widget = disabilitato\" e toglie il pulsante dalla barra delle applicazioni: niente pannello meteo/notizie né popup al passaggio del mouse. I widget esistono solo su Windows 11: le edizioni Server non li hanno.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -846,7 +851,7 @@
       "id": "disattiva-notizie-interessi",
       "category": "cloud",
       "name": "Disattiva Notizie e interessi",
-      "description": "Spegne il pannello Notizie e interessi della barra delle applicazioni di Windows 10 (criterio Feed di Windows).",
+      "description": "Spegne il pannello Notizie e interessi della barra delle applicazioni di Windows 10 (criterio Feed di Windows). Notizie e interessi è una funzione della sola barra delle applicazioni di Windows 10.",
       "impact": "sicuro",
       "editions": [
         "10"
@@ -865,7 +870,7 @@
       "id": "disattiva-chat-teams",
       "category": "cloud",
       "name": "Togli l'icona Chat (Teams personale)",
-      "description": "Imposta il criterio Chat su \"Disabilitato\" (valore 3): l'icona sparisce dalla barra e l'utente non può rimetterla. Non tocca Microsoft Teams aziendale installato a parte.",
+      "description": "Imposta il criterio Chat su \"Disabilitato\" (valore 3): l'icona sparisce dalla barra e l'utente non può rimetterla. Non tocca Microsoft Teams aziendale installato a parte. L'icona Chat esiste solo su Windows 11: le edizioni Server non la hanno.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -884,11 +889,12 @@
       "id": "mostra-estensioni-file",
       "category": "esplora",
       "name": "Mostra le estensioni dei file",
-      "description": "Esplora file mostra .exe, .cmd, .js e simili: è la prima difesa contro gli allegati mascherati da documento. Preferenza del profilo predefinito, l'utente può rimetterla come vuole.",
+      "description": "Esplora file mostra .exe, .cmd, .js e simili: è la prima difesa contro gli allegati mascherati da documento. Preferenza del profilo predefinito, l'utente può rimetterla come vuole. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -904,11 +910,12 @@
       "id": "mostra-file-nascosti",
       "category": "esplora",
       "name": "Mostra i file nascosti",
-      "description": "Rende visibili i file e le cartelle con attributo nascosto (non quelli protetti di sistema). Comodo per l'assistenza, un po' più di confusione per l'utente finale.",
+      "description": "Rende visibili i file e le cartelle con attributo nascosto (non quelli protetti di sistema). Comodo per l'assistenza, un po' più di confusione per l'utente finale. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -924,11 +931,12 @@
       "id": "mostra-file-sistema",
       "category": "esplora",
       "name": "Mostra anche i file protetti di sistema",
-      "description": "Toglie la protezione visiva su pagefile.sys, bootmgr, System Volume Information e simili. Serve in assistenza; su un PC di utente aumenta il rischio che qualcosa venga cancellato.",
+      "description": "Toglie la protezione visiva su pagefile.sys, bootmgr, System Volume Information e simili. Serve in assistenza; su un PC di utente aumenta il rischio che qualcosa venga cancellato. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -944,11 +952,12 @@
       "id": "esplora-apre-questo-pc",
       "category": "esplora",
       "name": "Esplora file si apre su Questo PC",
-      "description": "Apre Esplora file su Questo PC invece che su Accesso rapido/Home: si vedono subito dischi e unità di rete mappate.",
+      "description": "Apre Esplora file su Questo PC invece che su Accesso rapido/Home: si vedono subito dischi e unità di rete mappate. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -964,7 +973,7 @@
       "id": "barra-applicazioni-a-sinistra",
       "category": "esplora",
       "name": "Barra delle applicazioni allineata a sinistra",
-      "description": "Riporta Start e le icone a sinistra come in Windows 10. Solo estetica, nessuna funzione persa.",
+      "description": "Riporta Start e le icone a sinistra come in Windows 10. Solo estetica, nessuna funzione persa. Riguarda la barra centrata di Windows 11: le edizioni Server hanno già la barra classica.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -983,11 +992,12 @@
       "id": "nascondi-visualizzazione-attivita",
       "category": "esplora",
       "name": "Nascondi il pulsante Visualizzazione attività",
-      "description": "Toglie il pulsante dei desktop virtuali dalla barra delle applicazioni. La funzione resta disponibile con WIN+TAB.",
+      "description": "Toglie il pulsante dei desktop virtuali dalla barra delle applicazioni. La funzione resta disponibile con WIN+TAB. Il pulsante c'è anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1003,11 +1013,12 @@
       "id": "mostra-percorso-completo",
       "category": "esplora",
       "name": "Percorso completo nella barra del titolo",
-      "description": "Esplora file scrive il percorso per esteso invece del solo nome della cartella: comodo quando si lavora su più condivisioni di rete.",
+      "description": "Esplora file scrive il percorso per esteso invece del solo nome della cartella: comodo quando si lavora su più condivisioni di rete. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1023,7 +1034,7 @@
       "id": "menu-contestuale-classico",
       "category": "esplora",
       "name": "Menu contestuale classico di Windows 11",
-      "description": "Ripristina il menu del tasto destro completo, senza il passaggio \"Mostra altre opzioni\". Il comando viene eseguito al primo accesso, quindi vale per l'utente creato dall'installazione: sugli altri profili va rifatto. Ha effetto dopo il riavvio di Esplora file.",
+      "description": "Ripristina il menu del tasto destro completo, senza il passaggio \"Mostra altre opzioni\". Il comando viene eseguito al primo accesso, quindi vale per l'utente creato dall'installazione: sugli altri profili va rifatto. Ha effetto dopo il riavvio di Esplora file. Il menu contestuale ridotto è una novità di Windows 11: le edizioni Server hanno già quello classico.",
       "impact": "attenzione",
       "editions": [
         "11"
@@ -1036,11 +1047,12 @@
       "id": "niente-documenti-recenti",
       "category": "esplora",
       "name": "Niente cronologia dei documenti recenti",
-      "description": "Windows non tiene più l'elenco dei file aperti di recente né i jump list delle applicazioni. Utile sui PC condivisi; l'utente perde le scorciatoie ai file usati di frequente.",
+      "description": "Windows non tiene più l'elenco dei file aperti di recente né i jump list delle applicazioni. Utile sui PC condivisi; l'utente perde le scorciatoie ai file usati di frequente. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1056,7 +1068,7 @@
       "id": "niente-ricerca-app-nello-store",
       "category": "esplora",
       "name": "Niente \"Cerca un'app nello Store\"",
-      "description": "Aprendo un file con estensione sconosciuta Windows non propone più di cercare un'applicazione nel Microsoft Store: resta la sola finestra \"Apri con\".",
+      "description": "Aprendo un file con estensione sconosciuta Windows non propone più di cercare un'applicazione nel Microsoft Store: resta la sola finestra \"Apri con\". Su Windows Server non c'è il Microsoft Store, quindi la proposta non compare mai.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -1076,11 +1088,12 @@
       "id": "effetti-visivi-ridotti",
       "category": "prestazioni",
       "name": "Effetti visivi ridotti al minimo",
-      "description": "Imposta le prestazioni del sistema su \"Regola per ottenere le prestazioni migliori\" e toglie le animazioni delle finestre. Si perdono ombre, dissolvenze e anteprime animate; su hardware vecchio o in RDP l'interfaccia diventa molto più reattiva.",
+      "description": "Imposta le prestazioni del sistema su \"Regola per ottenere le prestazioni migliori\" e toglie le animazioni delle finestre. Si perdono ombre, dissolvenze e anteprime animate; su hardware vecchio o in RDP l'interfaccia diventa molto più reattiva. Utile anche sulle installazioni Server con Esperienza desktop, raggiunte in desktop remoto.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1103,11 +1116,12 @@
       "id": "disattiva-trasparenze",
       "category": "prestazioni",
       "name": "Disattiva le trasparenze",
-      "description": "Toglie l'effetto vetro di barra delle applicazioni, menu Start e finestre: meno lavoro per la scheda video, utile su macchine virtuali e desktop remoto.",
+      "description": "Toglie l'effetto vetro di barra delle applicazioni, menu Start e finestre: meno lavoro per la scheda video, utile su macchine virtuali e desktop remoto. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1123,11 +1137,12 @@
       "id": "menu-senza-ritardo",
       "category": "prestazioni",
       "name": "Menu senza ritardo di apertura",
-      "description": "Porta a zero il ritardo di apertura dei menu (predefinito 400 ms). L'interfaccia sembra più veloce; con il mouse si aprono più facilmente i sottomenu per sbaglio.",
+      "description": "Porta a zero il ritardo di apertura dei menu (predefinito 400 ms). L'interfaccia sembra più veloce; con il mouse si aprono più facilmente i sottomenu per sbaglio. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1143,11 +1158,12 @@
       "id": "disattiva-sysmain",
       "category": "prestazioni",
       "name": "Disattiva SysMain (Superfetch)",
-      "description": "Ferma il precaricamento delle applicazioni in RAM. Su SSD il guadagno di avvio è minimo e si riduce l'attività continua del disco; su dischi meccanici l'apertura dei programmi può rallentare.",
+      "description": "Ferma il precaricamento delle applicazioni in RAM. Su SSD il guadagno di avvio è minimo e si riduce l'attività continua del disco; su dischi meccanici l'apertura dei programmi può rallentare. Su Windows Server il servizio esiste ma lavora già pochissimo: disattivarlo non cambia quasi nulla.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "services": [
         {
@@ -1160,11 +1176,12 @@
       "id": "disattiva-indicizzazione",
       "category": "prestazioni",
       "name": "Disattiva l'indicizzazione della ricerca",
-      "description": "Ferma il servizio Windows Search (WSearch). Sparisce l'indice: la ricerca nel menu Start e in Esplora file diventa lenta o non trova i contenuti dei documenti, e Outlook in modalità cache cerca molto più lentamente.",
+      "description": "Ferma il servizio Windows Search (WSearch). Sparisce l'indice: la ricerca nel menu Start e in Esplora file diventa lenta o non trova i contenuti dei documenti, e Outlook in modalità cache cerca molto più lentamente. Su Windows Server Windows Search è una funzionalità facoltativa: se non è installata il valore resta scritto senza effetto.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "services": [
         {
@@ -1177,7 +1194,7 @@
       "id": "disattiva-avvio-rapido",
       "category": "prestazioni",
       "name": "Disattiva l'avvio rapido",
-      "description": "Spegne l'ibernazione parziale usata all'arresto: lo spegnimento diventa completo. L'avvio è qualche secondo più lento ma gli aggiornamenti dei driver e le modifiche al BIOS/UEFI vengono applicati davvero, e i doppi avvii con Linux non trovano più il disco bloccato.",
+      "description": "Spegne l'ibernazione parziale usata all'arresto: lo spegnimento diventa completo. L'avvio è qualche secondo più lento ma gli aggiornamenti dei driver e le modifiche al BIOS/UEFI vengono applicati davvero, e i doppi avvii con Linux non trovano più il disco bloccato. L'avvio rapido è una funzione dei Windows client: sulle installazioni Server l'ibernazione è già disattivata e non c'è nulla da spegnere.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -1197,11 +1214,12 @@
       "id": "disattiva-ibernazione",
       "category": "prestazioni",
       "name": "Disattiva l'ibernazione",
-      "description": "Esegue powercfg /hibernate off: sparisce hiberfil.sys (diversi GB liberati) e con esso la voce Ibernazione e l'avvio rapido. Sui portatili si perde la sospensione su disco.",
+      "description": "Esegue powercfg /hibernate off: sparisce hiberfil.sys (diversi GB liberati) e con esso la voce Ibernazione e l'avvio rapido. Sui portatili si perde la sospensione su disco. Su Windows Server l'ibernazione è di norma già disattivata: il comando non fa danni.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c powercfg /hibernate off"
@@ -1211,11 +1229,12 @@
       "id": "piano-prestazioni-elevate",
       "category": "prestazioni",
       "name": "Piano di alimentazione Prestazioni elevate",
-      "description": "Attiva lo schema Prestazioni elevate: la CPU non scende di frequenza e i dischi non si fermano. Consumo e rumore aumentano, sui portatili la batteria dura meno.",
+      "description": "Attiva lo schema Prestazioni elevate: la CPU non scende di frequenza e i dischi non si fermano. Consumo e rumore aumentano, sui portatili la batteria dura meno. Sulle installazioni Server è la scelta abituale, visto che il PC resta sempre acceso.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
@@ -1225,11 +1244,12 @@
       "id": "niente-sospensione-a-rete",
       "category": "prestazioni",
       "name": "Niente sospensione e spegnimento schermo (rete elettrica)",
-      "description": "Con l'alimentatore collegato il PC non va mai in sospensione e lo schermo resta acceso. Adatto a PC di produzione, casse, totem e macchine da raggiungere in desktop remoto; su un portatile aumenta il consumo.",
+      "description": "Con l'alimentatore collegato il PC non va mai in sospensione e lo schermo resta acceso. Adatto a PC di produzione, casse, totem e macchine da raggiungere in desktop remoto; su un portatile aumenta il consumo. Vale anche sulle installazioni Server, dove è il comportamento voluto.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c powercfg /change standby-timeout-ac 0",
@@ -1240,7 +1260,7 @@
       "id": "disattiva-limitazione-energia",
       "category": "prestazioni",
       "name": "Disattiva la limitazione energetica dei processi",
-      "description": "Spegne il Power Throttling (la \"modalità efficienza\" di Gestione attività): i processi in secondo piano non vengono più rallentati. Utile su postazioni di calcolo o registratori; consumo e temperature salgono.",
+      "description": "Spegne il Power Throttling (la \"modalità efficienza\" di Gestione attività): i processi in secondo piano non vengono più rallentati. Utile su postazioni di calcolo o registratori; consumo e temperature salgono. La limitazione energetica dei processi è una funzione di risparmio dei Windows client: sulle installazioni Server la gestione dipende dal piano di alimentazione.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -1260,7 +1280,7 @@
       "id": "disattiva-archiviazione-riservata",
       "category": "prestazioni",
       "name": "Disattiva l'archiviazione riservata",
-      "description": "Esegue dism /online /Set-ReservedStorageState /State:Disabled e libera i ~7 GB che Windows tiene da parte per gli aggiornamenti. Su dischi piccoli è spazio recuperato; gli aggiornamenti di funzionalità potrebbero poi fallire per mancanza di spazio.",
+      "description": "Esegue dism /online /Set-ReservedStorageState /State:Disabled e libera i ~7 GB che Windows tiene da parte per gli aggiornamenti. Su dischi piccoli è spazio recuperato; gli aggiornamenti di funzionalità potrebbero poi fallire per mancanza di spazio. L'archiviazione riservata esiste solo sui Windows client: su Server non viene riservato nessuno spazio.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -1274,7 +1294,7 @@
       "id": "disattiva-servizi-xbox",
       "category": "servizi",
       "name": "Disattiva i servizi Xbox",
-      "description": "Disabilita XblAuthManager, XblGameSave, XboxGipSvc e XboxNetApiSvc. Su una postazione di lavoro non serve nulla di tutto questo; su un PC dove si gioca saltano salvataggi cloud, Game Pass e i controller Xbox via cavo.",
+      "description": "Disabilita XblAuthManager, XblGameSave, XboxGipSvc e XboxNetApiSvc. Su una postazione di lavoro non serve nulla di tutto questo; su un PC dove si gioca saltano salvataggi cloud, Game Pass e i controller Xbox via cavo. I servizi Xbox non sono installati sulle edizioni Server.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -1303,7 +1323,7 @@
       "id": "disattiva-fax",
       "category": "servizi",
       "name": "Disattiva il servizio Fax",
-      "description": "Mette il servizio Fax su disabilitato. Si perde solo l'invio fax dal modem interno, funzione praticamente mai usata.",
+      "description": "Mette il servizio Fax su disabilitato. Si perde solo l'invio fax dal modem interno, funzione praticamente mai usata. Su Windows Server il servizio appartiene al ruolo Server Fax, non installato di serie e tolto del tutto da Server 2019 in poi.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -1320,11 +1340,12 @@
       "id": "disattiva-registro-remoto",
       "category": "servizi",
       "name": "Disattiva il Registro remoto",
-      "description": "Disabilita RemoteRegistry: nessuno può più aprire il registro di questo PC dalla rete. Alcuni strumenti di inventario e la gestione remota di terze parti smettono di funzionare.",
+      "description": "Disabilita RemoteRegistry: nessuno può più aprire il registro di questo PC dalla rete. Alcuni strumenti di inventario e la gestione remota di terze parti smettono di funzionare. Su un server valutalo con attenzione: inventario, monitoraggio e diversi strumenti di gestione remota usano proprio questo servizio.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "services": [
         {
@@ -1337,11 +1358,12 @@
       "id": "disattiva-spooler",
       "category": "servizi",
       "name": "Disattiva lo spooler di stampa",
-      "description": "Disabilita del tutto il servizio Spooler: il PC non stampa più, su niente. Ha senso solo su server e macchine senza stampanti, dove chiude la superficie d'attacco tipo PrintNightmare.",
+      "description": "Disabilita del tutto il servizio Spooler: il PC non stampa più, su niente. Ha senso solo su server e macchine senza stampanti, dove chiude la superficie d'attacco tipo PrintNightmare. È la scelta consigliata sui server che non stampano e non fanno da server di stampa.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "services": [
         {
@@ -1354,11 +1376,12 @@
       "id": "spooler-senza-connessioni-remote",
       "category": "servizi",
       "name": "Spooler senza connessioni remote in ingresso",
-      "description": "Disattiva il criterio \"Consenti allo spooler di stampa di accettare connessioni client\" (RegisterSpoolerRemoteRpcEndPoint = 2). Il PC continua a stampare ma non fa più da server di stampa e non accetta connessioni RPC remote: è la mitigazione consigliata da Microsoft per PrintNightmare.",
+      "description": "Disattiva il criterio \"Consenti allo spooler di stampa di accettare connessioni client\" (RegisterSpoolerRemoteRpcEndPoint = 2). Il PC continua a stampare ma non fa più da server di stampa e non accetta connessioni RPC remote: è la mitigazione consigliata da Microsoft per PrintNightmare. Su un server di stampa vero e proprio non va usato: toglie proprio la funzione di condivisione delle code.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1374,11 +1397,12 @@
       "id": "disattiva-assistenza-remota",
       "category": "servizi",
       "name": "Disattiva Assistenza remota",
-      "description": "Nega le richieste di Assistenza remota in ingresso. Non tocca il Desktop remoto né i software di teleassistenza di terze parti.",
+      "description": "Nega le richieste di Assistenza remota in ingresso. Non tocca il Desktop remoto né i software di teleassistenza di terze parti. Vale anche su Windows Server, dove l'Assistenza remota non è nemmeno installata di serie.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1394,11 +1418,12 @@
       "id": "disattiva-servizio-mappe",
       "category": "servizi",
       "name": "Disattiva il gestore Mappe scaricate",
-      "description": "Disabilita MapsBroker: niente aggiornamento in background delle mappe offline. L'app Mappe, se resta installata, funziona solo online.",
+      "description": "Disabilita MapsBroker: niente aggiornamento in background delle mappe offline. L'app Mappe, se resta installata, funziona solo online. Il servizio MapsBroker c'è anche su Windows Server e le linee guida di sicurezza ne consigliano la disattivazione.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "services": [
         {
@@ -1411,11 +1436,12 @@
       "id": "disattiva-programma-insider",
       "category": "servizi",
       "name": "Disattiva il programma Windows Insider",
-      "description": "Blocca l'iscrizione alle build di anteprima e disabilita il servizio wisvc. Sui PC di produzione evita che qualcuno passi al canale Dev.",
+      "description": "Blocca l'iscrizione alle build di anteprima e disabilita il servizio wisvc. Sui PC di produzione evita che qualcuno passi al canale Dev. Vale anche su Windows Server, che ha un proprio programma Insider.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1437,7 +1463,7 @@
       "id": "disattiva-bluetooth",
       "category": "servizi",
       "name": "Disattiva il supporto Bluetooth",
-      "description": "Disabilita il servizio bthserv: il PC non vede più dispositivi Bluetooth. Da non usare dove ci sono mouse, tastiere, cuffie o lettori di codici a barre senza fili.",
+      "description": "Disabilita il servizio bthserv: il PC non vede più dispositivi Bluetooth. Da non usare dove ci sono mouse, tastiere, cuffie o lettori di codici a barre senza fili. Le installazioni Server non hanno lo stack Bluetooth: il servizio bthserv non esiste.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -1454,11 +1480,12 @@
       "id": "niente-riavvio-automatico",
       "category": "aggiornamenti",
       "name": "Niente riavvio automatico con utente connesso",
-      "description": "Configura gli aggiornamenti automatici in modalità \"scarica e installa secondo pianificazione\" e impedisce il riavvio finché c'è un utente collegato: niente più PC riavviati durante una presentazione. Il riavvio va comunque fatto, prima o poi.",
+      "description": "Configura gli aggiornamenti automatici in modalità \"scarica e installa secondo pianificazione\" e impedisce il riavvio finché c'è un utente collegato: niente più PC riavviati durante una presentazione. Il riavvio va comunque fatto, prima o poi. I criteri di Windows Update valgono anche su Windows Server.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1488,11 +1515,12 @@
       "id": "avvisa-prima-di-scaricare",
       "category": "aggiornamenti",
       "name": "Avvisa prima di scaricare gli aggiornamenti",
-      "description": "Imposta gli aggiornamenti automatici su \"Notifica prima del download\" (AUOptions 2): decide l'utente o il tecnico quando scaricare. Se non ci pensa nessuno il PC resta senza patch. Non combinarlo con \"Niente riavvio automatico\": scrivono lo stesso valore.",
+      "description": "Imposta gli aggiornamenti automatici su \"Notifica prima del download\" (AUOptions 2): decide l'utente o il tecnico quando scaricare. Se non ci pensa nessuno il PC resta senza patch. Non combinarlo con \"Niente riavvio automatico\": scrivono lo stesso valore. I criteri di Windows Update valgono anche su Windows Server.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1515,7 +1543,7 @@
       "id": "rinvia-aggiornamenti-funzionalita",
       "category": "aggiornamenti",
       "name": "Rinvia gli aggiornamenti di funzionalità",
-      "description": "Blocca il passaggio alla versione successiva di Windows per 365 giorni (canale di disponibilità generale). Gli aggiornamenti di sicurezza mensili continuano ad arrivare. Serve dove i gestionali vanno certificati prima del salto di versione.",
+      "description": "Blocca il passaggio alla versione successiva di Windows per 365 giorni (canale di disponibilità generale). Gli aggiornamenti di sicurezza mensili continuano ad arrivare. Serve dove i gestionali vanno certificati prima del salto di versione. Riguarda i canali di disponibilità dei Windows client: le versioni LTSC di Windows Server non ricevono aggiornamenti di funzionalità, il passaggio di versione è un aggiornamento completo.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -1549,11 +1577,12 @@
       "id": "niente-driver-da-windows-update",
       "category": "aggiornamenti",
       "name": "Niente driver da Windows Update",
-      "description": "Esclude i driver dagli aggiornamenti qualitativi e impedisce la ricerca driver su Windows Update. I driver restano quelli installati dal tecnico (anche quelli della libreria di Pixio); le periferiche nuove potrebbero restare senza driver finché non li si installa a mano.",
+      "description": "Esclude i driver dagli aggiornamenti qualitativi e impedisce la ricerca driver su Windows Update. I driver restano quelli installati dal tecnico (anche quelli della libreria di Pixio); le periferiche nuove potrebbero restare senza driver finché non li si installa a mano. I criteri valgono anche su Windows Server.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1583,11 +1612,12 @@
       "id": "disattiva-ottimizzazione-recapito",
       "category": "aggiornamenti",
       "name": "Disattiva Ottimizzazione recapito",
-      "description": "Mette la modalità di download su \"solo HTTP\" (DODownloadMode 0): il PC non scarica né distribuisce aggiornamenti da altri computer. Su reti con banda limitata verso Internet il traffico aumenta perché ogni PC scarica per conto suo.",
+      "description": "Mette la modalità di download su \"solo HTTP\" (DODownloadMode 0): il PC non scarica né distribuisce aggiornamenti da altri computer. Su reti con banda limitata verso Internet il traffico aumenta perché ogni PC scarica per conto suo. Il criterio vale anche su Windows Server.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1603,11 +1633,12 @@
       "id": "disattiva-windows-update",
       "category": "aggiornamenti",
       "name": "Disattiva del tutto Windows Update",
-      "description": "Imposta NoAutoUpdate = 1 e disabilita i servizi wuauserv e UsoSvc. Il PC non riceverà più nessuna correzione di sicurezza: usalo solo su macchine isolate, di collaudo o legate a un software che non tollera aggiornamenti. Windows tende comunque a riattivare i servizi.",
+      "description": "Imposta NoAutoUpdate = 1 e disabilita i servizi wuauserv e UsoSvc. Il PC non riceverà più nessuna correzione di sicurezza: usalo solo su macchine isolate, di collaudo o legate a un software che non tollera aggiornamenti. Windows tende comunque a riattivare i servizi. Su un server in produzione è una scelta da evitare: resterebbe senza correzioni di sicurezza.",
       "impact": "rischioso",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1633,11 +1664,12 @@
       "id": "disattiva-uac",
       "category": "sicurezza",
       "name": "Disattiva il Controllo account utente (UAC)",
-      "description": "Mette EnableLUA a 0: sparisce ogni richiesta di elevazione e ogni amministratore lavora sempre con privilegi pieni. Cade una delle difese principali di Windows e le app del Microsoft Store smettono di partire. Richiede il riavvio.",
+      "description": "Mette EnableLUA a 0: sparisce ogni richiesta di elevazione e ogni amministratore lavora sempre con privilegi pieni. Cade una delle difese principali di Windows; sui client le app del Microsoft Store smettono di partire e sulle installazioni Server alcune console di amministrazione si comportano male. Richiede il riavvio.",
       "impact": "rischioso",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1653,11 +1685,12 @@
       "id": "uac-senza-desktop-sicuro",
       "category": "sicurezza",
       "name": "UAC senza schermo oscurato",
-      "description": "La richiesta UAC compare come finestra normale, senza passare al desktop sicuro. Serve su macchine virtuali e in desktop remoto dove l'oscuramento è lentissimo; un programma ostile potrebbe però simulare la finestra.",
+      "description": "La richiesta UAC compare come finestra normale, senza passare al desktop sicuro. Serve su macchine virtuali e in desktop remoto dove l'oscuramento è lentissimo; un programma ostile potrebbe però simulare la finestra. Vale anche su Windows Server, dove il desktop sicuro in RDP è particolarmente lento.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1673,11 +1706,12 @@
       "id": "uac-senza-conferma-amministratore",
       "category": "sicurezza",
       "name": "UAC senza conferma per gli amministratori",
-      "description": "Gli amministratori elevano senza alcuna richiesta (ConsentPromptBehaviorAdmin = 0), mentre l'UAC resta formalmente attivo. Qualsiasi programma lanciato dall'amministratore ottiene i privilegi pieni senza avvisare.",
+      "description": "Gli amministratori elevano senza alcuna richiesta (ConsentPromptBehaviorAdmin = 0), mentre l'UAC resta formalmente attivo. Qualsiasi programma lanciato dall'amministratore ottiene i privilegi pieni senza avvisare. Vale anche su Windows Server, dove però è una rinuncia importante alla sicurezza.",
       "impact": "rischioso",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1693,11 +1727,12 @@
       "id": "disattiva-smartscreen",
       "category": "sicurezza",
       "name": "Disattiva SmartScreen di Windows",
-      "description": "Windows non controlla più la reputazione dei programmi scaricati prima di eseguirli. Sparisce l'avviso \"PC protetto da Windows\" ma anche il filtro che blocca gli eseguibili sconosciuti.",
+      "description": "Windows non controlla più la reputazione dei programmi scaricati prima di eseguirli. Sparisce l'avviso \"PC protetto da Windows\" ma anche il filtro che blocca gli eseguibili sconosciuti. SmartScreen c'è anche su Windows Server.",
       "impact": "rischioso",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1713,11 +1748,12 @@
       "id": "disattiva-defender",
       "category": "sicurezza",
       "name": "Disattiva Microsoft Defender Antivirus",
-      "description": "Scrive il criterio DisableAntiSpyware = 1. Il PC resta senza antivirus finché non se ne installa un altro. Sulle versioni recenti di Windows la Protezione da manomissioni ignora questo valore, quindi il criterio potrebbe non avere alcun effetto: è pensato per le macchine dove si installa subito un antivirus di terze parti.",
+      "description": "Scrive il criterio DisableAntiSpyware = 1. Il PC resta senza antivirus finché non se ne installa un altro. Sulle versioni recenti di Windows la Protezione da manomissioni ignora questo valore, quindi il criterio potrebbe non avere alcun effetto: è pensato per le macchine dove si installa subito un antivirus di terze parti. Microsoft Defender Antivirus è presente anche su Windows Server, dove però è spesso l'unico antivirus della macchina.",
       "impact": "rischioso",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1733,11 +1769,12 @@
       "id": "attiva-desktop-remoto",
       "category": "sicurezza",
       "name": "Attiva il Desktop remoto",
-      "description": "Consente le connessioni RDP in ingresso, impone l'autenticazione a livello di rete (NLA) e apre il gruppo di regole del firewall. Espone la porta 3389: usare solo in rete interna o dietro VPN e solo con password robuste. Le edizioni Home non supportano il server RDP.",
+      "description": "Consente le connessioni RDP in ingresso, impone l'autenticazione a livello di rete (NLA) e apre il gruppo di regole del firewall. Espone la porta 3389: usare solo in rete interna o dietro VPN e solo con password robuste. Sulle edizioni Server è la via normale di accesso (due sessioni di amministrazione senza licenze RDS); le edizioni Home dei client non supportano il server RDP.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1764,11 +1801,12 @@
       "id": "password-al-risveglio",
       "category": "sicurezza",
       "name": "Richiedi la password al risveglio",
-      "description": "Impone la richiesta di password all'uscita dalla sospensione, sia a batteria sia con l'alimentatore, e toglie all'utente la possibilità di disattivarla.",
+      "description": "Impone la richiesta di password all'uscita dalla sospensione, sia a batteria sia con l'alimentatore, e toglie all'utente la possibilità di disattivarla. Il criterio vale anche su Windows Server, dove però la macchina non va quasi mai in sospensione.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1791,11 +1829,12 @@
       "id": "nascondi-ultimo-utente",
       "category": "sicurezza",
       "name": "Non mostrare l'ultimo utente collegato",
-      "description": "La schermata di accesso non propone più il nome dell'ultimo utente: chi accede deve digitare sia nome sia password. Un po' più scomodo, un nome utente in meno da regalare a chi passa davanti al PC.",
+      "description": "La schermata di accesso non propone più il nome dell'ultimo utente: chi accede deve digitare sia nome sia password. Un po' più scomodo, un nome utente in meno da regalare a chi passa davanti al PC. È una delle impostazioni consigliate anche sui server.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1811,11 +1850,12 @@
       "id": "disattiva-autoplay",
       "category": "sicurezza",
       "name": "Disattiva AutoPlay e AutoRun",
-      "description": "Nessun supporto rimovibile viene eseguito o proposto automaticamente (NoDriveTypeAutoRun = 255). Chiude la strada ai malware su chiavette USB; l'utente deve aprire il supporto da Esplora file.",
+      "description": "Nessun supporto rimovibile viene eseguito o proposto automaticamente (NoDriveTypeAutoRun = 255). Chiude la strada ai malware su chiavette USB; l'utente deve aprire il supporto da Esplora file. È una delle impostazioni consigliate anche sui server.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1838,11 +1878,12 @@
       "id": "disattiva-smb1",
       "category": "sicurezza",
       "name": "Rimuovi il protocollo SMB 1.0",
-      "description": "Disattiva la funzionalità SMB1Protocol con DISM. È il protocollo usato da WannaCry: va tolto sempre, tranne dove ci sono NAS, fotocopiatrici o gestionali antichi che parlano solo SMB1.",
+      "description": "Disattiva la funzionalità SMB1Protocol con DISM. È il protocollo usato da WannaCry: va tolto sempre, tranne dove ci sono NAS, fotocopiatrici o gestionali antichi che parlano solo SMB1. Vale anche su Windows Server: il nome DISM è lo stesso, in Server Manager la funzionalità si chiama \"Supporto per la condivisione file SMB 1.0/CIFS\" (FS-SMB1).",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "features_disable": [
         "SMB1Protocol"
@@ -1852,11 +1893,12 @@
       "id": "disattiva-powershell-2",
       "category": "sicurezza",
       "name": "Rimuovi PowerShell 2.0",
-      "description": "Disattiva il motore PowerShell v2, che non registra i log dei blocchi di script ed è usato per aggirare i controlli. Script molto vecchi scritti per la v2 potrebbero non partire più.",
+      "description": "Disattiva il motore PowerShell v2, che non registra i log dei blocchi di script ed è usato per aggirare i controlli. Script molto vecchi scritti per la v2 potrebbero non partire più. Vale anche su Windows Server, dove la stessa funzionalità compare in Server Manager come \"Motore PowerShell 2.0\".",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "features_disable": [
         "MicrosoftWindowsPowerShellV2Root"
@@ -1866,11 +1908,12 @@
       "id": "niente-richiesta-profilo-rete",
       "category": "rete",
       "name": "Niente richiesta \"Rete pubblica o privata?\"",
-      "description": "Crea la chiave NewNetworkWindowOff: collegando una rete nuova Windows non apre più il riquadro che chiede se renderla individuabile. La rete resta nel profilo predefinito (pubblico), quindi più chiuso.",
+      "description": "Crea la chiave NewNetworkWindowOff: collegando una rete nuova Windows non apre più il riquadro che chiede se renderla individuabile. La rete resta nel profilo predefinito (pubblico), quindi più chiuso. Vale anche sulle installazioni Server con Esperienza desktop.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c reg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Network\\NewNetworkWindowOff\" /f"
@@ -1880,11 +1923,12 @@
       "id": "disattiva-ipv6",
       "category": "rete",
       "name": "Disattiva IPv6",
-      "description": "Imposta DisabledComponents = 0xFF su Tcpip6: IPv6 viene disattivato su tutte le interfacce e si preferisce IPv4. Microsoft sconsiglia di disattivare IPv6 (alcuni componenti, DirectAccess e Hyper-V lo danno per scontato): farlo solo se la rete è interamente IPv4. Richiede il riavvio.",
+      "description": "Imposta DisabledComponents = 0xFF su Tcpip6: IPv6 viene disattivato su tutte le interfacce e si preferisce IPv4. Microsoft sconsiglia di disattivare IPv6 (alcuni componenti, DirectAccess e Hyper-V lo danno per scontato): farlo solo se la rete è interamente IPv4. Richiede il riavvio. Sui server è ancora più delicato: Microsoft non supporta la disattivazione di IPv6 su controller di dominio, Exchange, cluster e DirectAccess.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1900,11 +1944,12 @@
       "id": "disattiva-llmnr",
       "category": "rete",
       "name": "Disattiva LLMNR (risoluzione nomi multicast)",
-      "description": "Spegne la risoluzione nomi multicast, sfruttata dagli attacchi di tipo Responder per rubare gli hash delle credenziali. Serve che il DNS interno risolva correttamente i nomi dei PC.",
+      "description": "Spegne la risoluzione nomi multicast, sfruttata dagli attacchi di tipo Responder per rubare gli hash delle credenziali. Serve che il DNS interno risolva correttamente i nomi dei PC. È una delle impostazioni consigliate anche sui server.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1920,11 +1965,12 @@
       "id": "condivisione-senza-password",
       "category": "rete",
       "name": "Condivisione senza password protetta",
-      "description": "Toglie la restrizione che impedisce agli account senza password di accedere dalla rete (LimitBlankPasswordUse = 0). Rende possibile la condivisione \"aperta\" tipica dei piccoli uffici; abbassa nettamente la sicurezza: da non usare su reti non fidate.",
+      "description": "Toglie la restrizione che impedisce agli account senza password di accedere dalla rete (LimitBlankPasswordUse = 0). Rende possibile la condivisione \"aperta\" tipica dei piccoli uffici; abbassa nettamente la sicurezza: da non usare su reti non fidate. Su un server è una scelta da evitare del tutto: aprirebbe le condivisioni ad account senza password.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "reg": [
         {
@@ -1940,11 +1986,12 @@
       "id": "consenti-ping",
       "category": "rete",
       "name": "Consenti il ping (ICMP in ingresso)",
-      "description": "Aggiunge una regola del firewall che accetta l'echo request IPv4. Il PC risponde al ping, cosa che serve a quasi tutti i sistemi di monitoraggio e all'inventario di rete.",
+      "description": "Aggiunge una regola del firewall che accetta l'echo request IPv4. Il PC risponde al ping, cosa che serve a quasi tutti i sistemi di monitoraggio e all'inventario di rete. Vale anche su Windows Server, dove il monitoraggio lo dà quasi sempre per scontato.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c netsh advfirewall firewall add rule name=\"Pixio - Ping ICMPv4\" protocol=icmpv4:8,any dir=in action=allow"
@@ -1954,11 +2001,12 @@
       "id": "attiva-individuazione-rete",
       "category": "rete",
       "name": "Attiva Individuazione rete e condivisione file",
-      "description": "Apre i gruppi di regole del firewall di Individuazione rete e Condivisione file e stampanti (i comandi sono ripetuti in italiano e in inglese perché il nome del gruppo è tradotto). Il PC diventa visibile in Rete: comodo in ufficio, da evitare sulle reti pubbliche.",
+      "description": "Apre i gruppi di regole del firewall di Individuazione rete e Condivisione file e stampanti (i comandi sono ripetuti in italiano e in inglese perché il nome del gruppo è tradotto). Il PC diventa visibile in Rete: comodo in ufficio, da evitare sulle reti pubbliche. Vale anche su Windows Server, dove però l'individuazione rete si tiene spenta salvo necessità.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c netsh advfirewall firewall set rule group=\"Individuazione rete\" new enable=Yes",
@@ -1971,11 +2019,12 @@
       "id": "attiva-net-35",
       "category": "componenti",
       "name": "Attiva .NET Framework 3.5",
-      "description": "Abilita la funzionalità NetFx3, richiesta da molti gestionali e gestori di stampanti fiscali. Senza collegamento a Internet o senza sorgente (sxs) l'operazione fallisce: prevedere il pacchetto o l'accesso a Windows Update.",
+      "description": "Abilita la funzionalità NetFx3, richiesta da molti gestionali e gestori di stampanti fiscali. Senza collegamento a Internet o senza sorgente (sxs) l'operazione fallisce: prevedere il pacchetto o l'accesso a Windows Update. Su Windows Server il nome DISM è lo stesso (NetFx3); in Server Manager la funzionalità è \"Funzionalità di .NET Framework 3.5\" e serve comunque la sorgente sxs.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "features_enable": [
         "NetFx3"
@@ -1985,7 +2034,7 @@
       "id": "attiva-hyper-v",
       "category": "componenti",
       "name": "Attiva Hyper-V",
-      "description": "Abilita tutte le componenti Hyper-V. Richiede virtualizzazione attiva nel BIOS e un riavvio; convive male con VirtualBox e VMware Workstation nelle versioni più vecchie. Solo edizioni Pro, Enterprise ed Education.",
+      "description": "Abilita tutte le componenti Hyper-V. Richiede virtualizzazione attiva nel BIOS e un riavvio; convive male con VirtualBox e VMware Workstation nelle versioni più vecchie. Solo edizioni Pro, Enterprise ed Education. Su Windows Server Hyper-V è un ruolo con nomi diversi (Install-WindowsFeature Hyper-V): questa voce, che usa Microsoft-Hyper-V-All, vale solo sui client.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -1999,11 +2048,12 @@
       "id": "attiva-telnet-client",
       "category": "componenti",
       "name": "Attiva il client Telnet",
-      "description": "Aggiunge telnet.exe, comodo per provare se una porta TCP risponde. Non attiva nessun server: nessuna porta viene aperta.",
+      "description": "Aggiunge telnet.exe, comodo per provare se una porta TCP risponde. Non attiva nessun server: nessuna porta viene aperta. Vale anche su Windows Server: il nome DISM resta TelnetClient, in Server Manager è la funzionalità Client Telnet (Telnet-Client).",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "features_enable": [
         "TelnetClient"
@@ -2013,7 +2063,7 @@
       "id": "attiva-sandbox",
       "category": "componenti",
       "name": "Attiva Windows Sandbox",
-      "description": "Abilita la sandbox usa e getta per provare programmi sospetti. Richiede virtualizzazione hardware e riavvio; non disponibile nelle edizioni Home.",
+      "description": "Abilita la sandbox usa e getta per provare programmi sospetti. Richiede virtualizzazione hardware e riavvio; non disponibile nelle edizioni Home. Windows Sandbox non esiste sulle edizioni Server.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -2027,11 +2077,12 @@
       "id": "attiva-wsl",
       "category": "componenti",
       "name": "Attiva il sottosistema Linux (WSL)",
-      "description": "Abilita il sottosistema Windows per Linux e la piattaforma macchine virtuali. Serve un riavvio e poi l'installazione di una distribuzione; occupa spazio e apre un ambiente Linux completo sul PC.",
+      "description": "Abilita il sottosistema Windows per Linux e la piattaforma macchine virtuali. Serve un riavvio e poi l'installazione di una distribuzione; occupa spazio e apre un ambiente Linux completo sul PC. Su Windows Server è supportato da Server 2019 in poi; VirtualMachinePlatform, che serve a WSL 2, richiede Server 2022 o successivi.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "features_enable": [
         "Microsoft-Windows-Subsystem-Linux",
@@ -2042,11 +2093,12 @@
       "id": "attiva-server-ssh",
       "category": "componenti",
       "name": "Attiva il server OpenSSH",
-      "description": "Installa la funzionalità facoltativa OpenSSH.Server, imposta il servizio sshd in avvio automatico e lo avvia. Apre la porta 22 in ingresso: usare solo in rete interna e con autenticazione a chiave.",
+      "description": "Installa la funzionalità facoltativa OpenSSH.Server, imposta il servizio sshd in avvio automatico e lo avvia. Apre la porta 22 in ingresso: usare solo in rete interna e con autenticazione a chiave. Su Windows Server la funzionalità OpenSSH.Server è disponibile da Server 2019 in poi.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "11",
+        "server"
       ],
       "commands": [
         "cmd /c dism /online /Add-Capability /CapabilityName:OpenSSH.Server~~~~0.0.1.0",
@@ -2058,7 +2110,7 @@
       "id": "rimuovi-windows-media-player",
       "category": "componenti",
       "name": "Rimuovi Windows Media Player (classico)",
-      "description": "Disattiva la funzionalità WindowsMediaPlayer. Restano il nuovo Media Player del Microsoft Store e i codec di sistema; si perdono i lettori CD/DVD legati alla vecchia applicazione.",
+      "description": "Disattiva la funzionalità WindowsMediaPlayer. Restano il nuovo Media Player del Microsoft Store e i codec di sistema; si perdono i lettori CD/DVD legati alla vecchia applicazione. Su Windows Server la riproduzione multimediale fa parte dell'Esperienza desktop e si toglie con nomi diversi (MediaPlayback, Server-Media-Foundation): questa voce vale solo sui client.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -2072,7 +2124,7 @@
       "id": "attiva-client-nfs",
       "category": "componenti",
       "name": "Attiva il client NFS",
-      "description": "Abilita il client NFS per montare condivisioni Unix/Linux e datastore NAS. Aggiunge il comando mount e il supporto alle unità di rete NFS.",
+      "description": "Abilita il client NFS per montare condivisioni Unix/Linux e datastore NAS. Aggiunge il comando mount e il supporto alle unità di rete NFS. Su Windows Server il client NFS è la funzionalità NFS-Client di Server Manager, con nomi DISM diversi: questa voce vale solo sui client.",
       "impact": "attenzione",
       "editions": [
         "10",

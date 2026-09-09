@@ -7,7 +7,13 @@
    La sezione "Ottimizzazioni" (docs/API.md, sezione 10) mostra il catalogo di data/windows-tweaks.json
    così come arriva da GET /api/winprofiles (campo tweaks: {categories, items}): categorie richiudibili,
    ricerca, filtro per impatto, contatori, più gli elenchi a mano dei servizi e delle funzionalità
-   Windows. Le scelte finiscono in settings.tweaks / services_extra / features_enable / features_disable. */
+   Windows. Le scelte finiscono in settings.tweaks / services_extra / features_enable / features_disable.
+
+   Il selettore "Tipo di Windows" della sezione "Lingua e area" (settings.target: client oppure server,
+   docs/API.md sezione 11) decide quali voci del catalogo hanno senso: ogni voce dichiara in "editions"
+   le piattaforme su cui ha effetto ("10", "11", "server") e la GUI mostra solo quelle compatibili,
+   avvisa se il profilo ne conteneva di incompatibili e disattiva la rimozione delle app del Microsoft
+   Store, che su Windows Server non esiste. */
 'use strict';
 (function () {
   const P = window.Pixio;
@@ -78,9 +84,10 @@
       const s = p.settings || {};
       const dk = s.disk || {};
       const dettagli = [s.computer_name || '—', dk.mode || 'auto-uefi', s.language || 'it-IT'].join(' · ');
+      const tipo = s.target && s.target !== 'client' ? ` <span class="pill neutral">${esc(s.target === 'server' ? 'Server' : s.target)}</span>` : '';
       return `<li data-id="${esc(p.id)}" class="${p.id === sel ? 'sel' : ''}" style="${p.id === sel ? 'border-color:var(--accent)' : ''}">
         <div style="min-width:0;flex:1">
-          <div class="drv-name">${esc(p.name)}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
+          <div class="drv-name">${esc(p.name)}${tipo}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
           <div class="hint">${esc(dettagli)}</div>
         </div>
         <button class="btn small" type="button" data-act="apri" data-id="${esc(p.id)}">Apri</button>
@@ -202,6 +209,58 @@
   // colore dell'etichetta di impatto: verde = sicuro, giallo = attenzione, rosso = rischioso
   const TW_PILL = { sicuro: 'ok', attenzione: 'warn', rischioso: 'bad' };
 
+  /* Tipo di Windows del profilo (settings.target) e piattaforme del catalogo (campo "editions"):
+     stessa tabella di PLATFORMS / TARGET_PLATFORMS in services/winprofile.py. Un tipo che il server
+     dovesse aggiungere e che qui non è in elenco non filtra niente: meglio mostrare tutto che far
+     sparire voci già scelte. */
+  const TW_PLATFORMS = ['10', '11', 'server'];
+  const TW_TARGET_PLATFORMS = { client: ['10', '11'], server: ['server'] };
+  // pillola discreta per le voci che valgono su una piattaforma sola
+  const TW_SOLO = { 10: 'solo Windows 10', 11: 'solo Windows 11', server: 'solo Server' };
+
+  function targets() {
+    return (W.meta && W.meta.targets && W.meta.targets.length)
+      ? W.meta.targets
+      : [{ id: 'client', name: 'Windows client (10 e 11)' }, { id: 'server', name: 'Windows Server' }];
+  }
+
+  /** Tipo scelto adesso: quello della sezione Ottimizzazioni, che il selettore tiene aggiornato. */
+  function twTarget() {
+    return (W.tw && W.tw.target) || (W.cur && W.cur.settings && W.cur.settings.target) || 'client';
+  }
+
+  function twTargetNome(t) {
+    const id = t || twTarget();
+    const v = targets().find((x) => x.id === id);
+    return v ? v.name : id;
+  }
+
+  /** Il Microsoft Store (e quindi la rimozione delle app preinstallate) non c'è su Server. */
+  function targetHaStore(t) {
+    const id = String(t || twTarget());
+    return id !== 'server' && id.indexOf('ltsc') < 0;
+  }
+
+  /** Piattaforme dichiarate da una voce. Voce senza "editions" (o con valori sconosciuti):
+      compatibile con tutto, esattamente come fa il server. */
+  function twPiattaforme(t) {
+    const p = (((t && t.editions) || []).map(String)).filter((x) => TW_PLATFORMS.indexOf(x) >= 0);
+    return p.length ? p : TW_PLATFORMS.slice();
+  }
+
+  function twCompatibile(t, target) {
+    const coperte = TW_TARGET_PLATFORMS[target || twTarget()] || TW_PLATFORMS;
+    return twPiattaforme(t).some((p) => coperte.indexOf(p) >= 0);
+  }
+
+  /** Voci del catalogo che hanno effetto sul tipo scelto. */
+  function twVociCompatibili() { return twVoci().filter((t) => twCompatibile(t, twTarget())); }
+
+  /** Voci spuntate che sul tipo scelto non farebbero nulla (il server rifiuta il salvataggio). */
+  function twIncompatibiliScelte() {
+    return twVoci().filter((t) => W.tw.sel.has(t.id) && !twCompatibile(t, twTarget()));
+  }
+
   function twInit(s) {
     const noti = Object.create(null);
     twVoci().forEach((t) => { noti[t.id] = true; });
@@ -215,6 +274,8 @@
         : { name: (x && x.name) || '', start: Number(x && x.start) || 4 })),
       funz: (s.features_enable || []).map((n) => ({ name: String(n), on: true }))
         .concat((s.features_disable || []).map((n) => ({ name: String(n), on: false }))),
+      // tipo di Windows corrente: da qui dipende quali voci si vedono e quali contano
+      target: String(s.target || 'client'),
       q: '', imp: '', stato: '', open: Object.create(null),
     };
   }
@@ -222,6 +283,8 @@
   function twFiltroAttivo() { return !!(W.tw.q.trim() || W.tw.imp || W.tw.stato); }
 
   function twVisibile(t) {
+    // il tipo di Windows viene prima di ogni altro filtro: le voci che non hanno effetto non si mostrano
+    if (!twCompatibile(t, W.tw.target)) return false;
     if (W.tw.imp && t.impact !== W.tw.imp) return false;
     if (W.tw.stato === 'on' && !W.tw.sel.has(t.id)) return false;
     if (W.tw.stato === 'off' && W.tw.sel.has(t.id)) return false;
@@ -232,7 +295,9 @@
   }
 
   function twDiCategoria(cid) { return twVoci().filter((t) => t.category === cid); }
-  function twAttive() { return twVoci().filter((t) => W.tw.sel.has(t.id)); }
+  /** Voci di una categoria che hanno effetto sul tipo scelto: sono queste che i contatori contano. */
+  function twDiCategoriaCompat(cid) { return twDiCategoria(cid).filter((t) => twCompatibile(t, W.tw.target)); }
+  function twAttive() { return twVociCompatibili().filter((t) => W.tw.sel.has(t.id)); }
 
   function twVoceHtml(t) {
     const on = W.tw.sel.has(t.id);
@@ -244,8 +309,10 @@
     if (n(t.commands)) dett.push(n(t.commands) === 1 ? '1 comando' : n(t.commands) + ' comandi');
     const nf = n(t.features_enable) + n(t.features_disable);
     if (nf) dett.push(nf === 1 ? '1 funzionalità Windows' : nf + ' funzionalità Windows');
-    const ed = t.editions || [];
-    const soloEd = ed.length === 1 ? ` <span class="pill neutral">solo Windows ${esc(ed[0])}</span>` : '';
+    // pillola discreta quando la voce vale su una piattaforma sola (solo Windows 11, solo Server…)
+    const piatt = twPiattaforme(t);
+    const soloEd = piatt.length === 1
+      ? ` <span class="pill neutral tw-ed">${esc(TW_SOLO[piatt[0]] || ('solo ' + piatt[0]))}</span>` : '';
     return `<label class="tw-item imp-${esc(imp)}${on ? ' on' : ''}" title="${esc(t.description || '')}">
       <input type="checkbox" data-tweak="${esc(t.id)}" ${on ? 'checked' : ''}>
       <span class="b">
@@ -260,10 +327,11 @@
     const filtro = twFiltroAttivo();
     const blocchi = [];
     twCategorie().forEach((c) => {
-      const tutte = twDiCategoria(c.id);
+      // solo le voci valide per il tipo di Windows scelto: una categoria che resta senza sparisce
+      const tutte = twDiCategoriaCompat(c.id);
       if (!tutte.length) return;
       const viste = tutte.filter(twVisibile);
-      if (filtro && !viste.length) return;
+      if (!viste.length) return;
       const nsel = tutte.filter((t) => W.tw.sel.has(t.id)).length;
       // con un filtro attivo le categorie si aprono da sole (si vede subito cosa corrisponde);
       // altrimenti restano aperte quelle già scelte dal tecnico o con almeno una voce attiva
@@ -286,10 +354,40 @@
       </details>`);
     });
     if (!blocchi.length) {
+      if (!twVociCompatibili().length) {
+        return `<div class="empty"><h3>Nessuna ottimizzazione per questo tipo di Windows</h3>
+          <p>Nel catalogo non c'è nessuna voce valida per ${esc(twTargetNome())}.</p></div>`;
+      }
       return `<div class="empty"><h3>Nessuna ottimizzazione trovata</h3>
-        <p>Nessuna voce corrisponde al testo cercato o al filtro scelto. Svuota la ricerca oppure rimetti "Tutti gli impatti".</p></div>`;
+        <p>Nessuna voce corrisponde al testo cercato o al filtro scelto, fra quelle valide per
+        ${esc(twTargetNome())}. Svuota la ricerca oppure rimetti "Tutti gli impatti".</p></div>`;
     }
     return blocchi.join('');
+  }
+
+  /** Avviso in cima alla sezione: il profilo ha voci spuntate che su questo tipo di Windows non
+      farebbero nulla. Il server rifiuta il salvataggio finché restano, quindi si offre di toglierle. */
+  function twAvvisoHtml() {
+    if (!W.tw) return '';
+    const inc = twIncompatibiliScelte();
+    if (!inc.length) return '';
+    const uno = inc.length === 1;
+    return `<div class="alert warn tw-avviso">
+      <strong>${inc.length} ${uno ? 'ottimizzazione selezionata non ha' : 'ottimizzazioni selezionate non hanno'}
+      effetto su ${esc(twTargetNome())}.</strong>
+      ${uno ? 'Tocca componenti che su questo tipo di Windows non esistono' : 'Toccano componenti che su questo tipo di Windows non esistono'}
+      (Cortana, Copilot, widget, Xbox, app del Microsoft Store, barra applicazioni di Windows 11…):
+      finché ${uno ? 'resta selezionata' : 'restano selezionate'} il salvataggio viene rifiutato.
+      <div class="tw-inc">${inc.map((t) => `<span class="pill neutral">${esc(t.name)}</span>`).join('')}</div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn small primary" type="button" data-tw-act="pulisci">Togli le voci incompatibili</button>
+      </div>
+    </div>`;
+  }
+
+  function twRenderAvviso() {
+    const box = $('#wp-tw-avviso', W.root);
+    if (box) box.innerHTML = twAvvisoHtml();
   }
 
   function twTestataHtml() {
@@ -361,6 +459,7 @@
     box.innerHTML = `${W.tw.ignoti.length ? `<div class="alert warn">Questo profilo contiene
         ${W.tw.ignoti.length} ottimizzazioni che non sono più nel catalogo
         (<span class="mono">${esc(W.tw.ignoti.join(', '))}</span>): salvando il profilo vengono tolte.</div>` : ''}
+      <div id="wp-tw-avviso">${twAvvisoHtml()}</div>
       <div id="wp-tw-head">${twTestataHtml()}</div>
       <div class="tw-cats" id="wp-tw-cats"></div>
       <div class="tw-extra">
@@ -407,13 +506,17 @@
     if (nr) { nr.textContent = String(risch.length); nr.className = 'n' + (risch.length ? ' bad-text' : ' muted'); }
     const h = $('#wp-tw-hint', box);
     if (h) {
-      h.innerHTML = `Su ${twVoci().length} ottimizzazioni disponibili in ${twCategorie().length} categorie.`
+      const comp = twVociCompatibili().length;
+      const tot = twVoci().length;
+      h.innerHTML = `Su ${comp} ottimizzazioni valide per ${esc(twTargetNome())}`
+        + (comp < tot ? ` (${tot} in tutto il catalogo: le altre non hanno effetto su questo tipo di Windows)` : '')
+        + '.'
         + (risch.length
           ? ` <span class="bad-text">Attive rischiose: ${esc(risch.map((t) => t.name).join(', '))}.</span>`
           : ' Nessuna voce rischiosa selezionata.');
     }
     $$('[data-cat-count]', box).forEach((el) => {
-      const tutte = twDiCategoria(el.dataset.catCount);
+      const tutte = twDiCategoriaCompat(el.dataset.catCount);
       const s = tutte.filter((t) => W.tw.sel.has(t.id)).length;
       el.textContent = s + ' / ' + tutte.length;
       el.className = 'pill ' + (s ? 'acc' : 'neutral');
@@ -463,6 +566,20 @@
         twConteggi();
         return;
       }
+      if (act === 'pulisci') {
+        const inc = twIncompatibiliScelte();
+        if (!inc.length) return;
+        inc.forEach((t) => W.tw.sel.delete(t.id));
+        W.dirty = true;
+        twRenderAvviso();
+        twRenderCategorie();
+        twConteggi();
+        anteprima(true);
+        P.toast(inc.length === 1
+          ? 'Tolta 1 ottimizzazione non compatibile con ' + twTargetNome()
+          : `Tolte ${inc.length} ottimizzazioni non compatibili con ` + twTargetNome());
+        return;
+      }
       if (act === 'azzera') {
         if (!W.tw.sel.size) { P.toast('Non c\'è nessuna ottimizzazione attiva', 'info'); return; }
         const ok = await P.confirm(`Togliere tutte le ${W.tw.sel.size} ottimizzazioni attive?`, {
@@ -507,6 +624,47 @@
     });
   }
 
+  /** Cambio del selettore "Tipo di Windows": l'elenco delle ottimizzazioni, i contatori, l'avviso
+      delle voci incompatibili e la rimozione delle app si aggiornano subito, senza ricaricare nulla.
+      La selezione non viene toccata: le voci incompatibili si tolgono dall'avviso, di proposito. */
+  function cambiaTipo(t) {
+    if (!W.tw) return;
+    W.tw.target = String(t || 'client');
+    if (W.cur && W.cur.settings) W.cur.settings.target = W.tw.target;
+    twRenderAvviso();
+    twRenderCategorie();
+    twConteggi();
+    appsAggiorna();
+    anteprima(true);
+  }
+
+  /** Su Windows Server il Microsoft Store non esiste: le app preinstallate da rimuovere restano
+      salvate nel profilo (il server le ignora) ma non si possono più cambiare, con la spiegazione. */
+  function appsAggiorna() {
+    const box = $('#wp-editor', W.root);
+    if (!box) return;
+    const off = !targetHaStore();
+    const nota = $('#wp-apps-nota', box);
+    if (nota) {
+      nota.hidden = !off;
+      if (off) {
+        nota.innerHTML = `Con <strong>${esc(twTargetNome())}</strong> non c'è il Microsoft Store:
+          le app preinstallate qui sotto non esistono e la loro rimozione viene saltata. L'elenco resta
+          come l'hai lasciato — torna a un tipo client per modificarlo — e non finisce
+          nell'<span class="mono">autounattend.xml</span>.`;
+      }
+    }
+    const campo = $('#wp-apps-field', box);
+    if (campo) campo.classList.toggle('wp-off', off);
+    const altre = $('#wp-apps-altre', box);
+    if (altre) {
+      altre.disabled = off;
+      const f = altre.closest('.field');
+      if (f) f.classList.toggle('wp-off', off);
+    }
+    $$('#wp-apps input[type=checkbox]', box).forEach((c) => { c.disabled = off; });
+  }
+
   // ---------------------------------------------------------------- form
 
   function renderEditor() {
@@ -540,6 +698,11 @@
       </div>
 
       <div class="card"><h3>Lingua e area</h3>
+        ${tendina('wp-target', 'Tipo di Windows', s.target || 'client', targets(),
+          'Windows Server non ha Cortana, Copilot, widget, Xbox, le app del Microsoft Store né la barra '
+          + 'applicazioni di Windows 11: molte ottimizzazioni pensate per i PC lì non fanno nulla. '
+          + 'Scegliendo <strong>Server</strong> la sezione Ottimizzazioni mostra solo le voci che hanno '
+          + 'davvero effetto e la rimozione delle app preinstallate viene disattivata.')}
         <div class="row3">
           ${tendina('wp-language', 'Lingua di Windows', s.language, meta.languages || [{ id: 'it-IT', name: 'Italiano (Italia)' }], 'Vale per il setup e per il sistema installato. L\'immagine deve contenere questa lingua.')}
           ${campo('wp-input', 'Tastiera', s.input_locale, { mono: true, maxlength: 64, placeholder: 'it-IT', hint: 'Sigla (<span class="mono">it-IT</span>) o identificativo (<span class="mono">0410:00000410</span>). Più layout: separali con <span class="mono">;</span>.' })}
@@ -613,7 +776,8 @@
       </div>
 
       <div class="card"><h3>App e comandi</h3>
-        <div class="field"><span class="field-label">App preinstallate da rimuovere</span>
+        <div class="alert warn" id="wp-apps-nota" hidden></div>
+        <div class="field" id="wp-apps-field"><span class="field-label">App preinstallate da rimuovere</span>
           <div class="checks" id="wp-apps" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 14px">${apps().map((a) => `<label><input type="checkbox" data-app="${esc(a.id)}" ${(s.remove_apps || []).indexOf(a.id) >= 0 ? 'checked' : ''}> ${esc(a.name)}</label>`).join('')}</div>
           <div class="hint">La rimozione avviene al primo accesso, per l'utente creato e per le future installazioni. Se un pacchetto non c'è, il comando non fa nulla e non blocca niente.</div>
         </div>
@@ -646,12 +810,15 @@
     $('#wp-dom-on', box).addEventListener('change', (e) => {
       $('#wp-dom-box', box).hidden = !e.target.checked;
     });
+    // tipo di Windows: ridisegna ottimizzazioni, contatori, avviso e sezione App
+    $('#wp-target', box).addEventListener('change', (e) => cambiaTipo(e.target.value));
     // ricerca e filtri delle ottimizzazioni non sono modifiche del profilo: non sporcano il form
     const sporca = (e) => { if (!e.target.closest('[data-nodirty]')) W.dirty = true; };
     box.addEventListener('input', sporca);
     box.addEventListener('change', sporca);
     twRender();
     twBind(box);
+    appsAggiorna();
     anteprima(true);
   }
 
@@ -667,6 +834,7 @@
 
   function leggiForm() {
     const s = clone(W.cur.settings) || {};
+    s.target = v('wp-target') || 'client';
     s.language = v('wp-language');
     s.input_locale = v('wp-input') || s.language;
     s.timezone = v('wp-timezone');

@@ -570,6 +570,33 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(modelli)
         self.assertTrue(any(p["settings"].get("tweaks") for p in modelli))
 
+    def test_targets_nell_elenco(self):
+        """GET /api/winprofiles espone targets e le editions di ogni voce (docs/API.md, sez. 11)."""
+        d = self.client.get("/api/winprofiles").get_json()
+        self.assertEqual([t["id"] for t in d["targets"]], ["client", "server"])
+        self.assertTrue(all(t.get("name") for t in d["targets"]))
+        self.assertEqual(d["defaults"]["target"], "client")
+        for t in d["tweaks"]["items"]:
+            self.assertTrue(set(t["editions"]) & set(WP.PLATFORMS),
+                            t["id"] + ": nessuna piattaforma valida")
+
+    def test_profilo_server_via_api(self):
+        """Con target server la creazione rifiuta le voci che su Server non esistono."""
+        solo_client = [t for t in WP.tweaks_catalog()["items"] if "server" not in t["editions"]]
+        if not solo_client:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        r = self.client.post("/api/winprofiles", headers=self.h, json={
+            "name": "Server con voce sbagliata",
+            "settings": {"admin_user": "tec", "admin_password": "Pw1234567", "target": "server",
+                         "tweaks": [solo_client[0]["id"]]}})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn(solo_client[0]["id"], r.get_json()["error"])
+        r = self.client.post("/api/winprofiles", headers=self.h, json={
+            "name": "Server", "preset": "win-server",
+            "settings": {"admin_password": "Pw1234567"}})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        self.assertEqual(r.get_json()["settings"]["target"], "server")
+
     def test_profilo_con_tweak_via_api(self):
         ids = [t["id"] for t in WP.tweaks_catalog()["items"]][:5]
         if not ids:
@@ -772,7 +799,8 @@ class CatalogoTest(unittest.TestCase):
                 self.assertTrue(t.get(campo), f"{t['id']}: manca il campo {campo}")
             self.assertIn(t["impact"], WP.IMPACTS, t["id"])
             self.assertIsInstance(t["editions"], list)
-            self.assertTrue(set(t["editions"]) <= {"10", "11"}, t["id"])
+            self.assertTrue(set(t["editions"]) <= set(WP.PLATFORMS),
+                            t["id"] + ": piattaforme ammesse " + ", ".join(WP.PLATFORMS))
             # una voce deve fare qualcosa
             self.assertTrue(any(t.get(k) for k in ("reg", "services", "commands",
                                                    "features_enable", "features_disable")),
@@ -1092,6 +1120,173 @@ class PresetWindowsTest(unittest.TestCase):
         for atteso in ("effetti-visivi-ridotti", "disattiva-indicizzazione", "disattiva-sysmain"):
             self.assertIn(atteso, prestazioni["tweaks"])
 
+    def test_target_dei_modelli(self):
+        """Ogni modello windows dichiara il tipo di Windows e non contiene voci incompatibili
+        (docs/API.md, sezione 11): win-server è server, tutti gli altri client."""
+        indice = {t["id"]: t for t in catalogo()["items"]}
+        if not indice:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        for pid in self.ids:
+            s = WP.load_preset(pid)["settings"]
+            atteso = "server" if pid == "win-server" else "client"
+            self.assertEqual(s.get("target"), atteso, pid + ": tipo di Windows sbagliato")
+            fuori = [t for t in (s.get("tweaks") or [])
+                     if t in indice and not WP.tweak_compatibile(indice[t], atteso)]
+            self.assertEqual(fuori, [], f"{pid}: voci incompatibili con il tipo {atteso}: {fuori}")
+            # il modello deve restare valido: la validazione rifiuta le voci incompatibili
+            WP.validate(dict(s, admin_password=s.get("admin_password") or "PasswordDiProva1"))
+        server = WP.load_preset("win-server")["settings"]
+        self.assertNotIn("ricerca-solo-locale", server["tweaks"])
+        self.assertIn("attiva-desktop-remoto", server["tweaks"])
+        self.assertEqual(server["remove_apps"], [],
+                         "win-server non deve rimuovere app: su Server non ci sono")
+
+
+# ------------------------------------------------- tipo di Windows: client oppure server (sez. 11)
+
+class TargetClientServerTest(unittest.TestCase):
+    def setUp(self):
+        self.cat = catalogo()
+        if not self.cat["items"]:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        self.solo_client = [t for t in self.cat["items"] if "server" not in t["editions"]]
+        self.da_server = [t for t in self.cat["items"] if "server" in t["editions"]]
+
+    def test_ogni_voce_ha_una_piattaforma_valida(self):
+        """Nessuna voce può restare senza piattaforme: sarebbe invisibile in ogni profilo."""
+        for t in self.cat["items"]:
+            piattaforme = set(t["editions"]) & set(WP.PLATFORMS)
+            self.assertTrue(piattaforme, t["id"] + ": nessuna piattaforma valida in editions")
+            self.assertTrue(WP.tweak_compatibile(t, "client") or WP.tweak_compatibile(t, "server"),
+                            t["id"] + ": non è compatibile con nessun tipo di Windows")
+
+    def test_catalogo_diviso_davvero(self):
+        """La distinzione deve esistere sul serio: voci solo client e voci valide anche su Server."""
+        self.assertTrue(self.solo_client, "nessuna voce esclusa da Windows Server")
+        self.assertTrue(self.da_server, "nessuna voce valida su Windows Server")
+        # le voci che toccano componenti assenti su Server non possono avere "server"
+        for tid in ("disattiva-cortana", "disattiva-copilot", "disattiva-widget",
+                    "disattiva-servizi-xbox", "niente-esperienze-consumer",
+                    "store-senza-aggiornamenti-automatici", "start-senza-consigliati",
+                    "barra-applicazioni-a-sinistra", "menu-contestuale-classico",
+                    "rimuovi-onedrive", "disattiva-cronologia-attivita",
+                    "niente-sincronizzazione-impostazioni"):
+            v = WP.tweak(tid)
+            if v:
+                self.assertNotIn("server", v["editions"], tid + ": non esiste su Windows Server")
+        # le voci di sistema devono restare disponibili anche sui server
+        for tid in ("telemetria-minima", "servizi-telemetria", "disattiva-indicizzazione",
+                    "disattiva-smartscreen", "disattiva-uac", "attiva-desktop-remoto",
+                    "niente-riavvio-automatico", "disattiva-smb1"):
+            v = WP.tweak(tid)
+            if v:
+                self.assertIn("server", v["editions"], tid + ": vale anche su Windows Server")
+
+    def test_predefinito_e_elenco(self):
+        self.assertEqual(WP.defaults()["target"], "client")
+        self.assertEqual(WP.validate(base_settings())["target"], "client")
+        elenco = WP.targets_list()
+        self.assertEqual([t["id"] for t in elenco], ["client", "server"])
+        for t in elenco:
+            self.assertTrue(t["name"])
+        self.assertEqual(WP.validate(base_settings(target="server"))["target"], "server")
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(target="windows-server-2022"))
+        self.assertIn("tipo di windows non valido", str(ctx.exception).lower())
+
+    def test_validazione_rifiuta_voce_solo_client_su_server(self):
+        t = self.solo_client[0]
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(target="server", tweaks=[t["id"]]))
+        msg = str(ctx.exception)
+        self.assertIn(t["id"], msg)                       # quale voce
+        self.assertIn("non è compatibile", msg.lower())   # e perché
+        self.assertIn("Server", msg)
+        # la stessa voce con il target client passa senza problemi
+        self.assertEqual(WP.validate(base_settings(target="client", tweaks=[t["id"]]))["tweaks"],
+                         [t["id"]])
+        # e una voce buona per i server passa con entrambi (nel catalogo non ci sono voci
+        # valide solo su Server, ma se ci fossero il target client le rifiuterebbe)
+        buona = self.da_server[0]["id"]
+        self.assertEqual(WP.validate(base_settings(target="server", tweaks=[buona]))["tweaks"],
+                         [buona])
+
+    def test_validazione_rifiuta_voce_solo_server_su_client(self):
+        """Voce finta valida solo su Server: con il target client la validazione la rifiuta."""
+        finto = os.path.join(TMP, "tweaks-solo-server.json")
+        with open(finto, "w", encoding="utf-8") as f:
+            json.dump({"categories": [{"id": "prova", "name": "Prova"}],
+                       "tweaks": [{"id": "solo-server", "category": "prova", "name": "Solo server",
+                                   "description": "Voce di prova valida solo su Windows Server.",
+                                   "impact": "sicuro", "editions": ["server"],
+                                   "reg": [{"scope": "HKLM", "path": "SOFTWARE\\Prova",
+                                            "name": "Valore", "type": "REG_DWORD", "data": "1"}]}]},
+                      f)
+        vecchio = getattr(C, "WINTWEAKS_FILE", "")
+        C.WINTWEAKS_FILE = finto
+        try:
+            self.assertEqual(WP.validate(base_settings(target="server",
+                                                       tweaks=["solo-server"]))["tweaks"],
+                             ["solo-server"])
+            with self.assertRaises(ValueError) as ctx:
+                WP.validate(base_settings(target="client", tweaks=["solo-server"]))
+            self.assertIn("solo-server", str(ctx.exception))
+            self.assertIn("solo su Windows Server", str(ctx.exception))
+        finally:
+            C.WINTWEAKS_FILE = vecchio
+
+    def test_generazione_server_salta_le_voci_escluse(self):
+        """Con target server l'XML si genera lo stesso e non contiene i comandi delle voci escluse."""
+        ids = [t["id"] for t in self.cat["items"]]
+        xml, dom = rendi(target="server", tweaks=ids)
+        minidom.parseString(xml)
+        comandi = []
+        for passo, tag, campo in (("specialize", "RunSynchronousCommand", "Path"),
+                                  ("oobeSystem", "SynchronousCommand", "CommandLine")):
+            sp = passaggio(dom, passo)
+            if sp is not None:
+                comandi += [testo(uno(dom, campo, c)) for c in sp.getElementsByTagName(tag)]
+        testo_comandi = "\n".join(comandi)
+        for t in self.solo_client:
+            for r in (t.get("reg") or []):
+                self.assertNotIn(r["name"] + '" /t', testo_comandi,
+                                 f"{t['id']}: valore {r['name']} generato con target server")
+            for sv in (t.get("services") or []):
+                self.assertNotIn("Services\\" + sv["name"], testo_comandi,
+                                 f"{t['id']}: servizio {sv['name']} generato con target server")
+            for c in (t.get("commands") or []):
+                self.assertNotIn(c, comandi, t["id"] + ": comando generato con target server")
+            for f in (t.get("features_enable") or []) + (t.get("features_disable") or []):
+                self.assertNotIn("/featurename:" + f, testo_comandi,
+                                 f"{t['id']}: funzionalità {f} generata con target server")
+        # le voci compatibili invece ci sono
+        self.assertIn("AllowTelemetry", testo_comandi)
+        self.assertIn("Services\\DiagTrack", testo_comandi)
+        # e con il target client le voci solo-client tornano
+        xml_client, _ = rendi(target="client", tweaks=ids)
+        self.assertIn("AllowCortana", xml_client)
+        self.assertNotIn("AllowCortana", xml)
+
+    def test_app_ignorate_con_target_server(self):
+        """Le app Appx non hanno senso su Server: nessun comando, ma un commento che lo spiega."""
+        xml, dom = rendi(target="server", remove_apps=["Microsoft.BingNews"])
+        self.assertNotIn("Remove-AppxPackage", xml)
+        self.assertIn("Le app da rimuovere sono state ignorate", xml)
+        xml_client, _ = rendi(target="client", remove_apps=["Microsoft.BingNews"])
+        self.assertIn("Remove-AppxPackage", xml_client)
+        # l'elenco resta scritto nel profilo: tornando al tipo client si ritrova
+        self.assertEqual(WP.validate(base_settings(target="server",
+                                                   remove_apps=["Microsoft.BingNews"]))["remove_apps"],
+                         ["Microsoft.BingNews"])
+
+    def test_generazione_non_alza_su_profilo_incompatibile(self):
+        """Un profilo salvato prima della distinzione (o cambiato a mano) continua a generare."""
+        t = self.solo_client[0]["id"]
+        st = base_settings(tweaks=[t])          # validato con target client
+        st["target"] = "server"                 # poi il tecnico cambia tipo di Windows
+        xml = WP.render_autounattend({"name": "Vecchio", "settings": st}, "10.10.0.254",
+                                     cfg=CFG_FINTA)
+        minidom.parseString(xml)
 
 
 def tearDownModule():

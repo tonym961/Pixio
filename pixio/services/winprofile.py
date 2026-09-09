@@ -21,6 +21,12 @@ Le ottimizzazioni in stile nLite stanno in data/windows-tweaks.json (docs/API.md
 scelgono per identificativo in settings["tweaks"]; il catalogo si carica una volta e si ricarica solo
 se il file cambia (tweaks_catalog(), tweak(id)).
 
+Il campo settings["target"] dice a che tipo di Windows è destinato il profilo: "client" (Windows 10
+e 11, predefinito) oppure "server" (Windows Server 2016-2025 con interfaccia grafica). Ogni voce del
+catalogo dichiara in "editions" le piattaforme su cui ha davvero effetto: la validazione rifiuta le
+voci non compatibili col target, la generazione le salta senza errori e le app Appx da rimuovere
+vengono ignorate quando il target è "server" (docs/API.md, sezione 11).
+
 ATTENZIONE alle password: autounattend.xml le contiene in chiaro (PlainText true) e il file viene servito
 ai client via HTTP senza autenticazione. È il funzionamento previsto dal contratto; la GUI lo dice a chiare
 lettere. Anche il bypass dei requisiti di Windows 11 non è una configurazione supportata da Microsoft.
@@ -88,6 +94,18 @@ POWER_GUIDS = {
     "prestazioni": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
 }
 LOCAL_GROUPS = ("Users", "Administrators", "Power Users", "Remote Desktop Users", "Guests")
+
+# Tipo di Windows a cui è destinato il profilo (docs/API.md, sezione 11). Serve a tenere fuori dai
+# server le ottimizzazioni che toccano componenti che su Windows Server non esistono (Cortana,
+# Copilot, widget, Xbox, Microsoft Store, esperienze consumer, barra applicazioni di Windows 11).
+TARGETS = ("client", "server")
+TARGET_LABELS = {
+    "client": "Windows client (10 e 11)",
+    "server": "Windows Server (2016-2025, con interfaccia grafica)",
+}
+# Piattaforme ammesse nel campo "editions" del catalogo e piattaforme coperte da ogni target.
+PLATFORMS = ("10", "11", "server")
+TARGET_PLATFORMS = {"client": ("10", "11"), "server": ("server",)}
 
 # Avvio dei servizi come lo scrive il registro (chiave Start): 2 automatico, 3 manuale, 4 disabilitato.
 # 0 e 1 (driver di avvio) non si toccano da un file di risposta: renderebbero il sistema non avviabile.
@@ -173,6 +191,7 @@ APPS = [
 
 # Valori predefiniti: PC italiano, disco UEFI, OOBE saltato, driver di Pixio attivi.
 DEFAULTS = {
+    "target": "client",          # "client" (Windows 10/11) oppure "server" (Windows Server)
     "language": "it-IT",
     "input_locale": "it-IT",
     "timezone": "W. Europe Standard Time",
@@ -228,6 +247,20 @@ def disk_modes_list():
 
 def groups_list():
     return list(LOCAL_GROUPS)
+
+
+def targets_list():
+    """Tipi di Windows per la tendina della GUI: [{id, name}] (docs/API.md, sezione 11)."""
+    return [{"id": t, "name": TARGET_LABELS[t]} for t in TARGETS]
+
+
+def check_target(valore, default="client"):
+    """Normalizza settings.target. Alza ValueError se non è né client né server."""
+    t = _txt(valore).lower() or default
+    if t not in TARGETS:
+        raise ValueError("Tipo di Windows non valido: " + " oppure ".join(TARGETS)
+                         + " (client = Windows 10/11, server = Windows Server)")
+    return t
 
 
 # ---------------------------------------------------------------- catalogo delle ottimizzazioni
@@ -308,10 +341,46 @@ def tweak_ids():
     return [t["id"] for t in _load_tweaks()["items"]]
 
 
-def _tweaks_scelti(st):
-    """Voci scelte nel profilo, sempre nell'ordine del catalogo (generazione stabile)."""
+def tweak_platforms(voce):
+    """Piattaforme dichiarate da una voce del catalogo, filtrate su PLATFORMS.
+
+    Una voce senza "editions" (o con valori sconosciuti) resta compatibile con tutto: un errore di
+    battitura nel catalogo non deve far sparire dalla GUI un'ottimizzazione già usata nei profili.
+    """
+    if not isinstance(voce, dict):
+        return set(PLATFORMS)
+    p = {str(x) for x in (voce.get("editions") or []) if str(x) in PLATFORMS}
+    return p or set(PLATFORMS)
+
+
+def tweak_compatibile(voce, target):
+    """True se la voce ha effetto sul tipo di Windows scelto (docs/API.md, sezione 11)."""
+    return bool(tweak_platforms(voce) & set(TARGET_PLATFORMS.get(target, PLATFORMS)))
+
+
+def tweaks_incompatibili(tweak_ids_scelti, target):
+    """Identificativi (fra quelli passati) che non hanno effetto sul target indicato.
+
+    Gli identificativi sconosciuti al catalogo vengono ignorati qui: se ne occupa validate().
+    """
     indice = _load_tweaks()["index"]
-    return [indice[t] for t in (st.get("tweaks") or []) if t in indice]
+    return [t for t in (tweak_ids_scelti or [])
+            if t in indice and not tweak_compatibile(indice[t], target)]
+
+
+def _tweaks_scelti(st):
+    """Voci scelte nel profilo, sempre nell'ordine del catalogo (generazione stabile).
+
+    Le voci non compatibili con settings.target vengono saltate senza sollevare eccezioni: la
+    validazione le rifiuta al salvataggio, ma un profilo salvato prima della distinzione
+    client/server deve continuare a generare un XML valido (docs/API.md, sezione 11).
+    """
+    indice = _load_tweaks()["index"]
+    target = _txt(st.get("target")).lower() or DEFAULTS["target"]
+    if target not in TARGETS:
+        target = DEFAULTS["target"]
+    return [indice[t] for t in (st.get("tweaks") or [])
+            if t in indice and tweak_compatibile(indice[t], target)]
 
 
 # ---------------------------------------------------------------- utilità
@@ -404,15 +473,24 @@ def _check_password(pw, campo):
 
 # ---------------------------------------------------------------- validazione
 
-def validate(settings):
+def validate(settings, rifiuta_incompatibili=True):
     """Controlla e normalizza le impostazioni. Alza ValueError con un messaggio in italiano.
 
     I valori mancanti arrivano dai predefiniti, così un profilo parziale resta valido.
+
+    Con `rifiuta_incompatibili` (predefinito) le ottimizzazioni che non hanno effetto sul tipo di
+    Windows scelto in `target` fanno fallire la validazione, dicendo quale voce e perché. La
+    generazione dell'XML chiama invece la validazione con False e si limita a saltarle
+    (docs/API.md, sezione 11): un profilo salvato prima della distinzione client/server, o un
+    modello cambiato sotto i piedi, deve continuare a produrre un autounattend.xml valido.
     """
     if settings is not None and not isinstance(settings, dict):
         raise ValueError("Impostazioni non valide: atteso un oggetto")
     s = deep_merge(copy.deepcopy(DEFAULTS), settings or {})
     out = {}
+
+    # --- tipo di Windows (client oppure server): decide quali ottimizzazioni sono ammesse
+    out["target"] = check_target(s.get("target"), DEFAULTS["target"])
 
     # --- lingua e area
     lang = _txt(s.get("language")) or DEFAULTS["language"]
@@ -589,7 +667,8 @@ def validate(settings):
         raise ValueError("Schema di alimentazione non valido: " + " oppure ".join(POWER_SCHEMES))
     out["power_scheme"] = scheme
 
-    # --- app da rimuovere
+    # --- app da rimuovere (con target "server" restano scritte ma non generano comandi: vedi
+    # _pass_oobe. Non si scartano qui perché tornando al tipo "client" l'elenco deve riapparire)
     apps = []
     for a in _list(s.get("remove_apps")):
         a = _txt(a)
@@ -631,6 +710,20 @@ def validate(settings):
             scelti.append(tid)
     if len(scelti) > MAX_TWEAKS:
         raise ValueError(f"Troppe ottimizzazioni selezionate (max {MAX_TWEAKS})")
+    # le voci che non hanno effetto sul tipo di Windows scelto vengono rifiutate, dicendo quale
+    # voce e perché (docs/API.md, sezione 11): meglio un errore chiaro di un XML che non fa nulla
+    indice = _load_tweaks()["index"]
+    for tid in (tweaks_incompatibili(scelti, out["target"]) if rifiuta_incompatibili else []):
+        voce = indice[tid]
+        piattaforme = ", ".join(p for p in PLATFORMS if p in tweak_platforms(voce))
+        if out["target"] == "server":
+            motivo = ("tocca componenti che su Windows Server non esistono; vale solo su "
+                      "Windows " + piattaforme)
+        else:
+            motivo = "vale solo su Windows Server"
+        raise ValueError("L'ottimizzazione \"%s\" (%s) non è compatibile con il tipo di Windows "
+                         "scelto (%s): %s. Toglila dalla selezione oppure cambia il tipo di Windows."
+                         % (voce.get("name", tid), tid, TARGET_LABELS[out["target"]], motivo))
     # ordine del catalogo, non quello di selezione: l'XML generato deve essere sempre lo stesso
     out["tweaks"] = sorted(scelti, key=lambda x: posizione[x])
 
@@ -1233,7 +1326,15 @@ def _pass_oobe(root, st, arch, em=None):
         agg(_reg_add("HKCU", avanzate, "HideFileExt", "REG_DWORD",
                      1 if st["hide_files_ext"] else 0),
             "Estensioni dei file " + ("nascoste" if st["hide_files_ext"] else "visibili"))
-    for app in st["remove_apps"]:
+    # Le app Appx da rimuovere non hanno senso su Windows Server: non c'è il Microsoft Store e le
+    # app preinstallate dei client non ci sono. Restano scritte nel profilo (così tornando al tipo
+    # "client" si ritrovano) ma non generano nessun comando: il contratto (docs/API.md, sezione 11)
+    # non prevede avvisi restituiti dalla validazione, quindi la cosa si dice qui e nell'XML.
+    apps_da_rimuovere = [] if st["target"] == "server" else st["remove_apps"]
+    if st["target"] == "server" and st["remove_apps"]:
+        shell.append(ET.Comment(" Le app da rimuovere sono state ignorate: il profilo è per Windows "
+                                "Server, dove le app del Microsoft Store non sono installate "))
+    for app in apps_da_rimuovere:
         agg("powershell -NoProfile -ExecutionPolicy Bypass -Command "
             f"\"Get-AppxPackage -AllUsers -Name '{app}' | Remove-AppxPackage -ErrorAction "
             "SilentlyContinue; Get-AppxProvisionedPackage -Online | "
@@ -1267,12 +1368,14 @@ def render_autounattend(profile, server_ip="", cfg=None):
     `profile` è il profilo completo ({name, settings}) oppure le sole impostazioni.
     `server_ip` serve per il percorso della share driver di Pixio.
     """
+    # la generazione non fa fallire niente per colpa delle ottimizzazioni non compatibili con il
+    # tipo di Windows del profilo: le salta e basta (docs/API.md, sezione 11)
     if isinstance(profile, dict) and "settings" in profile:
         nome = _txt(profile.get("name")) or "senza nome"
-        st = validate(profile.get("settings") or {})
+        st = validate(profile.get("settings") or {}, rifiuta_incompatibili=False)
     else:
         nome = "senza nome"
-        st = validate(profile or {})
+        st = validate(profile or {}, rifiuta_incompatibili=False)
     if cfg is None:
         try:
             from .. import settings as S
