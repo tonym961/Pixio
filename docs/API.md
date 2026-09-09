@@ -383,3 +383,17 @@ finiscono davvero, esclusioni comprese), `winpe_candidates` ed `excluded_files`.
   e la scheda mostra un riassunto ("solo Windows Server", "solo 2 immagini").
 - Nel pannello dei file: casella per ogni file che finirebbe nel WinPE, per escluderlo, con "escludi tutti" e "includi tutti"
   e il conteggio aggiornato dei file iniettati.
+
+## 16. Catalogo ISO organizzato per cartelle
+Con 163 immagini in 40 cartelle diverse l'elenco piatto è inutilizzabile. La pagina ISO deve mostrare le immagini
+raggruppate come stanno nella sorgente, usando `rel_path` (il percorso relativo dentro la share o la libreria).
+- Selettore di vista in alto: **Cartelle** (predefinita) oppure **Elenco** (il comportamento di oggi), scelta ricordata in `localStorage`.
+- In vista Cartelle: un albero a due livelli di intestazioni, prima la sorgente (`source_name`), poi il percorso della cartella
+  (`Microsoft/Desktop/Win11`), ognuna richiudibile con `<details>` e con il conteggio delle immagini e di quante sono nel menu.
+  Le immagini nella radice della sorgente stanno sotto una voce "(radice)". Le cartelle sono ordinate per nome, le immagini dentro per nome.
+- Stato di apertura ricordato per cartella (localStorage); pulsanti "Espandi tutto" e "Comprimi tutto".
+- Quando c'è un filtro attivo (testo, sorgente, tipo, nel menu) le cartelle con risultati si aprono da sole e quelle vuote spariscono;
+  l'intestazione mostra "N di M" quando il filtro nasconde qualcosa.
+- Le colonne e le azioni delle righe restano quelle di oggi, compreso l'interruttore "Nel menu" e il pulsante Dettagli.
+- Sopra l'elenco resta la riga dei riepiloghi (totale, nel menu, per sorgente) già presente.
+La modifica riguarda solo `static/catalog.js` e `static/style.css`: nessuna API nuova, `rel_path` e `source_name` sono già esposti.
