@@ -19,12 +19,12 @@
     ['compatibile', 'Compatibilità · console di testo del firmware'],
   ];
   const STYLE_HINT = {
-    testo: 'iPXE prende il framebuffer video e scrive direttamente in memoria: la console del firmware viene spenta. Misurato: menu pronto in 0,19 s (BIOS) e 0,18 s (UEFI), 38 ms per spostamento della selezione, zero chiamate al firmware.',
-    grafico: 'Come "Testo" più lo sfondo. Lo sfondo non costa nulla per tasto (38 ms, identici allo stile Testo alla stessa risoluzione): cambia solo la comparsa del menu, da 0,19/0,18 s a 0,46/0,32 s (BIOS/UEFI) a 1024×768, perché il PNG va scaricato e decodificato una volta sola. A 640×480 la comparsa scende a 0,23/0,20 s.',
-    compatibile: 'Usa la console di testo del firmware: ogni carattere è una chiamata al BIOS (fino a 3 INT 10h) o allo UEFI (ConOut), e a ogni spostamento della selezione iPXE riscrive due righe intere, cioè circa 170 chiamate. Su PC con Console Redirection, Serial-over-LAN, BMC o AMT attivi si arriva ai 5 secondi per tasto, e in UEFI la voce selezionata può non evidenziarsi. Da usare solo se sul PC il framebuffer non parte.',
+    testo: 'iPXE prende il framebuffer video e scrive direttamente in memoria: la console del firmware viene spenta. Misurato a 1024×768: menu pronto in 0,17 s (BIOS) e 0,15 s (UEFI), 38 ms per spostamento della selezione, zero chiamate al firmware. L’evidenziazione della voce scelta si vede sempre, anche in UEFI.',
+    grafico: 'Come "Testo" più lo sfondo. Alla stessa risoluzione lo spostamento della selezione costa uguale (38 ms a 1024×768): lo sfondo non pesa sui tasti. Cambia solo la comparsa del menu, che passa da 0,17/0,15 s a 0,28/0,25 s (BIOS/UEFI) a 1024×768, perché il PNG va scaricato e decodificato una volta sola; a 640×480 sono 0,18/0,17 s contro 0,12/0,13 s.',
+    compatibile: 'Usa la console di testo del firmware: ogni carattere è una chiamata al BIOS (fino a 3 INT 10h) o allo UEFI (ConOut), e a ogni spostamento della selezione iPXE riscrive due righe intere, cioè circa 170 chiamate. Su PC con Console Redirection, Serial-over-LAN, BMC o AMT attivi si arriva ai 5 secondi per tasto. In UEFI, misurato: i colori del tema non arrivano e premere le frecce non cambia niente sullo schermo, la voce selezionata non si evidenzia. Da usare solo se sul PC il framebuffer non parte.',
   };
   const RESOLUTIONS = [['1024x768', '1024 × 768'], ['800x600', '800 × 600'], ['640x480', '640 × 480']];
-  const RES_HINT = 'Vale per gli stili Testo e Grafico. Comparsa del menu con lo sfondo (BIOS/UEFI): 1024×768 0,46/0,32 s · 800×600 0,33/0,26 s · 640×480 0,23/0,20 s. Tempo per tasto: 38/38 · 33/33 · 30/29 ms. Senza sfondo il menu è pronto in 0,19/0,18 s a qualunque risoluzione.';
+  const RES_HINT = 'Vale per gli stili Testo e Grafico. Comparsa del menu con lo sfondo (BIOS/UEFI): 1024×768 0,28/0,25 s · 800×600 0,22/0,21 s · 640×480 0,18/0,17 s. Tempo per tasto: 39/38 · 32/32 · 29/29 ms. Senza sfondo: 0,17/0,15 s a 1024×768 e 0,12/0,13 s a 640×480. Sotto i 1024×768 il menu ha meno righe e meno colonne: con molte ISO conviene restare a 1024×768.';
   const PREV_HINT = {
     testo: 'Anteprima dello stile Testo: nessuna immagine, solo i colori del tema disegnati da iPXE nel framebuffer.',
     grafico: 'Anteprima in scala dello sfondo. L’immagine viene rigenerata dal server a ogni salvataggio.',

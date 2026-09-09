@@ -114,9 +114,11 @@ Impostazioni in `menu.theme`: `style` (`testo` | `grafico` | `compatibile`, defa
 Decidono *dove* iPXE disegna il menu, che e' il fattore dominante sul tempo di risposta ai tasti:
 - `testo` e `grafico` emettono `console -x W -y H ...`: iPXE prende il framebuffer video e spegne la console
   del firmware (`efi_fbcon.c`, `vesafb.c`). Scritture dirette in memoria video, 0 chiamate al firmware.
-- `grafico` aggiunge una seconda riga `console ... --picture http://<ip>/pxe/inject/theme/bg-<W>x<H>.png`.
-  Va **dopo** quella senza immagine: se il PNG non arriva o non si decodifica, `console_cmd.c` esce prima di
-  `console_configure()` e la console resta sul framebuffer invece di ricadere su quella del firmware.
+- `grafico` emette `console ... --picture http://<ip>/pxe/inject/theme/bg-<W>x<H>.png || console -x W -y H ...`:
+  il ripiego sta **sulla stessa riga dopo `||`**, cosi' se il PNG non arriva o non si decodifica (`console_cmd.c`
+  esce prima di `console_configure()`) iPXE esegue il secondo comando e resta comunque sul framebuffer, invece
+  di ricadere sulla console del firmware. Sulla stessa riga il ripiego non costa nulla quando l'immagine c'e';
+  su una riga separata costava 30-60 ms a ogni comparsa del menu (misurato).
 - `compatibile` non emette nessun `console`: resta la console di testo del firmware (una chiamata per carattere,
   circa 170 per ogni spostamento della selezione). E' il percorso che sui PC con Console Redirection / SOL / BMC / AMT
   produce i ~5 secondi per tasto. Da usare solo se il framebuffer non parte.
@@ -126,6 +128,14 @@ la risoluzione sta nel nome del file, cosi' non si riusa mai uno sfondo di misur
 `GET /api/menu` restituisce `settings.theme` sempre completo piu' `settings.theme_bg_url`, `settings.theme_styles`
 e `settings.theme_resolutions`; `PUT /api/menu` valida `style` e `resolution` (400 se fuori elenco) e rigenera lo
 sfondo solo con lo stile `grafico`.
+
+Tempi misurati in QEMU (TCG, BIOS e UEFI, menu di 11 voci, 5 ripetizioni), comparsa del menu / tasto:
+| stile | 1024x768 | 800x600 | 640x480 |
+|---|---|---|---|
+| testo (framebuffer) | 0,168/0,151 s - 38 ms | - | 0,115/0,128 s - 29 ms |
+| grafico (framebuffer + sfondo) | 0,283/0,246 s - 39/38 ms | 0,219/0,213 s - 32 ms | 0,182/0,172 s - 29 ms |
+| compatibile (console firmware) | 0,175/0,087 s - 30 ms BIOS, in UEFI nessun cambiamento visibile | | |
+Prima dell'ottimizzazione: stile grafico 1024x768 con PNG a colori pieni e senza ripiego 0,463/0,329 s.
 
 ## 3. Risposte automatiche (installazioni non presidiate)
 Servizio `pixio/services/answers.py`, file in `/var/lib/pixio/answers/<id>/<nome file>`, metadati in `/var/lib/pixio/answers.json`.

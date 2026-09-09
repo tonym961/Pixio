@@ -551,7 +551,7 @@
   async function openDetails(slug) {
     P.drawer.open('Dettagli ISO', '<div class="loading">Caricamento…</div>');
     try {
-      const [iso, groups] = await Promise.all([P.get('/api/catalog/' + encodeURIComponent(slug)), loadGroups(), loadAnswers()]);
+      const [iso, groups] = await Promise.all([P.get('/api/catalog/' + encodeURIComponent(slug)), loadGroups(), loadAnswers(true)]);
       if (!P.drawer.isOpen()) return;
       renderDrawer(iso, groups);
     } catch (e) { P.fail(e); P.drawer.close(); }
@@ -564,13 +564,25 @@
     'ubuntu-casper': ['ubuntu'], 'redhat-installer': ['redhat'], 'fedora-live': ['redhat'],
   };
 
-  async function loadAnswers() {
-    if (CAT.answers) return CAT.answers;
-    try {
-      const r = await P.api('GET', '/api/answers');
-      CAT.answers = (r && r.answers) || [];
-    } catch (e) { CAT.answers = []; }
+  async function loadAnswers(force) {
+    // niente cache permanente: una risposta creata dopo l'apertura della pagina deve comparire subito
+    if (CAT.answers && !force) return CAT.answers;
+    const [ans, win, deb] = await Promise.all([
+      P.api('GET', '/api/answers').catch(() => null),
+      P.api('GET', '/api/winprofiles').catch(() => null),
+      P.api('GET', '/api/debprofiles').catch(() => null),
+    ]);
+    CAT.answers = (ans && ans.answers) || [];
+    CAT.profiles = [
+      ...(((win && win.profiles) || []).map((p) => ({ id: p.id, name: p.name, kind: 'windows', api: 'winprofiles' }))),
+      ...(((deb && deb.profiles) || []).map((p) => ({ id: p.id, name: p.name, kind: 'debian', api: 'debprofiles' }))),
+    ];
     return CAT.answers;
+  }
+
+  function profilesFor(iso) {
+    const kinds = ANSWER_KINDS[iso.type] || [];
+    return (CAT.profiles || []).filter((p) => kinds.includes(p.kind));
   }
 
   function answersFor(iso) {
@@ -583,9 +595,10 @@
 
   function answerFieldHtml(iso) {
     const { buone, altre } = answersFor(iso);
-    if (!(CAT.answers || []).length) {
+    const prof = profilesFor(iso);
+    if (!(CAT.answers || []).length && !prof.length) {
       return `<div class="field"><span class="field-label">Installazione automatica</span>
-        <div class="hint">Nessuna risposta disponibile. Creane una nella pagina Risposte, oppure da Preset → Windows o Debian con "Salva come risposta".</div></div>`;
+        <div class="hint">Nessuna risposta né profilo disponibile. Creane uno in Preset → Windows o Debian.</div></div>`;
     }
     const opt = (a) => `<option value="${esc(a.id)}" ${a.id === iso.answer_id ? 'selected' : ''}>${esc(a.name)} (${esc(a.kind)})</option>`;
     return `<div class="field"><label for="d-answer">Installazione automatica</label>
@@ -593,6 +606,7 @@
         <option value="">Nessuna: installazione guidata a mano</option>
         ${buone.length ? `<optgroup label="Adatte a questa immagine">${buone.map(opt).join('')}</optgroup>` : ''}
         ${altre.length ? `<optgroup label="Altre risposte">${altre.map(opt).join('')}</optgroup>` : ''}
+        ${prof.length ? `<optgroup label="Profili: la risposta viene creata al salvataggio">${prof.map((p) => `<option value="profilo:${esc(p.api)}:${esc(p.id)}">${esc(p.name)}</option>`).join('')}</optgroup>` : ''}
       </select>
       <div class="hint">La risposta viene servita al PC durante l'installazione: per Windows finisce nel WinPE come autounattend.xml, per Linux diventa il file di preconfigurazione sulla riga di comando del kernel.</div></div>`;
   }
@@ -682,9 +696,20 @@
         if (group && group !== iso.group) patch.group = group;
         const type = $('#d-type', body).value; if (type && type !== iso.type) patch.type = type;
         const ansEl = $('#d-answer', body);
+        let daProfilo = null;
         if (ansEl) {
-          const ans = ansEl.value || null;
-          if ((ans || null) !== (iso.answer_id || null)) patch.answer_id = ans;
+          let ans = ansEl.value || null;
+          if (ans && ans.startsWith('profilo:')) { daProfilo = ans.split(':'); ans = null; }
+          if (!daProfilo && (ans || null) !== (iso.answer_id || null)) patch.answer_id = ans;
+        }
+        if (daProfilo) {
+          P.setBusy(b, true, 'Creo la risposta…');
+          try {
+            const r = await P.post(`/api/${daProfilo[1]}/${encodeURIComponent(daProfilo[2])}/save-answer`);
+            patch.answer_id = r && r.answer_id;
+            CAT.answers = null;              // l'elenco va riletto: c'è una risposta in più
+            P.toast(`Risposta "${(r && r.answer_name) || patch.answer_id}" creata dal profilo`);
+          } catch (err) { P.fail(err); P.setBusy(b, false); return; }
         }
         if ($('#d-cr-on', body).checked) {
           const kernel = $('#d-cr-kernel', body).value.trim();

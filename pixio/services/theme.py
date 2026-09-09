@@ -9,7 +9,9 @@ in modalita' testo e 214 in grafica. Dove finiscono quelle operazioni decide tut
     arrivare ai ~5 secondi per tasto segnalati su PC reali.
   * framebuffer: efifb (interface/efi/efi_fbcon.c) e vesafb (arch/x86/interface/pcbios/vesafb.c)
     spengono la console del firmware (CONSOLE_DISABLED_OUTPUT) e scrivono direttamente in memoria
-    video. Nelle misure: 0 byte verso il firmware per tasto, 29-40 ms per tasto in tutte le prove.
+    video. Nelle misure: 0 byte verso il firmware per tasto, 29-39 ms per tasto in tutte le prove,
+    e l'evidenziazione della voce selezionata si vede sempre (con la console del firmware in UEFI
+    premere le frecce non cambia proprio niente sullo schermo).
 Quindi lo sfondo non rallenta: al contrario, e' il modo grafico che elimina il percorso lento.
 Gli stili "testo" e "grafico" usano entrambi il framebuffer; "compatibile" e' la vecchia console di
 testo del firmware, da tenere solo se sul PC il framebuffer non parte.
@@ -27,8 +29,9 @@ BG_DIR = "theme"                              # -> HTTP_INJECT_DIR/theme = /pxe/
 BG_FMT = BG_DIR + "/bg-%dx%d.png"             # la risoluzione sta nel nome: niente sfondo vecchio riusato
 HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 STYLES = ("testo", "grafico", "compatibile")
-# 4:3 in tutti i casi. Tempi misurati (BIOS/UEFI): comparsa del menu con lo sfondo 0,46/0,32 s a
-# 1024x768, 0,33/0,26 a 800x600, 0,23/0,20 a 640x480; per tasto 38/38, 33/33, 30/29 ms.
+# 4:3 in tutti i casi. Misure in QEMU dopo l'ottimizzazione (BIOS/UEFI), comparsa del menu con lo
+# sfondo: 0,283/0,246 s a 1024x768, 0,219/0,213 a 800x600, 0,182/0,172 a 640x480; per tasto
+# 39/38, 32/32, 29/29 ms. Senza sfondo: 0,168/0,151 s a 1024x768 e 0,115/0,128 a 640x480.
 RESOLUTIONS = ("1024x768", "800x600", "640x480")
 DEFAULT_RES = "1024x768"
 DEFAULT_THEME = {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99",
