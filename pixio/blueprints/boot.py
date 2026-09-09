@@ -30,6 +30,14 @@ def _text(body):
     return Response(body, mimetype="text/plain; charset=utf-8", headers={"Cache-Control": "no-store"})
 
 
+@bp.route("/autoexec.ipxe")
+def autoexec():
+    """iPXE cerca questo file accanto a se stesso appena parte: gli diamo lo stesso avvio dello
+    script incorporato, così non compare l'errore 'autoexec.ipxe not found'."""
+    cfg = S.load()
+    return _text(ipxe_menu.bootstrap_script(cfg["network"]["server_ip"]))
+
+
 @bp.route("/boot.ipxe")
 def boot_menu():
     cfg = S.load()

@@ -199,12 +199,14 @@ def console_lines(cfg, server_ip):
     geom = f"-x {w} -y {h} --left {m['left']} --right {m['right']} --top {m['top']} --bottom {m['bottom']}"
     if t["style"] != "grafico" or not ensure_background(cfg, server_ip):
         return [f"console {geom} ||"]
-    # Prima il framebuffer nudo, poi lo sfondo: se l'immagine non arriva o non si decodifica,
-    # iPXE non riconfigura la console (console_cmd.c esce prima di console_configure) e resta
-    # comunque sul framebuffer, invece di ricadere sulla console lenta del firmware.
+    # Rete di sicurezza sulla stessa riga: se lo sfondo non arriva o non si decodifica, iPXE non
+    # riconfigura la console (console_cmd.c esce prima di console_configure) e con "||" esegue il
+    # secondo comando, restando comunque sul framebuffer invece di ricadere sulla console lenta del
+    # firmware. Sulla stessa riga non costa nulla quando l'immagine c'e' (una riga a parte pesava
+    # 30-60 ms in piu' su ogni comparsa del menu, misurati in QEMU).
     plain = margins(dict(t, style="testo"))
-    return [f"console -x {w} -y {h} --left {plain['left']} --right {plain['right']} --top {plain['top']} --bottom {plain['bottom']} ||",
-            f"console {geom} --picture {bg_url(t, server_ip)} ||"]
+    return [f"console {geom} --picture {bg_url(t, server_ip)} || "
+            f"console -x {w} -y {h} --left {plain['left']} --right {plain['right']} --top {plain['top']} --bottom {plain['bottom']} ||"]
 
 
 def ipxe_header(cfg, server_ip):

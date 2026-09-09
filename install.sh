@@ -54,6 +54,8 @@ if [ ! -s $SRV/tftp/.ipxe-build ]; then
     cp -f /usr/lib/ipxe/undionly.kpxe /usr/lib/ipxe/ipxe.pxe /usr/lib/ipxe/ipxe.efi /usr/lib/ipxe/snponly.efi $SRV/tftp/ 2>/dev/null || true
   fi
 fi
+# iPXE cerca autoexec.ipxe accanto a se stesso: senza, ogni avvio logga un errore innocuo
+sed "s/__PIXIO_SERVER_IP__/${IP:-127.0.0.1}/g" $CODE/ipxe/embed.ipxe > $SRV/tftp/autoexec.ipxe 2>/dev/null || true
 chmod 644 $SRV/tftp/* 2>/dev/null || true
 # UEFI HTTP Boot: il firmware scarica iPXE via HTTP da /pxe/tftp/
 [ -L $SRV/http/tftp ] || ln -s $SRV/tftp $SRV/http/tftp

@@ -289,19 +289,21 @@ class MenuTest(unittest.TestCase):
         self.assertLess(script.index("console "), script.index("\n:menu"))        # entrambi prima del menu
 
     def test_13_stile_grafico_ripiega_sul_framebuffer(self):
-        """Stile grafico: prima il framebuffer nudo, poi lo sfondo.
+        """Stile grafico: una riga sola, sfondo con il framebuffer nudo come ripiego dopo '||'.
 
-        Se il PNG non arriva o non si decodifica, iPXE non riconfigura la console e resta comunque
-        sul framebuffer, invece di ricadere sulla console lenta del firmware.
+        Se il PNG non arriva o non si decodifica, iPXE non riconfigura la console (console_cmd.c
+        esce prima di console_configure) ed esegue il secondo comando: resta sul framebuffer invece
+        di ricadere sulla console lenta del firmware. Sulla stessa riga il ripiego non costa nulla
+        quando l'immagine c'e'.
         """
         script, console = self.tema(style="grafico", resolution="1024x768")
-        self.assertEqual(len(console), 2, console)
-        self.assertNotIn("--picture", console[0])
-        self.assertIn("-x 1024 -y 768", console[0])
-        self.assertIn("--picture http://10.10.0.254/pxe/inject/theme/bg-1024x768.png", console[1])
-        self.assertIn("--top 104", console[1])          # cornice piu' larga: intestazione e piede disegnati
-        for l in console:
-            self.assertTrue(l.endswith("||"), l)
+        self.assertEqual(len(console), 1, console)
+        picture, fallback = console[0].split(" || ", 1)
+        self.assertIn("--picture http://10.10.0.254/pxe/inject/theme/bg-1024x768.png", picture)
+        self.assertIn("--top 104", picture)             # cornice piu' larga: intestazione e piede disegnati
+        self.assertTrue(fallback.startswith("console -x 1024 -y 768"), fallback)
+        self.assertNotIn("--picture", fallback)
+        self.assertTrue(console[0].endswith("||"), console[0])
         from pixio.services import theme as T
         self.assertTrue(os.path.isfile(T.bg_path(T.theme(self.S.load()))), "sfondo non generato")
 
@@ -309,10 +311,12 @@ class MenuTest(unittest.TestCase):
         """La risoluzione scelta finisce sia in -x/-y sia nel nome dello sfondo (niente PNG stantii)."""
         for res, w, h in (("800x600", 800, 600), ("640x480", 640, 480)):
             script, console = self.tema(style="grafico", resolution=res)
-            for l in console:
-                self.assertIn(f"-x {w} -y {h}", l, l)
-            self.assertIn(f"bg-{w}x{h}.png", console[1])
-            self.assertNotIn(f"bg-1024x768.png", console[1])
+            self.assertEqual(len(console), 1, console)
+            for cmd in console[0].split(" || "):
+                if cmd.strip():
+                    self.assertIn(f"-x {w} -y {h}", cmd, cmd)
+            self.assertIn(f"bg-{w}x{h}.png", console[0])
+            self.assertNotIn("bg-1024x768.png", console[0])
 
     def test_15_stile_compatibile_lascia_la_console_del_firmware(self):
         script, console = self.tema(style="compatibile")
