@@ -515,12 +515,36 @@ def editions_for_iso(slug):
         return []
 
 
-def profiles_by_answer():
-    """{answer_id: {id, name, edition_index, target}} dei profili che hanno generato le risposte.
+def _profilo_della_risposta(a, profili, per_nome):
+    """Profilo che ha generato la risposta `a`, oppure None, con gli indici dei profili già pronti.
 
     Il collegamento vero è il campo `profile` che save_as_answer() scrive nella risposta; per le
     risposte create prima si ripiega sull'identificativo (nasce dallo stesso nome del profilo) e
     sul nome uguale, che è come le genera Pixio."""
+    if not isinstance(a, dict) or a.get("kind") != "windows":
+        return None
+    return (profili.get(_txt(a.get("profile"))) or profili.get(_txt(a.get("id")))
+            or per_nome.get(_txt(a.get("name")).lower()))
+
+
+def profile_for_answer(answer):
+    """Profilo che ha generato una singola risposta, oppure None.
+
+    None vuol dire "risposta che non nasce da un profilo": scritta o caricata a mano dal tecnico,
+    oppure generata da un profilo cancellato nel frattempo. In tutti e due i casi l'unica cosa da
+    servire al client è il file statico salvato nella risposta (docs/API.md, sezione 20)."""
+    if not isinstance(answer, dict) or answer.get("kind") != "windows":
+        return None
+    profili = {p["id"]: p for p in list_profiles()}
+    per_nome = {_txt(p["name"]).lower(): p for p in profili.values()}
+    return _profilo_della_risposta(answer, profili, per_nome)
+
+
+def profiles_by_answer():
+    """{answer_id: {id, name, edition_index, target}} dei profili che hanno generato le risposte.
+
+    Stesse regole di collegamento di profile_for_answer(), applicate a tutte le risposte in una
+    volta sola (i profili si leggono una volta, non una per risposta)."""
     try:
         idx = _answers().index()
     except Exception:  # noqa: BLE001
@@ -529,10 +553,7 @@ def profiles_by_answer():
     per_nome = {_txt(p["name"]).lower(): p for p in profili.values()}
     out = {}
     for aid, a in idx.items():
-        if a.get("kind") != "windows":
-            continue
-        p = profili.get(_txt(a.get("profile"))) or profili.get(aid) \
-            or per_nome.get(_txt(a.get("name")).lower())
+        p = _profilo_della_risposta(dict(a, id=a.get("id") or aid), profili, per_nome)
         if p is None:
             continue
         st = p.get("settings") or {}

@@ -119,8 +119,10 @@ def answer_for(iso, server_ip, answer=AUTO):
             a = answers.get(answer) if answer else None
         if not a:
             return "", []
+        # lo slug serve alle risposte Windows generate da un profilo: l'autounattend.xml viene
+        # rigenerato al boot per questa ISO, con le edizioni che contiene (docs/API.md, sezione 20)
         return (answers.kernel_args(a, iso.get("type"), server_ip) or "",
-                answers.winpe_files(a, server_ip) or [])
+                answers.winpe_files(a, server_ip, iso.get("slug") or "") or [])
     except Exception:  # noqa: BLE001
         return "", []
 

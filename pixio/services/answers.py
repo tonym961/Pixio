@@ -7,6 +7,11 @@ Una "risposta" è una cartella in ANSWERS_DIR/<id> con dentro il file principale
 I file vengono serviti ai client PXE senza autenticazione su http://<ip>/answers/<id>/<nome file>
 (blueprint pixio/blueprints/answers_public.py) e agganciati al boot da recipes.py tramite
 kernel_args() (Debian/Ubuntu/RHEL) e winpe_files() (Windows).
+
+Le risposte Windows generate da un profilo non vengono servite dal file statico ma rigenerate al
+momento dell'avvio per la ISO che parte, su http://<ip>/boot/answer/<slug>/<id>/autounattend.xml
+(blueprint pixio/blueprints/boot.py, docs/API.md sezione 20): è l'unico momento in cui si sa quale
+immagine si sta avviando e quindi quali edizioni contiene davvero.
 """
 import os
 import re
@@ -384,6 +389,29 @@ def folder_url(server_ip, answer_id):
     return f"http://{server_ip}/answers/{quote(check_id(answer_id))}/"
 
 
+def boot_url(server_ip, slug, answer_id):
+    """URL della risposta Windows rigenerata al volo per una ISO (docs/API.md, sezione 20).
+
+    Diverso da public_url(), che serve il file statico salvato: qui l'XML lo produce il blueprint
+    boot dal profilo che ha generato la risposta, con le edizioni di quella immagine."""
+    s = str(slug or "")
+    if not C.SLUG_RE.match(s):
+        raise ValueError("Slug della ISO non valido")
+    return f"http://{server_ip}/boot/answer/{quote(s)}/{quote(check_id(answer_id))}/autounattend.xml"
+
+
+def from_profile(answer):
+    """True se la risposta è stata generata da un profilo Windows che esiste ancora.
+
+    Solo per queste ha senso rigenerare l'XML al boot: per le altre non c'è niente da cui
+    rigenerarlo e vale il file salvato, che è l'unico contenuto che il tecnico ha scritto."""
+    try:
+        from . import winprofile
+        return winprofile.profile_for_answer(answer) is not None
+    except Exception:  # noqa: BLE001 - senza profili si serve il file statico, come prima
+        return False
+
+
 def get_for_slug(slug, answer_id=None):
     """Risposta da usare per una ISO del catalogo, oppure None.
 
@@ -434,10 +462,16 @@ def kernel_args(answer, iso_type=None, server_ip=""):
     return ""
 
 
-def winpe_files(answer, server_ip=""):
+def winpe_files(answer, server_ip="", slug=""):
     """[(nome_destinazione, url)] da iniettare nel WinPE via wimboot (solo risposte Windows).
 
     Per una risposta "generic" il file viene iniettato solo se si chiama davvero autounattend.xml.
+
+    `slug` è la ISO che si sta avviando (la passa recipes._apply_answer). Con lo slug, le risposte
+    nate da un profilo Windows puntano all'indirizzo che rigenera l'XML per quella immagine invece
+    che al file statico: la stessa risposta finisce nel menu di più ISO e l'edizione da installare
+    va decisa sulla ISO che parte, non una volta per tutte (docs/API.md, sezione 20). Le risposte
+    scritte a mano, e quelle il cui profilo non c'è più, restano sul file statico di sempre.
     """
     if not answer or not answer.get("id"):
         return []
@@ -449,6 +483,11 @@ def winpe_files(answer, server_ip=""):
         main = "autounattend.xml"
     else:
         return []
+    if slug and from_profile(answer):
+        try:
+            return [("autounattend.xml", boot_url(server_ip, slug, answer["id"]))]
+        except ValueError:
+            pass                      # slug strano: meglio il file statico che nessun file
     try:
         return [("autounattend.xml", public_url(server_ip, answer["id"], main))]
     except ValueError:

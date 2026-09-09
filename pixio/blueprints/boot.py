@@ -26,6 +26,16 @@ def _mac():
     return m.lower().replace("-", ":") if MAC_RE.match(m) else ""
 
 
+def _nome_iso(slug):
+    """Nome della ISO nel catalogo (per i log): lo slug se il catalogo non dice niente."""
+    try:
+        from ..services import catalog
+        e = (catalog.load() or {}).get("isos", {}).get(slug) or {}
+        return e.get("name") or e.get("file") or slug
+    except Exception:  # noqa: BLE001
+        return slug
+
+
 def _text(body):
     return Response(body, mimetype="text/plain; charset=utf-8", headers={"Cache-Control": "no-store"})
 
@@ -85,6 +95,54 @@ def boot_entry(slug):
     log.info("boot %s da %s (%s)%s %s", slug, request.remote_addr, platform,
              f" risposta={answer}" if answer is not None else "", "; ".join(warnings))
     return _text(text)
+
+
+@bp.route("/boot/answer/<slug>/<answer_id>/autounattend.xml")
+def boot_answer(slug, answer_id):
+    """autounattend.xml generato adesso, per la coppia (ISO che si sta avviando, risposta).
+
+    Il file salvato in /var/lib/pixio/answers/<id>/ è uno solo, ma la stessa risposta compare nel
+    menu di ISO diverse: l'edizione scritta lì dentro può non esistere nell'immagine che parte, e
+    da quando install.cmd passa il file al setup con /unattend: quel valore ferma l'installazione
+    invece di essere ignorato. Qui l'XML si rigenera dal profilo che ha creato la risposta con le
+    edizioni di questa ISO (docs/API.md, sezione 20). Il file statico non viene toccato: resta
+    scaricabile e modificabile dalla GUI, ed è quello che si serve quando la risposta non nasce da
+    un profilo o il profilo è stato cancellato."""
+    if not C.SLUG_RE.match(slug):
+        return _text("slug non valido"), 400
+    from ..services import answers, winprofile
+    a = answers.get(answer_id)
+    if not a:
+        return _text("risposta non trovata"), 404
+
+    def statico(motivo):
+        """Ripiego: il contenuto salvato della risposta, esattamente come lo serve /answers/."""
+        log.info("risposta %s per %s servita dal file salvato (%s)", a["id"], slug, motivo)
+        try:
+            return _text(answers.read_content(a["id"]))
+        except (FileNotFoundError, ValueError, OSError) as e:
+            log.warning("risposta %s: file non leggibile (%s)", a["id"], e)
+            return _text("file non leggibile"), 404
+
+    prof = winprofile.profile_for_answer(a)
+    if not prof:
+        return statico("nessun profilo collegato")
+    edizioni = winprofile.editions_for_iso(slug)
+    voluta = str((prof.get("settings") or {}).get("edition_index") or "")
+    if edizioni and voluta and winprofile.match_edition(edizioni, voluta) is None:
+        log.warning("risposta %s su %s: il profilo \"%s\" chiede l'edizione \"%s\", che in questa "
+                    "immagine non c'è (presenti: %s); nell'XML non viene scritta così com'è",
+                    a["id"], _nome_iso(slug), prof["name"], voluta,
+                    winprofile.editions_labels(edizioni))
+    try:
+        xml = winprofile.render_autounattend(prof, S.load()["network"]["server_ip"],
+                                             editions=edizioni)
+    except Exception as e:  # noqa: BLE001 - un profilo illeggibile non deve lasciare il PC senza file
+        log.error("risposta %s su %s: generazione fallita (%s)", a["id"], slug, e)
+        return statico("generazione fallita")
+    log.info("risposta %s generata per %s dal profilo %s, servita a %s",
+             a["id"], slug, prof["id"], request.remote_addr)
+    return _text(xml)
 
 
 @bp.route("/boot/inject/<slug>/<name>")

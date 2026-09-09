@@ -527,6 +527,9 @@ minuscole — e se non corrisponde:
 In tutti e due i casi finisce un avviso nei log di Pixio (`pixio.winprofile`). Senza `editions` il
 comportamento è quello di prima.
 
+Il file salvato come risposta però resta buono per una ISO sola: al boot l'XML viene rigenerato per
+l'immagine che sta partendo (sezione 20).
+
 ### Segnalazione all'utente
 - Pagina Windows: "Edizione da installare" diventa una tendina con le edizioni dell'immagine abbinata
   (ognuna con il suo indice), più "Chiedi durante l'installazione" e "Scrivi un valore a mano…" per
@@ -544,3 +547,42 @@ I modelli per edizione portano un `edition_index` coerente con il proprio `targe
 (`win11-ltsc` → "Windows 11 Enterprise LTSC 2024", `win10-ltsc` → "Windows 10 Enterprise LTSC 2021",
 `win11-pro` → "Windows 11 Pro"). `winserver` copre più versioni di Windows Server, il cui nome
 immagine cambia con l'anno: il campo è vuoto e l'edizione si sceglie dalla tendina della ISO.
+
+## 20. Risposta Windows generata all'avvio, per la ISO che sta partendo
+Le risposte Windows sono file statici (`/var/lib/pixio/answers/<id>/autounattend.xml`) generati una
+volta sola dal profilo, ma la stessa risposta si collega a più ISO (sezione 17) e l'edizione scritta
+dentro vale solo per una di quelle. Da quando `install.cmd` passa davvero il file al setup con
+`/unattend:`, un'edizione che nell'immagine non esiste non viene più ignorata: ferma l'installazione.
+Il controllo della sezione 19 serve quindi al momento dell'avvio, l'unico in cui si sa quale ISO
+sta partendo: l'XML si genera lì, non una volta per tutte.
+
+### Indirizzo
+`GET /boot/answer/<slug>/<answer_id>/autounattend.xml` (pubblico come gli altri `/boot/`, nessuna
+autenticazione, `Cache-Control: no-store`, `text/plain` come i file di `/answers/`). Genera l'XML
+adesso, dal profilo che ha creato la risposta, con
+`render_autounattend(prof, server_ip, editions=winprofile.editions_for_iso(slug))`:
+- l'edizione del profilo è nell'immagine → si scrive com'è;
+- immagine con una sola edizione → si installa quella;
+- immagine con più edizioni → `InstallFrom` non viene generato e l'edizione la chiede il setup.
+
+Ogni scarto lascia due righe nei log: `pixio.boot` dice quale profilo e quale ISO (nome del catalogo)
+con l'elenco delle edizioni presenti, `pixio.winprofile` dice la decisione presa (sezione 19).
+Codici: 400 slug non valido, 404 risposta inesistente, 200 negli altri casi.
+
+### Quando la ricetta usa questo indirizzo
+Decide `answers.winpe_files(answer, server_ip, slug)`, che riceve lo slug da `recipes._apply_answer`.
+Con lo slug e con una risposta che nasce da un profilo ancora esistente
+(`answers.from_profile()` → `winprofile.profile_for_answer()`: campo `profile` della risposta, con i
+ripieghi su id e nome uguali per le risposte create prima della sezione 19) la riga della ricetta
+diventa `initrd http://<ip>/boot/answer/<slug>/<id>/autounattend.xml autounattend.xml`.
+Restano invece sul file statico `http://<ip>/answers/<id>/autounattend.xml`, come prima:
+- le risposte scritte o caricate a mano dal tecnico, che non nascono da un profilo;
+- quelle il cui profilo è stato cancellato;
+- le risposte `generic` che contengono un `autounattend.xml`;
+- le chiamate senza slug (`winpe_files(answer, ip)` da sola non cambia comportamento).
+
+### Il file statico resta com'è
+Non viene cancellato né riscritto: `/answers/<id>/<file>` continua a servirlo, la GUI a mostrarlo e a
+lasciarlo modificare, e `save-answer` a rigenerarlo quando lo si chiede. È anche il ripiego
+dell'indirizzo dinamico: se il profilo non c'è più (o la generazione fallisce) il client scarica
+quel contenuto, così un PC in avvio non resta mai senza file di risposta.
