@@ -2,6 +2,11 @@
 
 L'upload dei file passa da /api/upload (kind:"driver", folder:"<nome>", "path" per le sottocartelle),
 vedi api_upload.py. PATCH su /api/drivers/folders (senza nome) applica gli stessi flag a piu' cartelle.
+
+apply_to (docs/API.md, sezione 15) dice a quali immagini si applica una cartella: GET /api/drivers lo espone
+per ogni cartella, insieme alle scelte possibili (gruppi del menu di boot, ISO Windows/WinPE del catalogo)
+in "apply_choices" e, per comodita' della SPA, anche in "groups" e "isos" al primo livello.
+Le PATCH (singola e multipla) lo accettano e lo validano con drivers.check_apply_to.
 """
 import os
 import socket
@@ -61,6 +66,11 @@ def _get_folder(name):
 def list_drivers():
     out = _share_info()
     out["folders"] = drivers.list_folders()
+    choices = drivers.apply_choices()
+    out["apply_choices"] = choices
+    out["apply_modes"] = list(drivers.APPLY_MODES)
+    out["groups"] = choices["groups"]
+    out["isos"] = choices["isos"]
     return jsonify(out)
 
 
@@ -73,19 +83,21 @@ def create_folder():
 
 
 def _flag_patch(d, fields=("winpe_inject", "setup_load")):
-    """Estrae i flag booleani dal corpo JSON (solleva ValueError se il tipo e' sbagliato)."""
+    """Estrae dal corpo JSON i flag booleani e apply_to (solleva ValueError se il tipo e' sbagliato)."""
     patch = {}
     for k in fields:
         if k in d:
             if not isinstance(d[k], bool):
                 raise ValueError(f"{k}: valore booleano atteso")
             patch[k] = d[k]
+    if "apply_to" in d:
+        patch["apply_to"] = drivers.check_apply_to(d["apply_to"])
     return patch
 
 
 @bp.route("/api/drivers/folders", methods=["PATCH"])
 def patch_folders():
-    """Stessa modifica su piu' cartelle: {names:[...], winpe_inject?, setup_load?}."""
+    """Stessa modifica su piu' cartelle: {names:[...], winpe_inject?, setup_load?, apply_to?}."""
     d = request.get_json(silent=True)
     if not isinstance(d, dict):
         raise ValueError("Corpo JSON non valido")
@@ -98,7 +110,7 @@ def patch_folders():
         raise ValueError("names: i nomi delle cartelle devono essere testo")
     patch = _flag_patch(d)
     if not patch:
-        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load)")
+        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, apply_to)")
     res = drivers.set_flags_many(names, patch)
     return jsonify({"ok": not res["errors"], "updated": res["updated"], "errors": res["errors"]})
 
@@ -118,7 +130,7 @@ def patch_folder(name):
             raise ValueError("Nota troppo lunga (max 200 caratteri)")
         patch["note"] = note
     if not patch:
-        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, note)")
+        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, apply_to, note)")
     folder = drivers.set_flags(name, patch)
     if folder is None:
         raise FileNotFoundError("Cartella driver non trovata")
@@ -135,6 +147,7 @@ def delete_folder(name):
 @bp.route("/api/drivers/folders/<name>/files/<path:file>", methods=["PATCH"])
 def patch_file(name, file):
     """Include o esclude un singolo file dall'iniezione nel WinPE: {excluded: true|false}"""
+    _folder_or_404(name)
     data = request.get_json(silent=True) or {}
     if "excluded" not in data:
         raise ValueError("Indica se il file va escluso")

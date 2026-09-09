@@ -7,6 +7,12 @@ setup_load:   dopo aver mappato la share, drvload ricorsivo di tutti i .inf dell
 I pacchetti driver contengono spesso anche l'installatore .exe, file di lingua .ini, documentazione: file che
 non servono all'installazione automatica. USEFUL_EXT elenca le estensioni che servono davvero; ogni file ha il
 campo "useful" e ogni cartella i contatori useful_files / ignored_files (docs/API.md, sezione 14).
+
+apply_to:     i driver RAID di un server non servono su un PC da ufficio. Ogni cartella dice a quali immagini si
+              applica ({"mode": "all"|"groups"|"isos", "groups": [...], "isos": [slug]}), e winpe_inject_files(iso)
+              / setup_load_folders(iso) filtrano in base alla voce di catalogo che si sta avviando
+              (docs/API.md, sezione 15). Senza argomento si comportano come prima: nessun filtro.
+excluded:     elenco dei percorsi relativi esclusi a mano dall'iniezione nel WinPE.
 """
 import os
 import re
@@ -21,6 +27,95 @@ WINPE_EXT = (".inf", ".sys", ".cat", ".dll")
 # estensioni che servono davvero a installare un driver (tutto il resto e' scarto: .exe, .txt, .ini, ...)
 USEFUL_EXT = (".inf", ".sys", ".cat", ".dll", ".bin", ".dat", ".cab", ".sepolicy")
 MAX_INJECT_BYTES = 256 * 1024 * 1024
+
+# apply_to: a quali immagini si applica la cartella (docs/API.md, sezione 15)
+APPLY_MODES = ("all", "groups", "isos")
+MAX_APPLY_GROUPS = 50        # i gruppi sono quelli del menu di boot: pochi e con nomi brevi
+MAX_APPLY_ISOS = 500         # una per voce di catalogo, con ampio margine
+MAX_GROUP_LEN = 60           # stessa lunghezza del campo "group" del catalogo
+
+
+def default_apply_to():
+    """Valore predefinito: la cartella vale per tutte le immagini (comportamento storico)."""
+    return {"mode": "all", "groups": [], "isos": []}
+
+
+def check_apply_to(v):
+    """Normalizza e valida apply_to. Solleva ValueError con messaggio in italiano."""
+    if v is None:
+        return default_apply_to()
+    if not isinstance(v, dict):
+        raise ValueError("apply_to: oggetto atteso ({mode, groups, isos})")
+    mode = v.get("mode", "all")
+    if not isinstance(mode, str) or mode.strip().lower() not in APPLY_MODES:
+        raise ValueError('apply_to.mode: valori ammessi "all", "groups", "isos"')
+    mode = mode.strip().lower()
+
+    groups = v.get("groups") or []
+    if not isinstance(groups, list):
+        raise ValueError("apply_to.groups: elenco di nomi di gruppo atteso")
+    if len(groups) > MAX_APPLY_GROUPS:
+        raise ValueError(f"apply_to.groups: troppi gruppi (max {MAX_APPLY_GROUPS})")
+    gs = []
+    for g in groups:
+        if not isinstance(g, str):
+            raise ValueError("apply_to.groups: i nomi dei gruppi devono essere testo")
+        g = g.replace("\r", " ").replace("\n", " ").strip()
+        if not g:
+            continue
+        if len(g) > MAX_GROUP_LEN:
+            raise ValueError(f"apply_to.groups: nome di gruppo troppo lungo (max {MAX_GROUP_LEN} caratteri)")
+        if g not in gs:
+            gs.append(g)
+
+    isos = v.get("isos") or []
+    if not isinstance(isos, list):
+        raise ValueError("apply_to.isos: elenco di slug atteso")
+    if len(isos) > MAX_APPLY_ISOS:
+        raise ValueError(f"apply_to.isos: troppe immagini (max {MAX_APPLY_ISOS})")
+    ss = []
+    for x in isos:
+        if not isinstance(x, str):
+            raise ValueError("apply_to.isos: gli slug devono essere testo")
+        x = x.strip()
+        if not x:
+            continue
+        if not C.SLUG_RE.match(x):
+            raise ValueError(f"apply_to.isos: slug non valido ({x[:40]})")
+        if x not in ss:
+            ss.append(x)
+
+    if mode == "groups" and not gs:
+        raise ValueError("apply_to: scegli almeno un gruppo, oppure usa la modalità \"all\"")
+    if mode == "isos" and not ss:
+        raise ValueError("apply_to: scegli almeno un'immagine, oppure usa la modalità \"all\"")
+    return {"mode": mode, "groups": gs, "isos": ss}
+
+
+def _read_apply_to(f):
+    """apply_to salvato nei flag della cartella, ripulito: i valori vecchi o rotti tornano "all"."""
+    try:
+        return check_apply_to((f or {}).get("apply_to"))
+    except ValueError:
+        return default_apply_to()
+
+
+def apply_to_of(name):
+    """apply_to della cartella (predefinito se non impostato)."""
+    return _read_apply_to(_flags()["folders"].get(name))
+
+
+def apply_matches(apply_to, iso):
+    """True se la cartella vale per questa voce di catalogo. iso None = nessun filtro (anteprima generica)."""
+    if iso is None:
+        return True
+    a = apply_to if isinstance(apply_to, dict) and apply_to.get("mode") in APPLY_MODES else default_apply_to()
+    if a["mode"] == "all":
+        return True
+    if a["mode"] == "groups":
+        g = str((iso or {}).get("group") or "").strip().lower()
+        return bool(g) and g in [str(x).strip().lower() for x in (a.get("groups") or [])]
+    return str((iso or {}).get("slug") or "") in [str(x) for x in (a.get("isos") or [])]
 
 
 def is_useful(name):
@@ -85,29 +180,46 @@ def list_folders():
         files = _walk(p)
         f = flags.get(name, {})
         esclusi = set(str(x) for x in (f.get("excluded") or []))
-        # conteggio coerente con winpe_inject_files(): sottocartelle comprese, 32 bit escluse, nomi appiattiti
-        inject, visti = [], set()
-        for x in sorted([y for y in files if y["name"].lower().endswith(WINPE_EXT) and not _inject_skip(y["name"])],
-                        key=lambda y: (_inject_rank(y["name"]), y["name"].lower())):
-            nome = x["name"].split("/")[-1].lower()
-            if nome in visti:
-                continue
-            visti.add(nome)
-            if x["name"] in esclusi:
-                x["excluded"] = True
-                continue
-            inject.append(x)
+        inject = _mark_inject(files, esclusi)
         useful = sum(1 for x in files if x["useful"])
+        cand = sum(1 for x in files if x["winpe_cand"])
         out.append({
             "name": name, "files": files, "count": len(files), "size": sum(x["size"] for x in files),
             "useful_files": useful, "ignored_files": len(files) - useful,
             "inf_count": sum(1 for x in files if x["name"].lower().endswith(".inf")),
             "winpe_files": len(inject), "winpe_size": sum(x["size"] for x in inject),
+            "winpe_candidates": cand, "excluded_files": sum(1 for x in files if x["excluded"]),
             "winpe_inject": bool(f.get("winpe_inject")), "setup_load": bool(f.get("setup_load")),
-            "excluded": sorted(esclusi),
+            "excluded": sorted(esclusi), "apply_to": _read_apply_to(f),
             "note": f.get("note", ""), "valid_name": bool(FOLDER_RE.match(name)),
         })
     return out
+
+
+def _mark_inject(files, esclusi):
+    """Segna ogni file della cartella e ritorna quelli che finiscono davvero nel WinPE.
+
+    Stessa logica di winpe_inject_files(): sottocartelle di altre architetture saltate, un solo file per nome
+    (wimboot appiattisce tutto in X:\\Windows\\System32), i file esclusi a mano lasciano il posto al gemello.
+    Campi aggiunti a ogni file: winpe_cand (potrebbe essere iniettato), excluded (escluso a mano),
+    winpe (finisce davvero nel WinPE)."""
+    cand = []
+    for x in files:
+        x["excluded"] = x["name"] in esclusi
+        x["winpe_cand"] = x["name"].lower().endswith(WINPE_EXT) and not _inject_skip(x["name"])
+        x["winpe"] = False
+        if x["winpe_cand"] and not x["excluded"]:
+            cand.append(x)
+    cand.sort(key=lambda y: (_inject_rank(y["name"]), y["name"].lower()))
+    inject, visti = [], set()
+    for x in cand:
+        nome = x["name"].split("/")[-1].lower()
+        if nome in visti:
+            continue
+        visti.add(nome)
+        x["winpe"] = True
+        inject.append(x)
+    return inject
 
 
 def create_folder(name):
@@ -158,6 +270,7 @@ def set_excluded(name, rel, escluso):
 
 def set_flags(name, patch):
     folder_path(name)
+    apply_to = check_apply_to(patch["apply_to"]) if "apply_to" in patch else None
 
     def upd(d):
         f = d.setdefault("folders", {}).setdefault(name, {})
@@ -166,6 +279,8 @@ def set_flags(name, patch):
                 f[k] = bool(patch[k])
         if "note" in patch:
             f["note"] = str(patch["note"])[:200]
+        if apply_to is not None:
+            f["apply_to"] = apply_to
         return d
     update_json(C.DRIVERS_FILE, upd, default={})
     for f in list_folders():
@@ -177,6 +292,7 @@ def set_flags(name, patch):
 def set_flags_many(names, patch):
     """Applica lo stesso patch a piu' cartelle. Ritorna {"updated": [nomi], "errors": {nome: messaggio}}."""
     updated, errors, ok_names = [], {}, []
+    apply_to = check_apply_to(patch["apply_to"]) if "apply_to" in patch else None
     for raw in names:
         name = str(raw or "").strip()
         try:
@@ -199,6 +315,8 @@ def set_flags_many(names, patch):
                         f[k] = bool(patch[k])
                 if "note" in patch:
                     f["note"] = str(patch["note"])[:200]
+                if apply_to is not None:
+                    f["apply_to"] = apply_to
             return d
         update_json(C.DRIVERS_FILE, upd, default={})
         updated = ok_names
@@ -274,38 +392,77 @@ def _inject_skip(rel):
     return any(p in SKIP_DIRS for p in parts)
 
 
-def winpe_inject_files():
+def winpe_inject_files(iso=None):
     """[(cartella, nome_destinazione, percorso)] da iniettare nel WinPE (flag winpe_inject).
+
+    iso: voce di catalogo che si sta avviando (dict con "slug" e "group"); vengono usate solo le cartelle
+    abbinate a quella immagine (campo apply_to). Con iso None nessun filtro: anteprima generica, come prima.
 
     I file vengono presi anche dalle sottocartelle, perché i pacchetti driver sono spesso divisi per
     architettura o versione di Windows. wimboot li mette tutti nella stessa cartella del WinPE, quindi il
     nome viene appiattito: le sottocartelle a 32 bit si saltano e, a parità di nome, vince la radice o la
-    cartella a 64 bit (un .inf cerca i propri file per nome, senza percorso)."""
-    out, seen, total = [], {}, 0
+    cartella a 64 bit (un .inf cerca i propri file per nome, senza percorso). I file esclusi a mano
+    (set_excluded) restano fuori."""
+    out, seen, total = [], set(), 0
     for f in list_folders():
-        if not f["winpe_inject"]:
+        if not f["winpe_inject"] or not apply_matches(f.get("apply_to"), iso):
             continue
         base = os.path.join(C.DRIVERS_DIR, f["name"])
-        esclusi = set(f.get("excluded") or [])
-        candidati = [x for x in f["files"]
-                     if x["name"].lower().endswith(WINPE_EXT) and not _inject_skip(x["name"])
-                     and x["name"] not in esclusi]
-        candidati.sort(key=lambda x: (_inject_rank(x["name"]), x["name"].lower()))
-        for x in candidati:
+        scelti = sorted([x for x in f["files"] if x.get("winpe")],
+                        key=lambda x: (_inject_rank(x["name"]), x["name"].lower()))
+        for x in scelti:
             nome = x["name"].split("/")[-1]
             key = nome.lower()
-            if key in seen:
+            if key in seen:          # stesso nome gia' preso da un'altra cartella
                 continue
             if total + x["size"] > MAX_INJECT_BYTES:
                 continue
             total += x["size"]
-            seen[key] = True
+            seen.add(key)
             out.append((f["name"], nome, os.path.join(base, *x["name"].split("/"))))
     return out
 
 
-def setup_load_folders():
-    return [f["name"] for f in list_folders() if f["setup_load"] and f["valid_name"]]
+def setup_load_folders(iso=None):
+    """Cartelle da caricare con drvload prima del setup, per la voce di catalogo indicata (None = tutte)."""
+    return [f["name"] for f in list_folders()
+            if f["setup_load"] and f["valid_name"] and apply_matches(f.get("apply_to"), iso)]
+
+
+# Tipi di ISO che avviano un WinPE e quindi possono ricevere driver iniettati o caricati prima del setup.
+WINDOWS_TYPES = ("windows", "windows-legacy", "winpe-tool")
+
+
+def apply_choices():
+    """Scelte possibili per apply_to: {"groups": [nomi], "isos": [{slug, name, group, type}]}.
+
+    I gruppi sono quelli del menu di boot (Impostazioni) piu' quelli gia' usati dalle voci di catalogo;
+    le immagini sono quelle Windows / WinPE del catalogo, le uniche che ricevono driver."""
+    groups, isos = [], []
+    try:
+        from .. import settings as S
+        cfg = S.load()
+        for g in (cfg.get("menu", {}) or {}).get("groups") or []:
+            g = str(g).strip()
+            if g and g not in groups:
+                groups.append(g)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from . import catalog
+        ents, _ = catalog.list_isos()
+    except Exception:  # noqa: BLE001
+        ents = []
+    for e in ents:
+        g = str(e.get("group") or "").strip()
+        if g and g not in groups:
+            groups.append(g)
+        if (e.get("type") or "") in WINDOWS_TYPES:
+            isos.append({"slug": e.get("slug"), "name": e.get("name") or e.get("slug"),
+                         "group": g, "type": e.get("type"),
+                         "enabled": bool(e.get("enabled"))})
+    isos.sort(key=lambda x: ((x["group"] or "").lower(), (x["name"] or "").lower()))
+    return {"groups": groups, "isos": isos}
 
 
 def http_url(server_ip, folder, filename):

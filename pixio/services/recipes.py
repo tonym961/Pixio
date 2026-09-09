@@ -1,4 +1,8 @@
-"""Ricette di boot: caricamento di data/recipes.json e rendering dello script iPXE per una ISO."""
+"""Ricette di boot: caricamento di data/recipes.json e rendering dello script iPXE per una ISO.
+
+I driver iniettati nel WinPE (segnaposto {drivers}) dipendono dalla ISO: ogni voce riceve solo le cartelle
+driver abbinate alla sua immagine (campo apply_to, docs/API.md sezione 15). render() riceve gia' la voce di
+catalogo, quindi se chi chiama non passa i flag questi vengono calcolati per quella ISO, non per tutte."""
 import json
 import os
 import re
@@ -73,7 +77,10 @@ def render_lines(lines, ctx, files, flags):
         if line.strip() == "{drivers}":
             for folder, name, _path in (flags.get("driver_files") or []):
                 from . import drivers as _drv
-                out.append(f"initrd {_drv.http_url(ctx['server_ip'], folder, name)} {name}")
+                # l'URL deve puntare al file dov'è davvero (anche in una sottocartella); il secondo
+                # argomento è il nome che avrà dentro il WinPE, dove wimboot mette tutto insieme
+                rel = os.path.relpath(_path, os.path.join(C.DRIVERS_DIR, folder)).replace(os.sep, "/")
+                out.append(f"initrd {_drv.http_url(ctx['server_ip'], folder, rel)} {name}")
             continue
         m = re.match(r"^\?(!?)(has:)?([a-z_]+)\s+(.*)$", line)
         if m:
@@ -125,10 +132,22 @@ def _apply_answer(lines, iso, server_ip):
     return out
 
 
+def flags_for(iso):
+    """Flag di default per questa voce di catalogo: driver abbinati alla ISO, non tutti quelli presenti."""
+    try:
+        from . import winpe
+        return winpe.flags(None, iso)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def render(iso, server_ip, platform, flags=None):
     """Script iPXE (senza shebang) per la voce `iso` (dict del catalogo) sulla piattaforma 'efi'|'bios'.
-    Ritorna (lines, warnings). lines vuoto se la ricetta non supporta la piattaforma."""
-    flags = flags or {}
+    Ritorna (lines, warnings). lines vuoto se la ricetta non supporta la piattaforma.
+
+    flags: quelli di services/winpe.flags(cfg, iso). Se non passati vengono calcolati per questa ISO,
+    così il segnaposto {drivers} elenca solo i driver abbinati a questa immagine."""
+    flags = flags_for(iso) if flags is None else (flags or {})
     ctx = urls(server_ip, iso["slug"])
     files = (iso.get("detect") or {}).get("files") or {}
     custom = iso.get("custom_recipe")

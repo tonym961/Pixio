@@ -20,10 +20,11 @@ def _plat(p):
     return ""
 
 
-def _flags(cfg):
+def _flags(cfg, iso=None):
+    """Flag per il rendering della ricetta. iso: voce di catalogo, per dare a ogni immagine i suoi driver."""
     from . import winpe
     try:
-        return winpe.flags(cfg)
+        return winpe.flags(cfg, iso)
     except Exception:  # noqa
         return {"smb_export": bool(cfg["windows"].get("smb_export_enabled")), "inject": bool(cfg["windows"].get("smb_export_enabled")), "driver_files": []}
 
@@ -213,7 +214,7 @@ def entry_script(slug, platform, cfg=None):
     e = catalog.get(slug)
     if not e:
         return "#!ipxe\necho Voce non trovata\nsleep 3\nexit 1\n", ["voce non trovata"]
-    lines, warnings = recipes.render(e, ip, platform, _flags(cfg))
+    lines, warnings = recipes.render(e, ip, platform, _flags(cfg, e))
     if not lines:
         msg = "; ".join(warnings) or "non avviabile"
         return f"#!ipxe\necho Pixio: {_safe(e['name'])} - {_safe(msg)}\nsleep 5\nexit 1\n", warnings
