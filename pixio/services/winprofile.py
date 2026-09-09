@@ -10,9 +10,16 @@ indentato. I passaggi generati sono tre:
   windowsPE   lingua del setup, tastiera, partizionamento (GPT per UEFI, MBR per BIOS), immagine da
               installare, chiave di prodotto, EULA accettata, ed eventuali voci di registro LabConfig
               per aggirare i requisiti di Windows 11;
-  specialize  nome computer, fuso orario, aggiunta al dominio, percorso dei driver di Pixio, tweak di sistema;
+  specialize  nome computer, fuso orario, aggiunta al dominio, percorso dei driver di Pixio, tweak di
+              sistema (criteri HKLM e avvio dei servizi) e preferenze HKCU scritte una volta sola sul
+              profilo predefinito con un solo reg load/reg unload;
   oobeSystem  schermate OOBE saltate, utenti locali, accesso automatico, comandi al primo accesso
-              (rimozione delle app preinstallate e comandi del tecnico).
+              (rimozione delle app preinstallate, comandi delle ottimizzazioni, dism per le
+              funzionalità facoltative e comandi del tecnico).
+
+Le ottimizzazioni in stile nLite stanno in data/windows-tweaks.json (docs/API.md, sezione 10) e si
+scelgono per identificativo in settings["tweaks"]; il catalogo si carica una volta e si ricarica solo
+se il file cambia (tweaks_catalog(), tweak(id)).
 
 ATTENZIONE alle password: autounattend.xml le contiene in chiaro (PlainText true) e il file viene servito
 ai client via HTTP senza autenticazione. È il funzionamento previsto dal contratto; la GUI lo dice a chiare
@@ -21,6 +28,7 @@ lettere. Anche il bypass dei requisiti di Windows 11 non è una configurazione s
 import copy
 import os
 import re
+import threading
 import time
 import xml.dom.minidom as minidom
 import xml.etree.ElementTree as ET
@@ -46,6 +54,12 @@ OU_RE = re.compile(r"^[A-Za-z0-9 ,=._'()-]{3,255}$")
 USER_BAD_CHARS = set('"/\\[]:;|=,+*?<>@')
 EDITION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._()-]{0,63}$")
 APP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$")
+# identificativo di un'ottimizzazione del catalogo (slug stabile, finisce nei profili)
+TWEAK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# sigla di un servizio Windows (quella di sc.exe, non il nome visualizzato)
+SERVICE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# nome di una funzionalità facoltativa per DISM (es. NetFx3, SMB1Protocol)
+FEATURE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 MAX_NAME = 64
 MAX_NOTE = 200
@@ -53,6 +67,9 @@ MAX_PROFILES = 200
 MAX_APPS = 100
 MAX_COMMANDS = 40
 MAX_CMD_LEN = 500
+MAX_TWEAKS = 200
+MAX_SERVICES = 60
+MAX_FEATURES = 30
 MAX_PASSWORD = 127          # limite di Windows per le password locali
 MAX_USER = 20               # limite di Windows per il nome utente locale
 MAX_COMPUTER = 15           # limite NetBIOS
@@ -71,6 +88,19 @@ POWER_GUIDS = {
     "prestazioni": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
 }
 LOCAL_GROUPS = ("Users", "Administrators", "Power Users", "Remote Desktop Users", "Guests")
+
+# Avvio dei servizi come lo scrive il registro (chiave Start): 2 automatico, 3 manuale, 4 disabilitato.
+# 0 e 1 (driver di avvio) non si toccano da un file di risposta: renderebbero il sistema non avviabile.
+SERVICE_STARTS = (2, 3, 4)
+SERVICE_START_LABELS = {2: "in avvio automatico", 3: "in avvio manuale", 4: "disabilitato"}
+REG_TYPES = ("REG_DWORD", "REG_SZ", "REG_EXPAND_SZ", "REG_QWORD", "REG_MULTI_SZ", "REG_BINARY")
+IMPACTS = ("sicuro", "attenzione", "rischioso")
+
+# Profilo predefinito: si carica il suo NTUSER.DAT una volta sola, si scrivono tutte le preferenze
+# HKCU dei tweak e lo si scarica. Vale per tutti gli utenti creati dopo l'installazione.
+DEFAULT_HIVE = "HKU\\PixioDef"
+DEFAULT_NTUSER = "C:\\Users\\Default\\NTUSER.DAT"
+SERVICES_KEY = "SYSTEM\\CurrentControlSet\\Services"
 
 # Partizione riservata di sistema in BIOS/MBR: dimensione fissa, come fa il setup di Windows
 BIOS_SYSTEM_MB = 500
@@ -167,6 +197,10 @@ DEFAULTS = {
     "power_scheme": "bilanciato",
     "remove_apps": [],
     "run_commands": [],
+    "tweaks": [],                # id delle ottimizzazioni scelte in data/windows-tweaks.json
+    "services_extra": [],        # [{name, start}] servizi aggiunti a mano dal tecnico
+    "features_enable": [],       # funzionalità Windows da attivare con dism
+    "features_disable": [],      # funzionalità Windows da disattivare con dism
     "drivers_from_pixio": True,
 }
 
@@ -194,6 +228,90 @@ def disk_modes_list():
 
 def groups_list():
     return list(LOCAL_GROUPS)
+
+
+# ---------------------------------------------------------------- catalogo delle ottimizzazioni
+
+# Catalogo di data/windows-tweaks.json tenuto in memoria e ricaricato quando cambia il file
+# (stesso schema di services/recipes.py: confronto sul mtime, un lock perché i thread di gunicorn
+# possono chiedere il catalogo contemporaneamente).
+_tweaks_cache = {"mtime": None, "path": None, "data": None}
+_tweaks_lock = threading.Lock()
+
+
+def tweaks_file():
+    """Percorso del catalogo, letto da pixio.config a ogni chiamata (i test lo spostano).
+
+    Se pixio.config non ha WINTWEAKS_FILE si sta accanto ai modelli (data/windows-tweaks.json):
+    si parte da PRESETS_FILE, che è un percorso assoluto fisso, e non da CODE_DIR, che alcune
+    prove spostano su una cartella temporanea.
+    """
+    percorso = getattr(C, "WINTWEAKS_FILE", "")
+    if percorso:
+        return percorso
+    cartella = os.path.dirname(getattr(C, "PRESETS_FILE", "") or "")
+    if not cartella:
+        cartella = os.path.join(getattr(C, "CODE_DIR", "/opt/pixio"), "data")
+    return os.path.join(cartella, "windows-tweaks.json")
+
+
+def _load_tweaks():
+    """Catalogo normalizzato: {"categories": [...], "items": [...], "index": {id: voce}}.
+
+    Le voci malformate (senza id valido, con categoria inesistente o ripetute) vengono scartate:
+    un errore di battitura nel file non deve impedire alla GUI di aprirsi.
+    """
+    percorso = tweaks_file()
+    with _tweaks_lock:
+        try:
+            m = os.stat(percorso).st_mtime
+        except OSError:
+            m = None
+        if (_tweaks_cache["data"] is None or _tweaks_cache["mtime"] != m
+                or _tweaks_cache["path"] != percorso):
+            d = read_json(percorso, {})
+            if not isinstance(d, dict):
+                d = {}
+            categorie = [c for c in (d.get("categories") or [])
+                         if isinstance(c, dict) and TWEAK_ID_RE.match(str(c.get("id") or ""))]
+            note = {c["id"] for c in categorie}
+            voci, indice = [], {}
+            for t in (d.get("tweaks") or []):
+                if not isinstance(t, dict):
+                    continue
+                tid = str(t.get("id") or "")
+                if not TWEAK_ID_RE.match(tid) or tid in indice:
+                    continue
+                if t.get("category") not in note:
+                    continue
+                voci.append(t)
+                indice[tid] = t
+            _tweaks_cache.update({"mtime": m, "path": percorso,
+                                  "data": {"categories": categorie, "items": voci, "index": indice}})
+        return _tweaks_cache["data"]
+
+
+def tweaks_catalog():
+    """Catalogo per la GUI e per l'API: {categories: [...], items: [...]} (docs/API.md, sezione 10)."""
+    d = _load_tweaks()
+    return {"categories": copy.deepcopy(d["categories"]), "items": copy.deepcopy(d["items"])}
+
+
+def tweak(tweak_id):
+    """Una voce del catalogo (copia) oppure None se l'identificativo non esiste."""
+    v = _load_tweaks()["index"].get(str(tweak_id or ""))
+    return copy.deepcopy(v) if v else None
+
+
+def tweak_ids():
+    """Identificativi del catalogo nell'ordine in cui sono scritti nel file."""
+    return [t["id"] for t in _load_tweaks()["items"]]
+
+
+def _tweaks_scelti(st):
+    """Voci scelte nel profilo, sempre nell'ordine del catalogo (generazione stabile)."""
+    indice = _load_tweaks()["index"]
+    return [indice[t] for t in (st.get("tweaks") or []) if t in indice]
 
 
 # ---------------------------------------------------------------- utilità
@@ -499,6 +617,75 @@ def validate(settings):
         raise ValueError(f"Troppi comandi al primo accesso (max {MAX_COMMANDS})")
     out["run_commands"] = cmds
 
+    # --- ottimizzazioni scelte nel catalogo (data/windows-tweaks.json)
+    posizione = {t["id"]: i for i, t in enumerate(_load_tweaks()["items"])}
+    scelti = []
+    for v in _list(s.get("tweaks")):
+        tid = _txt(v)
+        if not tid:
+            continue
+        if tid not in posizione:
+            raise ValueError(f"Ottimizzazione sconosciuta: {tid}. Usa uno degli identificativi del "
+                             "catalogo delle ottimizzazioni (data/windows-tweaks.json)")
+        if tid not in scelti:
+            scelti.append(tid)
+    if len(scelti) > MAX_TWEAKS:
+        raise ValueError(f"Troppe ottimizzazioni selezionate (max {MAX_TWEAKS})")
+    # ordine del catalogo, non quello di selezione: l'XML generato deve essere sempre lo stesso
+    out["tweaks"] = sorted(scelti, key=lambda x: posizione[x])
+
+    # --- servizi aggiunti a mano (oltre a quelli portati dalle ottimizzazioni)
+    servizi, visti = [], set()
+    for v in _list(s.get("services_extra")):
+        if isinstance(v, dict):
+            nome, avvio = _txt(v.get("name")), v.get("start", 4)
+        else:
+            nome, avvio = _txt(v), 4
+            if ":" in nome:                     # forma comoda "DiagTrack:4" da una casella di testo
+                nome, _, avvio = nome.partition(":")
+                nome, avvio = nome.strip(), avvio.strip()
+        if not nome:
+            continue
+        if not SERVICE_RE.match(nome):
+            raise ValueError(f"Nome del servizio non valido: {nome}. Serve la sigla del servizio "
+                             "(es. DiagTrack, WSearch), non il nome visualizzato")
+        avvio = _int(avvio, 4)
+        if avvio not in SERVICE_STARTS:
+            raise ValueError(f"Avvio del servizio {nome} non valido: 2 = automatico, 3 = manuale, "
+                             "4 = disabilitato")
+        if nome.lower() in visti:
+            continue
+        visti.add(nome.lower())
+        servizi.append({"name": nome, "start": avvio})
+    if len(servizi) > MAX_SERVICES:
+        raise ValueError(f"Troppi servizi (max {MAX_SERVICES})")
+    out["services_extra"] = servizi
+
+    # --- funzionalità facoltative di Windows (dism)
+    def _funz(chiave, campo):
+        nomi = []
+        for v in _list(s.get(chiave)):
+            f = _txt(v)
+            if not f:
+                continue
+            if not FEATURE_RE.match(f):
+                raise ValueError(f"{campo}: nome non valido: {f}. Serve la sigla usata da dism "
+                                 "(es. NetFx3, SMB1Protocol, Microsoft-Hyper-V-All)")
+            if f.lower() not in [x.lower() for x in nomi]:
+                nomi.append(f)
+        if len(nomi) > MAX_FEATURES:
+            raise ValueError(f"{campo}: troppe funzionalità (max {MAX_FEATURES})")
+        return nomi
+
+    fe = _funz("features_enable", "Funzionalità da attivare")
+    fd = _funz("features_disable", "Funzionalità da disattivare")
+    doppie = {x.lower() for x in fe} & {x.lower() for x in fd}
+    if doppie:
+        raise ValueError("La stessa funzionalità è indicata sia da attivare sia da disattivare: "
+                         + ", ".join(sorted(doppie)))
+    out["features_enable"] = fe
+    out["features_disable"] = fd
+
     out["drivers_from_pixio"] = _bool(s.get("drivers_from_pixio"), True)
     return out
 
@@ -569,6 +756,155 @@ def _first_logon(parent, ordine, comando, descrizione):
     _el(c, "Description", descrizione)
     _el(c, "RequiresUserInput", "false")
     return c
+
+
+
+def _reg_type(v):
+    t = _txt(v).upper() or "REG_DWORD"
+    return t if t in REG_TYPES else "REG_SZ"
+
+
+def _cmd_safe(v):
+    """Testo da mettere dentro un comando cmd fra virgolette: le virgolette doppie chiuderebbero
+    l'argomento a metà, quindi diventano apici. I valori arrivano dal catalogo, che non ne contiene."""
+    return _txt(v).replace('"', "'")
+
+
+def _reg_add(radice, percorso, nome, tipo, dato):
+    """Comando `reg add` completo. Il percorso viene sempre virgolettato (contiene spazi, es.
+    "Control Panel\\Desktop"), il dato pure (può essere vuoto o contenere spazi e &)."""
+    chiave = _cmd_safe(radice).rstrip("\\") + "\\" + _cmd_safe(percorso).strip("\\")
+    return ('cmd /c reg add "%s" /v "%s" /t %s /d "%s" /f'
+            % (chiave, _cmd_safe(nome), _reg_type(tipo), _cmd_safe(dato)))
+
+
+class _Emessi:
+    """Memoria di ciò che è già stato generato, per non ripetere due volte lo stesso comando.
+
+    Serve a tenere insieme i campi booleani storici del profilo (hide_files_ext, disable_hibernate,
+    power_scheme, disable_defender_prompt) e le ottimizzazioni del catalogo che fanno la stessa cosa:
+    vince chi arriva prima, gli altri vengono saltati.
+    """
+
+    def __init__(self):
+        self.comandi = set()
+        self.valori = set()
+
+    def comando(self, cmd):
+        """True se il comando non era ancora stato generato (e da questo momento lo è)."""
+        k = re.sub(r"\s+", " ", str(cmd).strip().lower())
+        if k.startswith("cmd /c "):
+            k = k[7:]
+        if not k or k in self.comandi:
+            return False
+        self.comandi.add(k)
+        return True
+
+    def valore(self, scope, percorso, nome):
+        """True se quella voce di registro non era ancora stata scritta."""
+        k = (str(scope).upper(), str(percorso).strip("\\").lower(), str(nome).lower())
+        if k in self.valori:
+            return False
+        self.valori.add(k)
+        return True
+
+
+def _servizi_da_impostare(st):
+    """(nome, avvio, descrizione) dei servizi: prima quelli delle ottimizzazioni (ordine del
+    catalogo), poi quelli aggiunti a mano. Un servizio nominato più volte si imposta una volta sola."""
+    fuori, visti = [], set()
+
+    def agg(nome, avvio, descr):
+        nome = _txt(nome)
+        avvio = _int(avvio, 4)
+        if not nome or not SERVICE_RE.match(nome) or avvio not in SERVICE_STARTS:
+            return
+        if nome.lower() in visti:
+            return
+        visti.add(nome.lower())
+        fuori.append((nome, avvio, descr % SERVICE_START_LABELS[avvio]))
+
+    for t in _tweaks_scelti(st):
+        for sv in (t.get("services") or []):
+            if isinstance(sv, dict):
+                agg(sv.get("name"), sv.get("start", 4),
+                    t.get("name", t["id"]) + ": servizio " + _txt(sv.get("name")) + " %s")
+    for sv in (st.get("services_extra") or []):
+        if isinstance(sv, dict):
+            agg(sv.get("name"), sv.get("start", 4),
+                "Servizio " + _txt(sv.get("name")) + " %s")
+    return fuori
+
+
+def _funzionalita_da_applicare(st):
+    """(nome, True=attiva/False=disattiva) delle funzionalità Windows: prima le ottimizzazioni,
+    poi le voci del profilo. Se un nome compare in entrambi i sensi vince la prima richiesta."""
+    fuori, visti = [], set()
+
+    def agg(nome, attiva):
+        nome = _txt(nome)
+        if not nome or not FEATURE_RE.match(nome) or nome.lower() in visti:
+            return
+        visti.add(nome.lower())
+        fuori.append((nome, attiva))
+
+    for t in _tweaks_scelti(st):
+        for f in (t.get("features_enable") or []):
+            agg(f, True)
+        for f in (t.get("features_disable") or []):
+            agg(f, False)
+    for f in (st.get("features_enable") or []):
+        agg(f, True)
+    for f in (st.get("features_disable") or []):
+        agg(f, False)
+    return fuori
+
+
+def _comandi_tweak_specialize(st, em):
+    """(comando, descrizione) generati dalle ottimizzazioni nel passaggio specialize:
+    criteri HKLM, avvio dei servizi e preferenze HKCU scritte sul profilo predefinito
+    (un solo reg load / reg unload per tutte le scritture, come da contratto)."""
+    righe = []
+
+    def agg(cmd, descr):
+        if em.comando(cmd):
+            righe.append((cmd, descr))
+
+    scelti = _tweaks_scelti(st)
+
+    for t in scelti:
+        for r in (t.get("reg") or []):
+            if not isinstance(r, dict) or _txt(r.get("scope")).upper() != "HKLM":
+                continue
+            percorso, nome = _txt(r.get("path")), _txt(r.get("name"))
+            if not percorso or not nome or not em.valore("HKLM", percorso, nome):
+                continue
+            agg(_reg_add("HKLM", percorso, nome, r.get("type"), r.get("data")),
+                "%s: %s" % (t.get("name", t["id"]), nome))
+
+    for nome, avvio, descr in _servizi_da_impostare(st):
+        chiave = SERVICES_KEY + "\\" + nome
+        if not em.valore("HKLM", chiave, "Start"):
+            continue
+        agg(_reg_add("HKLM", chiave, "Start", "REG_DWORD", avvio), descr)
+
+    hkcu = []
+    for t in scelti:
+        for r in (t.get("reg") or []):
+            if not isinstance(r, dict) or _txt(r.get("scope")).upper() != "HKCU":
+                continue
+            percorso, nome = _txt(r.get("path")), _txt(r.get("name"))
+            if not percorso or not nome or not em.valore("HKCU", percorso, nome):
+                continue
+            hkcu.append((t, r, percorso, nome))
+    if hkcu:
+        agg('cmd /c reg load "%s" "%s"' % (DEFAULT_HIVE, DEFAULT_NTUSER),
+            "Carica il profilo utente predefinito (vale per tutti gli utenti creati dopo)")
+        for t, r, percorso, nome in hkcu:
+            agg(_reg_add(DEFAULT_HIVE, percorso, nome, r.get("type"), r.get("data")),
+                "%s: %s" % (t.get("name", t["id"]), nome))
+        agg('cmd /c reg unload "%s"' % DEFAULT_HIVE, "Scarica il profilo utente predefinito")
+    return righe
 
 
 def _partizioni_uefi(disco, st):
@@ -743,8 +1079,9 @@ def _driver_path(server_ip, cfg):
             "domain": ip, "attivo": attivo}
 
 
-def _pass_specialize(root, st, arch, server_ip, cfg):
+def _pass_specialize(root, st, arch, server_ip, cfg, em=None):
     """specialize: nome computer, fuso orario, dominio, driver, tweak di sistema."""
+    em = em or _Emessi()
     sp = _pass(root, "specialize")
 
     shell = _component(sp, "Microsoft-Windows-Shell-Setup", arch)
@@ -788,30 +1125,39 @@ def _pass_specialize(root, st, arch, server_ip, cfg):
         _el(cred, "Username", d["user"])
         _el(cred, "Password", d["password"])
 
-    # Tweak di sistema: comandi eseguiti una volta sola, con i diritti di sistema
+    # Tweak di sistema: comandi eseguiti una volta sola, con i diritti di sistema.
+    # Prima i campi storici del profilo, poi le ottimizzazioni del catalogo: se una ottimizzazione
+    # rifà la stessa cosa di un campo booleano il comando viene generato una volta sola.
     tweaks = []
+
+    def agg(cmd, descr):
+        if em.comando(cmd):
+            tweaks.append((cmd, descr))
+
     if st["disable_hibernate"]:
-        tweaks.append(("cmd /c powercfg /hibernate off",
-                       "Disattiva l'ibernazione e libera hiberfil.sys"))
-    tweaks.append((f"cmd /c powercfg /setactive {POWER_GUIDS[st['power_scheme']]}",
-                   f"Schema di alimentazione: {st['power_scheme']}"))
+        agg("cmd /c powercfg /hibernate off", "Disattiva l'ibernazione e libera hiberfil.sys")
+    agg("cmd /c powercfg /setactive " + POWER_GUIDS[st["power_scheme"]],
+        "Schema di alimentazione: " + st["power_scheme"])
     if st["disable_defender_prompt"]:
-        tweaks.append(('cmd /c reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet" '
-                       '/v SpynetReporting /t REG_DWORD /d 0 /f',
-                       "Niente invio automatico di dati a Microsoft Defender"))
-        tweaks.append(('cmd /c reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet" '
-                       '/v SubmitSamplesConsent /t REG_DWORD /d 2 /f',
-                       "Non chiede l'invio di campioni sospetti (l'antivirus resta attivo)"))
+        spynet = "SOFTWARE\\Policies\\Microsoft\\Windows Defender\\Spynet"
+        for nome, dato, descr in (
+                ("SpynetReporting", 0, "Niente invio automatico di dati a Microsoft Defender"),
+                ("SubmitSamplesConsent", 2,
+                 "Non chiede l'invio di campioni sospetti (l'antivirus resta attivo)")):
+            if em.valore("HKLM", spynet, nome):
+                agg(_reg_add("HKLM", spynet, nome, "REG_DWORD", dato), descr)
+    tweaks.extend(_comandi_tweak_specialize(st, em))
     if tweaks:
         dep = _component(sp, "Microsoft-Windows-Deployment", arch)
         rs = _el(dep, "RunSynchronous")
         for i, (cmd, descr) in enumerate(tweaks, 1):
-            _sync_command(rs, i, cmd, descr)
+            _sync_command(rs, i, cmd, descr[:250])
     return sp
 
 
-def _pass_oobe(root, st, arch):
+def _pass_oobe(root, st, arch, em=None):
     """oobeSystem: schermate saltate, utenti locali, accesso automatico, comandi al primo accesso."""
+    em = em or _Emessi()
     sp = _pass(root, "oobeSystem")
 
     intl = _component(sp, "Microsoft-Windows-International-Core", arch)
@@ -873,20 +1219,41 @@ def _pass_oobe(root, st, arch):
         _el(al, "LogonCount", st["autologon_count"])
         _el(al, "Username", admin)
 
+    # Comandi al primo accesso: preferenze dell'utente, rimozione delle app, comandi delle
+    # ottimizzazioni, funzionalità facoltative (dism) e infine i comandi scritti dal tecnico.
     comandi = []
-    comandi.append((f'cmd /c reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer'
-                    f'\\Advanced" /v HideFileExt /t REG_DWORD /d {1 if st["hide_files_ext"] else 0} /f',
-                    "Estensioni dei file " + ("nascoste" if st["hide_files_ext"] else "visibili")))
+
+    def agg(cmd, descr):
+        if em.comando(cmd):
+            comandi.append((cmd, descr))
+
+    avanzate = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"
+    # se un'ottimizzazione ha già scritto HideFileExt sul profilo predefinito non lo si rifà
+    if em.valore("HKCU", avanzate, "HideFileExt"):
+        agg(_reg_add("HKCU", avanzate, "HideFileExt", "REG_DWORD",
+                     1 if st["hide_files_ext"] else 0),
+            "Estensioni dei file " + ("nascoste" if st["hide_files_ext"] else "visibili"))
     for app in st["remove_apps"]:
-        comandi.append((
-            "powershell -NoProfile -ExecutionPolicy Bypass -Command "
+        agg("powershell -NoProfile -ExecutionPolicy Bypass -Command "
             f"\"Get-AppxPackage -AllUsers -Name '{app}' | Remove-AppxPackage -ErrorAction "
             "SilentlyContinue; Get-AppxProvisionedPackage -Online | "
             f"Where-Object DisplayName -eq '{app}' | Remove-AppxProvisionedPackage -Online "
             "-ErrorAction SilentlyContinue\"",
-            "Rimuove l'app " + app))
+            "Rimuove l'app " + app)
+    for t in _tweaks_scelti(st):
+        for c in (t.get("commands") or []):
+            c = _txt(c)
+            if c:
+                agg(c, t.get("name", t["id"]))
+    for nome, attiva in _funzionalita_da_applicare(st):
+        if attiva:
+            agg("cmd /c dism /online /enable-feature /featurename:%s /all /norestart /quiet" % nome,
+                "Attiva la funzionalità " + nome)
+        else:
+            agg("cmd /c dism /online /disable-feature /featurename:%s /norestart /quiet" % nome,
+                "Disattiva la funzionalità " + nome)
     for c in st["run_commands"]:
-        comandi.append((c, "Comando del profilo"))
+        agg(c, "Comando del profilo")
     if comandi:
         flc = _el(shell, "FirstLogonCommands")
         for i, (cmd, descr) in enumerate(comandi, 1):
@@ -921,9 +1288,12 @@ def render_autounattend(profile, server_ip="", cfg=None):
     root = ET.Element(_q("unattend"))
     root.append(ET.Comment(f" autounattend.xml generato da Pixio dal profilo \"{nome}\" il {_now()}. "
                            "Le password sono in chiaro: chiunque legga questo file le vede. "))
+    # una sola memoria dei comandi generati per tutti i passaggi: così i campi booleani storici
+    # e le ottimizzazioni equivalenti non producono due volte la stessa riga
+    em = _Emessi()
     _pass_windows_pe(root, st, arch)
-    _pass_specialize(root, st, arch, server_ip, cfg)
-    _pass_oobe(root, st, arch)
+    _pass_specialize(root, st, arch, server_ip, cfg, em)
+    _pass_oobe(root, st, arch, em)
 
     grezzo = ET.tostring(root, encoding="utf-8")
     # minidom serve sia a verificare l'XML (parseString solleva se è malformato) sia a indentarlo

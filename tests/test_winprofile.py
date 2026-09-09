@@ -3,6 +3,7 @@
 Esecuzione: cd /opt/pixio && python3 -m unittest tests.test_winprofile
 Non serve l'helper privilegiato né il servizio delle risposte reale: entrambi vengono sostituiti da finti.
 """
+import json
 import os
 import shutil
 import sys
@@ -99,6 +100,19 @@ def uno(dom, tag, dentro=None):
     base = dentro if dentro is not None else dom
     el = base.getElementsByTagName(tag)
     return el[0] if el else None
+
+
+def preset_windows_ids():
+    """Identificativi dei modelli windows di data/profile-presets.json (vuoto se il file manca)."""
+    percorso = getattr(C, "PRESETS_FILE",
+                       os.path.join(getattr(C, "CODE_DIR", "/opt/pixio"), "data",
+                                    "profile-presets.json"))
+    try:
+        with open(percorso, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [p["id"] for p in (d.get("presets") or []) if p.get("kind") == "windows"]
 
 
 def passaggio(dom, nome):
@@ -537,6 +551,49 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(any(a["id"] == "it-IT" for a in d["languages"]))
         self.assertTrue(all("id" in a and "name" in a for a in d["apps"]))
 
+    def test_catalogo_nell_elenco(self):
+        """GET /api/winprofiles espone il catalogo delle ottimizzazioni (docs/API.md, sezione 10)."""
+        d = self.client.get("/api/winprofiles").get_json()
+        self.assertIn("tweaks", d)
+        cat = d["tweaks"]
+        self.assertIn("categories", cat)
+        self.assertIn("items", cat)
+        if not cat["items"]:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        note = {c["id"] for c in cat["categories"]}
+        for t in cat["items"]:
+            self.assertIn(t["category"], note)
+            self.assertIn(t["impact"], d["impacts"])
+        self.assertEqual([s["id"] for s in d["service_starts"]], [2, 3, 4])
+        # i modelli arrivano con le ottimizzazioni già scelte
+        modelli = [p for p in d["presets"] if p["kind"] == "windows"]
+        self.assertTrue(modelli)
+        self.assertTrue(any(p["settings"].get("tweaks") for p in modelli))
+
+    def test_profilo_con_tweak_via_api(self):
+        ids = [t["id"] for t in WP.tweaks_catalog()["items"]][:5]
+        if not ids:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        r = self.client.post("/api/winprofiles", headers=self.h, json={
+            "name": "Con tweak", "settings": {"admin_user": "tec", "admin_password": "Pw1234567",
+                                              "tweaks": ids,
+                                              "services_extra": [{"name": "Fax", "start": 4}],
+                                              "features_disable": ["SMB1Protocol"]}})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        pid = r.get_json()["id"]
+        self.assertEqual(r.get_json()["settings"]["tweaks"], sorted(
+            ids, key=lambda x: [t["id"] for t in WP.tweaks_catalog()["items"]].index(x)))
+        xml = self.client.post(f"/api/winprofiles/{pid}/preview", headers=self.h,
+                               json={}).get_json()["xml"]
+        minidom.parseString(xml)
+        self.assertIn("Services\\Fax", xml)
+        self.assertIn("/featurename:SMB1Protocol", xml)
+        # id inesistente: 400 con messaggio in italiano
+        r = self.client.put(f"/api/winprofiles/{pid}", headers=self.h,
+                            json={"settings": {"tweaks": ["non-esiste-affatto"]}})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("ottimizzazione sconosciuta", r.get_json()["error"].lower())
+
     def test_crud_via_api(self):
         r = self.client.post("/api/winprofiles", headers=self.h, json={
             "name": "Api", "settings": {"admin_user": "tec", "admin_password": "Pw1234567"}})
@@ -663,6 +720,378 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(percorso), percorso)
         with open(percorso, encoding="utf-8") as f:
             minidom.parseString(f.read())
+
+
+# ---------------------------------------------------------------- catalogo delle ottimizzazioni
+
+CAMPI_TWEAK = ("id", "category", "name", "description", "impact", "editions")
+
+
+def catalogo():
+    return WP.tweaks_catalog()
+
+
+def voci_con(chiave):
+    """Voci del catalogo che contengono quella chiave (reg, services, commands, features_*)."""
+    return [t for t in catalogo()["items"] if t.get(chiave)]
+
+
+def voci_reg(scope):
+    return [t for t in catalogo()["items"]
+            if any(r.get("scope") == scope for r in (t.get("reg") or []))]
+
+
+class CatalogoTest(unittest.TestCase):
+    def setUp(self):
+        self.cat = catalogo()
+        if not self.cat["items"]:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+
+    def test_dimensione_minima(self):
+        """Il contratto chiede un catalogo vero, non tre voci di esempio."""
+        self.assertGreaterEqual(len(self.cat["items"]), 55)
+        self.assertGreaterEqual(len(self.cat["categories"]), 8)
+
+    def test_id_univoci(self):
+        ids = [t["id"] for t in self.cat["items"]]
+        ripetuti = sorted({i for i in ids if ids.count(i) > 1})
+        self.assertEqual(ripetuti, [], "identificativi ripetuti: %s" % ripetuti)
+        for i in ids:
+            self.assertRegex(i, r"^[a-z0-9][a-z0-9_-]{0,63}$", "id non valido: " + i)
+
+    def test_categorie_esistenti(self):
+        note = {c["id"] for c in self.cat["categories"]}
+        for c in self.cat["categories"]:
+            self.assertTrue(c.get("name"), "categoria senza nome: " + c["id"])
+        for t in self.cat["items"]:
+            self.assertIn(t["category"], note, "categoria sconosciuta in " + t["id"])
+
+    def test_campi_obbligatori(self):
+        for t in self.cat["items"]:
+            for campo in CAMPI_TWEAK:
+                self.assertTrue(t.get(campo), f"{t['id']}: manca il campo {campo}")
+            self.assertIn(t["impact"], WP.IMPACTS, t["id"])
+            self.assertIsInstance(t["editions"], list)
+            self.assertTrue(set(t["editions"]) <= {"10", "11"}, t["id"])
+            # una voce deve fare qualcosa
+            self.assertTrue(any(t.get(k) for k in ("reg", "services", "commands",
+                                                   "features_enable", "features_disable")),
+                            t["id"] + ": non applica niente")
+            # descrizione da tecnico: una frase vera, non due parole
+            self.assertGreater(len(t["description"]), 40, t["id"] + ": descrizione troppo corta")
+
+    def test_percorsi_di_registro(self):
+        for t in self.cat["items"]:
+            for r in (t.get("reg") or []):
+                self.assertIn(r.get("scope"), ("HKLM", "HKCU"), t["id"])
+                p = r.get("path") or ""
+                self.assertTrue(p, t["id"] + ": percorso vuoto")
+                self.assertFalse(p.upper().startswith("HKEY_"),
+                                 f"{t['id']}: il percorso non deve contenere la radice: {p}")
+                self.assertFalse(p.startswith("\\"),
+                                 f"{t['id']}: percorso con barra iniziale: {p}")
+                self.assertNotIn("/", p, t["id"] + ": separatore sbagliato in " + p)
+                self.assertTrue(r.get("name"), t["id"] + ": valore senza nome")
+                self.assertIn(r.get("type"), WP.REG_TYPES, t["id"])
+                self.assertIsInstance(r.get("data"), str, t["id"] + ": dato non testuale")
+                self.assertNotIn('"', p + str(r.get("name")) + str(r.get("data")),
+                                 t["id"] + ": virgolette dentro una voce di registro")
+
+    def test_servizi_e_funzionalita(self):
+        for t in self.cat["items"]:
+            for sv in (t.get("services") or []):
+                self.assertRegex(sv.get("name", ""), r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", t["id"])
+                self.assertIn(sv.get("start"), WP.SERVICE_STARTS,
+                              f"{t['id']}: avvio non valido per {sv.get('name')}")
+            for chiave in ("features_enable", "features_disable"):
+                for f in (t.get(chiave) or []):
+                    self.assertRegex(f, r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$", t["id"])
+            for c in (t.get("commands") or []):
+                self.assertTrue(c.strip(), t["id"] + ": comando vuoto")
+                self.assertLessEqual(len(c), WP.MAX_CMD_LEN, t["id"] + ": comando troppo lungo")
+
+    def test_accesso_singolo(self):
+        primo = self.cat["items"][0]["id"]
+        self.assertEqual(WP.tweak(primo)["id"], primo)
+        self.assertIsNone(WP.tweak("questo-non-esiste"))
+        self.assertIsNone(WP.tweak(""))
+        # tweak() restituisce una copia: modificarla non sporca la cache
+        v = WP.tweak(primo)
+        v["name"] = "toccato"
+        self.assertNotEqual(WP.tweak(primo)["name"], "toccato")
+
+    def test_cache_sul_mtime(self):
+        """Il catalogo si ricarica quando il file cambia (come services/recipes.py)."""
+        finto = os.path.join(TMP, "tweaks-finti.json")
+        with open(finto, "w", encoding="utf-8") as f:
+            json.dump({"categories": [{"id": "prova", "name": "Prova"}],
+                       "tweaks": [{"id": "uno", "category": "prova", "name": "Uno",
+                                   "description": "x", "impact": "sicuro", "editions": ["11"],
+                                   "reg": [{"scope": "HKLM", "path": "SOFTWARE\\X",
+                                            "name": "A", "type": "REG_DWORD", "data": "1"}]}]}, f)
+        vecchio = getattr(C, "WINTWEAKS_FILE", None)
+        C.WINTWEAKS_FILE = finto
+        try:
+            self.assertEqual(WP.tweak_ids(), ["uno"])
+            with open(finto, "w", encoding="utf-8") as f:
+                json.dump({"categories": [{"id": "prova", "name": "Prova"}],
+                           "tweaks": [{"id": "uno", "category": "prova", "name": "Uno",
+                                       "description": "x", "impact": "sicuro", "editions": ["11"]},
+                                      {"id": "due", "category": "prova", "name": "Due",
+                                       "description": "x", "impact": "sicuro", "editions": ["11"]},
+                                      {"id": "tre", "category": "sconosciuta", "name": "Tre",
+                                       "description": "x", "impact": "sicuro", "editions": ["11"]}]}, f)
+            os.utime(finto, (0, 0))          # mtime diverso: deve rileggere
+            # la voce con categoria inesistente viene scartata, non fa saltare tutto il file
+            self.assertEqual(WP.tweak_ids(), ["uno", "due"])
+        finally:
+            if vecchio is None:
+                del C.WINTWEAKS_FILE
+            else:
+                C.WINTWEAKS_FILE = vecchio
+        self.assertGreaterEqual(len(WP.tweak_ids()), 55)
+
+
+class ValidazioneTweakTest(unittest.TestCase):
+    def setUp(self):
+        if not catalogo()["items"]:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+        self.primo = catalogo()["items"][0]["id"]
+
+    def test_predefiniti(self):
+        d = WP.defaults()
+        for campo in ("tweaks", "services_extra", "features_enable", "features_disable"):
+            self.assertEqual(d[campo], [], campo)
+
+    def test_id_inesistente_rifiutato(self):
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(tweaks=[self.primo, "ottimizzazione-inventata"]))
+        self.assertIn("ottimizzazione sconosciuta", str(ctx.exception).lower())
+        self.assertIn("ottimizzazione-inventata", str(ctx.exception))
+
+    def test_ordine_stabile_e_senza_doppioni(self):
+        ids = [t["id"] for t in catalogo()["items"]]
+        scelti = [ids[5], ids[1], ids[3], ids[1]]
+        v = WP.validate(base_settings(tweaks=scelti))
+        self.assertEqual(v["tweaks"], [ids[1], ids[3], ids[5]])
+
+    def test_servizi_extra(self):
+        v = WP.validate(base_settings(services_extra=[{"name": "WSearch", "start": 4},
+                                                      "Spooler:3",
+                                                      {"name": "wsearch", "start": 2}]))
+        self.assertEqual(v["services_extra"], [{"name": "WSearch", "start": 4},
+                                               {"name": "Spooler", "start": 3}])
+        for cattivo, atteso in (([{"name": "Nome con spazi", "start": 4}], "nome del servizio"),
+                                ([{"name": "WSearch", "start": 1}], "avvio del servizio"),
+                                ([{"name": "WSearch", "start": 0}], "avvio del servizio")):
+            with self.assertRaises(ValueError) as ctx:
+                WP.validate(base_settings(services_extra=cattivo))
+            self.assertIn(atteso, str(ctx.exception).lower())
+
+    def test_funzionalita(self):
+        v = WP.validate(base_settings(features_enable=["NetFx3", "netfx3"],
+                                      features_disable=["SMB1Protocol"]))
+        self.assertEqual(v["features_enable"], ["NetFx3"])
+        self.assertEqual(v["features_disable"], ["SMB1Protocol"])
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(features_enable=["Net Fx 3"]))
+        self.assertIn("nome non valido", str(ctx.exception).lower())
+        with self.assertRaises(ValueError) as ctx:
+            WP.validate(base_settings(features_enable=["NetFx3"], features_disable=["netfx3"]))
+        self.assertIn("sia da attivare sia da disattivare", str(ctx.exception).lower())
+
+
+class GenerazioneTweakTest(unittest.TestCase):
+    def setUp(self):
+        if not catalogo()["items"]:
+            self.skipTest("catalogo delle ottimizzazioni non installato")
+
+    def comandi(self, dom, passo):
+        tag = "RunSynchronousCommand" if passo == "specialize" else "SynchronousCommand"
+        campo = "Path" if passo == "specialize" else "CommandLine"
+        sp = passaggio(dom, passo)
+        if sp is None:
+            return []
+        return [testo(uno(dom, campo, c)) for c in sp.getElementsByTagName(tag)]
+
+    def ordini(self, dom, passo):
+        tag = "RunSynchronousCommand" if passo == "specialize" else "SynchronousCommand"
+        sp = passaggio(dom, passo)
+        if sp is None:
+            return []
+        return [int(testo(uno(dom, "Order", c))) for c in sp.getElementsByTagName(tag)]
+
+    def test_tweak_hklm_in_specialize(self):
+        t = voci_reg("HKLM")[0]
+        r = [x for x in t["reg"] if x["scope"] == "HKLM"][0]
+        xml, dom = rendi(tweaks=[t["id"]])
+        righe = self.comandi(dom, "specialize")
+        atteso = 'reg add "HKLM\\%s" /v "%s" /t %s /d "%s" /f' % (
+            r["path"], r["name"], r["type"], r["data"])
+        self.assertTrue(any(atteso in c for c in righe),
+                        "manca il comando di %s:\n%s" % (t["id"], "\n".join(righe)))
+        # e non finisce nei comandi al primo accesso
+        self.assertFalse(any(r["name"] in c and "HKLM" in c
+                             for c in self.comandi(dom, "oobeSystem")))
+
+    def test_tweak_hkcu_un_solo_carico(self):
+        """Anche con tutte le ottimizzazioni HKCU del catalogo il profilo predefinito si carica
+        e si scarica una volta sola, con tutte le scritture in mezzo."""
+        scelti = [t["id"] for t in voci_reg("HKCU")]
+        self.assertGreaterEqual(len(scelti), 3, "servono più voci HKCU per una prova seria")
+        xml, dom = rendi(tweaks=scelti)
+        righe = self.comandi(dom, "specialize")
+        carichi = [i for i, c in enumerate(righe) if "reg load" in c]
+        scarichi = [i for i, c in enumerate(righe) if "reg unload" in c]
+        self.assertEqual(len(carichi), 1, righe)
+        self.assertEqual(len(scarichi), 1, righe)
+        self.assertLess(carichi[0], scarichi[0])
+        self.assertIn(WP.DEFAULT_NTUSER, righe[carichi[0]])
+        self.assertIn(WP.DEFAULT_HIVE, righe[carichi[0]])
+        self.assertIn(WP.DEFAULT_HIVE, righe[scarichi[0]])
+        scritture = [c for c in righe[carichi[0] + 1:scarichi[0]] if "reg add" in c]
+        self.assertGreater(len(scritture), 5)
+        for c in scritture:
+            self.assertIn('"' + WP.DEFAULT_HIVE + "\\", c)
+        # niente HKCU letterale: si scrive sul profilo predefinito montato
+        self.assertFalse(any(c.startswith('cmd /c reg add "HKCU') for c in righe))
+        self.assertEqual(self.ordini(dom, "specialize"),
+                         list(range(1, len(righe) + 1)))
+
+    def test_tweak_servizio(self):
+        t = [x for x in voci_con("services")][0]
+        sv = t["services"][0]
+        xml, dom = rendi(tweaks=[t["id"]])
+        atteso = ('reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\%s" /v "Start" '
+                  '/t REG_DWORD /d "%d" /f' % (sv["name"], sv["start"]))
+        self.assertTrue(any(atteso in c for c in self.comandi(dom, "specialize")))
+
+    def test_servizio_aggiunto_a_mano(self):
+        xml, dom = rendi(services_extra=[{"name": "RemoteRegistry", "start": 3}])
+        self.assertTrue(any('Services\\RemoteRegistry" /v "Start" /t REG_DWORD /d "3"' in c
+                            for c in self.comandi(dom, "specialize")))
+
+    def test_funzionalita_dism(self):
+        xml, dom = rendi(features_enable=["NetFx3"], features_disable=["SMB1Protocol"])
+        righe = self.comandi(dom, "oobeSystem")
+        self.assertTrue(any("dism /online /enable-feature /featurename:NetFx3" in c for c in righe),
+                        righe)
+        self.assertTrue(any("dism /online /disable-feature /featurename:SMB1Protocol" in c
+                            for c in righe), righe)
+        self.assertTrue(all("/norestart" in c for c in righe if "dism" in c))
+        self.assertEqual(self.ordini(dom, "oobeSystem"), list(range(1, len(righe) + 1)))
+
+    def test_funzionalita_da_tweak(self):
+        t = [x for x in voci_con("features_disable")][0]
+        xml, dom = rendi(tweaks=[t["id"]])
+        nome = t["features_disable"][0]
+        self.assertTrue(any("/featurename:" + nome in c for c in self.comandi(dom, "oobeSystem")))
+
+    def test_comandi_del_tweak_al_primo_accesso(self):
+        t = [x for x in voci_con("commands")][0]
+        xml, dom = rendi(tweaks=[t["id"]])
+        righe = self.comandi(dom, "oobeSystem")
+        for c in t["commands"]:
+            self.assertIn(c, righe)
+
+    def test_niente_doppioni_con_i_booleani(self):
+        """Un'ottimizzazione che rifà quello che fa già un campo booleano non deve generare
+        due volte lo stesso comando."""
+        xml, dom = rendi(tweaks=["disattiva-ibernazione", "mostra-estensioni-file"],
+                         disable_hibernate=True, hide_files_ext=False)
+        tutti = self.comandi(dom, "specialize") + self.comandi(dom, "oobeSystem")
+        norm = [c.lower().replace("cmd /c ", "") for c in tutti]
+        self.assertEqual(len([c for c in norm if "powercfg /hibernate off" in c]), 1, tutti)
+        self.assertEqual(len([c for c in norm if "hidefileext" in c]), 1, tutti)
+        # vince l'ottimizzazione: la scrittura va sul profilo predefinito, non su HKCU
+        riga = [c for c in tutti if "HideFileExt" in c][0]
+        self.assertIn(WP.DEFAULT_HIVE, riga)
+
+    def test_ordine_indipendente_dalla_selezione(self):
+        ids = [t["id"] for t in catalogo()["items"]][:8]
+        a = WP.render_autounattend({"name": "a", "settings": base_settings(tweaks=ids)},
+                                   "10.10.0.254", cfg=CFG_FINTA)
+        b = WP.render_autounattend({"name": "a", "settings": base_settings(tweaks=list(reversed(ids)))},
+                                   "10.10.0.254", cfg=CFG_FINTA)
+        self.assertEqual(a, b)
+
+    def test_catalogo_intero(self):
+        """Tutte le ottimizzazioni insieme: XML valido, un solo carico del profilo, Order in fila."""
+        ids = [t["id"] for t in catalogo()["items"]]
+        xml, dom = rendi(tweaks=ids, remove_apps=["Microsoft.BingNews"],
+                         run_commands=["cmd /c echo fine"])
+        minidom.parseString(xml)
+        self.assertEqual(xml.count("reg load"), 1)
+        self.assertEqual(xml.count("reg unload"), 1)
+        for passo in ("specialize", "oobeSystem"):
+            righe = self.comandi(dom, passo)
+            self.assertEqual(self.ordini(dom, passo), list(range(1, len(righe) + 1)))
+            self.assertEqual(len(righe), len(set(righe)), "comandi ripetuti in " + passo)
+        self.assertIn("cmd /c echo fine", self.comandi(dom, "oobeSystem"))
+
+    def test_escaping_dei_percorsi_con_spazi(self):
+        """I percorsi con spazi ("Control Panel\\Desktop", "Windows Search") restano virgolettati."""
+        ids = [t["id"] for t in catalogo()["items"]]
+        xml, dom = rendi(tweaks=ids)
+        conspazi = [c for c in self.comandi(dom, "specialize") if "reg add" in c and " " in c]
+        for c in conspazi:
+            chiave = c.split('reg add ', 1)[1]
+            self.assertTrue(chiave.startswith('"'), c)
+            self.assertIn('" /v "', c, c)
+
+
+class PresetWindowsTest(unittest.TestCase):
+    """Tutti i modelli windows devono restare creabili e produrre un XML valido."""
+
+    def setUp(self):
+        C.WINPROFILES_FILE = MIO_WINPROFILES
+        if os.path.exists(C.WINPROFILES_FILE):
+            os.unlink(C.WINPROFILES_FILE)
+        self.ids = preset_windows_ids()
+        if not self.ids:
+            self.skipTest("modelli non installati")
+
+    def test_almeno_sette_modelli(self):
+        for atteso in ("win-postazione-aziendale", "win-pc-singolo", "win-server", "win-laboratorio",
+                       "win-minimale", "win-privacy", "win-prestazioni"):
+            self.assertIn(atteso, self.ids)
+
+    def test_creabili_e_xml_valido(self):
+        noti = set(WP.tweak_ids())
+        for pid in self.ids:
+            p = WP.load_preset(pid)
+            self.assertIsNotNone(p, pid)
+            s = p["settings"]
+            self.assertFalse(s.get("join_domain", {}).get("enabled"),
+                             pid + ": il dominio deve essere disattivato nel modello")
+            for tid in s.get("tweaks") or []:
+                self.assertIn(tid, noti, f"{pid}: ottimizzazione inesistente {tid}")
+            # la password è l'unico campo che il modello lascia scegliere al tecnico (vedi _nota)
+            extra = {}
+            if s.get("admin_user") and not s.get("admin_password"):
+                extra["admin_password"] = "PasswordDiProva1"
+            prof = WP.create({"name": "Modello " + pid, "preset": pid, "settings": extra})
+            xml = WP.render_autounattend(prof, "10.10.0.254", cfg=CFG_FINTA)
+            dom = minidom.parseString(xml)
+            self.assertEqual(dom.documentElement.tagName, "unattend", pid)
+            for passo in ("windowsPE", "specialize", "oobeSystem"):
+                self.assertIsNotNone(passaggio(dom, passo), f"{pid}: manca il passaggio {passo}")
+            self.assertLessEqual(xml.count("reg load"), 1, pid)
+            self.assertEqual(xml.count("reg load"), xml.count("reg unload"), pid)
+            WP.delete(prof["id"])
+
+    def test_nuovi_modelli(self):
+        minimale = WP.load_preset("win-minimale")["settings"]
+        self.assertTrue(minimale["remove_apps"], "win-minimale deve rimuovere delle app")
+        self.assertIn("servizi-telemetria", minimale["tweaks"])
+        privacy = WP.load_preset("win-privacy")["settings"]
+        for atteso in ("telemetria-minima", "disattiva-onedrive", "disattiva-posizione"):
+            self.assertIn(atteso, privacy["tweaks"])
+        prestazioni = WP.load_preset("win-prestazioni")["settings"]
+        self.assertEqual(prestazioni["power_scheme"], "prestazioni")
+        for atteso in ("effetti-visivi-ridotti", "disattiva-indicizzazione", "disattiva-sysmain"):
+            self.assertIn(atteso, prestazioni["tweaks"])
+
 
 
 def tearDownModule():

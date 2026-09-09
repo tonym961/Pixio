@@ -1,15 +1,21 @@
 /* Pixio – pagina Windows: profili di personalizzazione che generano un autounattend.xml.
    Elenco profili a sinistra, form diviso in sezioni a destra (Lingua e area, Account, Disco,
-   Windows 11, App e comandi, Driver), anteprima dell'XML in un riquadro monospace.
+   Windows 11, Ottimizzazioni, App e comandi, Driver), anteprima dell'XML in un riquadro monospace.
    Pulsanti: Salva, Duplica, Elimina, Salva come risposta. Le password finiscono in chiaro
-   dentro il file: l'avviso è fisso in cima alla pagina e ripetuto nella sezione Account. */
+   dentro il file: l'avviso è fisso in cima alla pagina e ripetuto nella sezione Account.
+
+   La sezione "Ottimizzazioni" (docs/API.md, sezione 10) mostra il catalogo di data/windows-tweaks.json
+   così come arriva da GET /api/winprofiles (campo tweaks: {categories, items}): categorie richiudibili,
+   ricerca, filtro per impatto, contatori, più gli elenchi a mano dei servizi e delle funzionalità
+   Windows. Le scelte finiscono in settings.tweaks / services_extra / features_enable / features_disable. */
 'use strict';
 (function () {
   const P = window.Pixio;
   const esc = P.esc; const $ = P.$; const $$ = P.$$;
 
-  // Stato della pagina: meta = elenchi dal server, cur = profilo in modifica (id null = nuovo)
-  const W = { root: null, meta: null, list: [], cur: null, dirty: false, loadingPreview: false };
+  // Stato della pagina: meta = elenchi dal server, cur = profilo in modifica (id null = nuovo),
+  // tw = stato della sezione Ottimizzazioni (selezione, filtri, elenchi a mano)
+  const W = { root: null, meta: null, list: [], cur: null, dirty: false, loadingPreview: false, tw: null };
 
   const idUrl = (id) => '/api/winprofiles/' + encodeURIComponent(id);
   const clone = (o) => JSON.parse(JSON.stringify(o == null ? null : o));

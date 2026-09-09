@@ -1,0 +1,2087 @@
+{
+  "_nota": "Catalogo delle ottimizzazioni Windows in stile nLite (docs/API.md, sezione 10). File di sola lettura: fa parte del codice, non della configurazione. Percorsi e valori verificati sulla documentazione Microsoft e sui modelli amministrativi (ADMX): non aggiungere voci non verificate. Le chiavi HKLM sono criteri di sistema, quelle HKCU vengono scritte sul profilo predefinito (C:\\Users\\Default\\NTUSER.DAT) e valgono quindi per tutti gli utenti creati dopo l'installazione.",
+  "version": 1,
+  "categories": [
+    {
+      "id": "privacy",
+      "name": "Privacy e telemetria",
+      "description": "Raccolta dati diagnostici, profilazione e servizi che parlano con Microsoft."
+    },
+    {
+      "id": "ricerca",
+      "name": "Ricerca, Cortana e Copilot",
+      "description": "Ricerca del menu Start, risultati dal web, assistenti vocali e Copilot."
+    },
+    {
+      "id": "suggerimenti",
+      "name": "Suggerimenti, pubblicità e app consigliate",
+      "description": "Contenuti consigliati, spotlight, app installate da sole e annunci dentro Windows."
+    },
+    {
+      "id": "cloud",
+      "name": "OneDrive, widget e servizi cloud",
+      "description": "OneDrive, widget, notizie e chat: componenti che in azienda si tolgono quasi sempre."
+    },
+    {
+      "id": "esplora",
+      "name": "Esplora file, Start e barra applicazioni",
+      "description": "Comportamento di Esplora file, del menu Start e della barra delle applicazioni."
+    },
+    {
+      "id": "prestazioni",
+      "name": "Prestazioni ed energia",
+      "description": "Effetti grafici, servizi che consumano disco e CPU, schemi di alimentazione."
+    },
+    {
+      "id": "servizi",
+      "name": "Servizi non necessari",
+      "description": "Servizi di Windows inutili o rischiosi su una postazione aziendale."
+    },
+    {
+      "id": "aggiornamenti",
+      "name": "Aggiornamenti di Windows",
+      "description": "Quando e come Windows Update scarica, installa e riavvia."
+    },
+    {
+      "id": "sicurezza",
+      "name": "Sicurezza e accesso",
+      "description": "UAC, SmartScreen, Defender, Desktop remoto e schermata di accesso."
+    },
+    {
+      "id": "rete",
+      "name": "Rete e condivisione",
+      "description": "Profilo di rete, IPv6, risoluzione nomi e condivisione file."
+    },
+    {
+      "id": "componenti",
+      "name": "Componenti opzionali",
+      "description": "Funzionalità di Windows da attivare o disattivare con DISM."
+    }
+  ],
+  "tweaks": [
+    {
+      "id": "telemetria-minima",
+      "category": "privacy",
+      "name": "Telemetria al minimo",
+      "description": "Imposta il criterio Consenti telemetria a 0 (Sicurezza). Windows smette di inviare i dati diagnostici facoltativi; su Home e Pro il livello minimo effettivo resta \"dati richiesti\", solo Enterprise/Education arrivano davvero a zero. Si perdono le informazioni di Analisi desktop e alcune diagnosi automatiche degli errori.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+          "name": "AllowTelemetry",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "servizi-telemetria",
+      "category": "privacy",
+      "name": "Ferma i servizi di telemetria",
+      "description": "Disabilita DiagTrack (Esperienze utente connesse e telemetria) e dmwappushservice (instradamento messaggi WAP). Nessuna funzione visibile all'utente viene persa, ma alcuni strumenti di gestione (Analisi desktop, Update Compliance) smettono di ricevere dati dal PC.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "DiagTrack",
+          "start": 4
+        },
+        {
+          "name": "dmwappushservice",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "niente-notifiche-feedback",
+      "category": "privacy",
+      "name": "Niente richieste di feedback",
+      "description": "Attiva il criterio \"Non visualizzare le notifiche di feedback\": Windows smette di chiedere all'utente com'è andata l'esperienza e non apre più l'Hub di feedback da solo.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+          "name": "DoNotShowFeedbackNotifications",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-id-pubblicita",
+      "category": "privacy",
+      "name": "Disattiva l'ID pubblicità",
+      "description": "Blocca l'identificatore usato dalle app del Microsoft Store per mostrare annunci profilati, sia con il criterio di sistema sia nella preferenza del profilo utente. Gli annunci nelle app gratuite restano ma diventano generici.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\AdvertisingInfo",
+          "name": "DisabledByGroupPolicy",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo",
+          "name": "Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-cronologia-attivita",
+      "category": "privacy",
+      "name": "Disattiva la cronologia attività",
+      "description": "Windows non raccoglie più la Sequenza temporale (documenti e app aperti) e non la carica sul cloud. Si perde la ripresa delle attività fra dispositivi e la vista cronologica di Attività (WIN+TAB).",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+          "name": "EnableActivityFeed",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+          "name": "PublishUserActivities",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+          "name": "UploadUserActivities",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "niente-esperienze-personalizzate",
+      "category": "privacy",
+      "name": "Niente esperienze personalizzate dai dati diagnostici",
+      "description": "Impedisce a Windows di usare i dati diagnostici per personalizzare consigli, annunci e suggerimenti mostrati nell'interfaccia. Applicato al profilo predefinito, vale per tutti gli utenti creati dopo l'installazione.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableTailoredExperiencesWithDiagnosticData",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-personalizzazione-input",
+      "category": "privacy",
+      "name": "Niente raccolta di scrittura e digitazione",
+      "description": "Disattiva la personalizzazione dell'input: Windows non raccoglie più testo digitato, input penna e rubrica per migliorare i suggerimenti. Si perdono i suggerimenti di digitazione personalizzati e il dizionario personale; il riconoscimento vocale online smette di funzionare.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\InputPersonalization",
+          "name": "AllowInputPersonalization",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\InputPersonalization",
+          "name": "RestrictImplicitTextCollection",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\InputPersonalization",
+          "name": "RestrictImplicitInkCollection",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-posizione",
+      "category": "privacy",
+      "name": "Disattiva i servizi di posizione",
+      "description": "Spegne il rilevatore di posizione per tutto il sistema. Si perdono meteo locale, \"Trova il mio dispositivo\", fuso orario automatico e le mappe offline che usano la posizione: su un portatile aziendale in giro per l'Italia il fuso va impostato a mano.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors",
+          "name": "DisableLocation",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors",
+          "name": "DisableLocationScripting",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\LocationAndSensors",
+          "name": "DisableWindowsLocationProvider",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-sincronizzazione-impostazioni",
+      "category": "privacy",
+      "name": "Niente sincronizzazione delle impostazioni",
+      "description": "Blocca la sincronizzazione di tema, password, preferenze e lingua con l'account Microsoft e impedisce all'utente di riattivarla. Utile sui PC condivisi; l'utente dovrà rifare le proprie personalizzazioni su ogni macchina.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\SettingSync",
+          "name": "DisableSettingSync",
+          "type": "REG_DWORD",
+          "data": "2"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\SettingSync",
+          "name": "DisableSettingSyncUserOverride",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-cronologia-appunti",
+      "category": "privacy",
+      "name": "Niente cronologia e appunti condivisi",
+      "description": "Disattiva la cronologia degli appunti (WIN+V) e la condivisione degli appunti fra dispositivi: quello che si copia non resta in memoria né viene mandato al cloud. Si perde WIN+V.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+          "name": "AllowClipboardHistory",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+          "name": "AllowCrossDeviceClipboard",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-ceip",
+      "category": "privacy",
+      "name": "Disattiva il programma Analisi utilizzo software (CEIP)",
+      "description": "Spegne il Customer Experience Improvement Program: niente invio anonimo di statistiche d'uso. Nessun effetto sul funzionamento del PC.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\SQMClient\\Windows",
+          "name": "CEIPEnable",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-segnalazione-errori",
+      "category": "privacy",
+      "name": "Disattiva Segnalazione errori Windows",
+      "description": "Windows non invia più a Microsoft i rapporti sui blocchi delle applicazioni. Si perdono le soluzioni automatiche proposte dopo un crash e i dump caricati sul portale WER, utili per l'assistenza dei fornitori software.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Error Reporting",
+          "name": "Disabled",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "solo-account-locali",
+      "category": "privacy",
+      "name": "Solo account locali (niente account Microsoft)",
+      "description": "Impedisce di aggiungere o usare account Microsoft per accedere a Windows (criterio Account: blocca gli account Microsoft, valore 3). Si perdono sincronizzazione, Store con licenze personali e ripristino della password via cloud.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+          "name": "NoConnectedUser",
+          "type": "REG_DWORD",
+          "data": "3"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-cortana",
+      "category": "ricerca",
+      "name": "Disattiva Cortana",
+      "description": "Attiva il criterio \"Consenti Cortana = disabilitato\": la ricerca resta ma non c'è più l'assistente vocale né l'elaborazione delle richieste sul cloud.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+          "name": "AllowCortana",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "ricerca-solo-locale",
+      "category": "ricerca",
+      "name": "Ricerca solo locale (niente risultati dal web)",
+      "description": "La casella di ricerca smette di interrogare Bing e il cloud: cerca solo file, app e impostazioni del PC. Si perdono i risultati web e le risposte rapide nel menu Start; la ricerca diventa sensibilmente più veloce.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+          "name": "DisableWebSearch",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+          "name": "ConnectedSearchUseWeb",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+          "name": "AllowCloudSearch",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "niente-evidenziazioni-ricerca",
+      "category": "ricerca",
+      "name": "Niente evidenziazioni nella ricerca",
+      "description": "Toglie le \"evidenziazioni della ricerca\" (ricorrenze, contenuti promozionali e immagini del giorno) dalla casella di ricerca della barra delle applicazioni.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+          "name": "EnableDynamicContentInWSB",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "ricerca-solo-icona",
+      "category": "ricerca",
+      "name": "Barra applicazioni: ricerca come sola icona",
+      "description": "Sostituisce la casella di ricerca larga con una piccola lente. Si recupera spazio sulla barra delle applicazioni; la ricerca continua a funzionare con WIN+S. Preferenza del profilo utente, modificabile dall'utente.",
+      "impact": "sicuro",
+      "editions": [
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Search",
+          "name": "SearchboxTaskbarMode",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-copilot",
+      "category": "ricerca",
+      "name": "Disattiva Copilot",
+      "description": "Attiva il criterio \"Disattiva Windows Copilot\" (sia per il computer sia per il profilo predefinito) e toglie il pulsante dalla barra delle applicazioni. L'assistente non è più raggiungibile con WIN+C.",
+      "impact": "sicuro",
+      "editions": [
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsCopilot",
+          "name": "TurnOffWindowsCopilot",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\WindowsCopilot",
+          "name": "TurnOffWindowsCopilot",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "ShowCopilotButton",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "niente-esperienze-consumer",
+      "category": "suggerimenti",
+      "name": "Niente esperienze consumer (app installate da sole)",
+      "description": "Attiva \"Disattiva le esperienze consumer Microsoft\": Windows smette di installare da solo app consigliate e giochi (Candy Crush, TikTok, Spotify...) al primo accesso di un nuovo utente. Criterio riconosciuto su Enterprise ed Education; su Pro l'effetto è parziale.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableWindowsConsumerFeatures",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-suggerimenti-windows",
+      "category": "suggerimenti",
+      "name": "Niente suggerimenti e trucchi di Windows",
+      "description": "Spegne i messaggi \"Suggerimenti per Windows\" e le notifiche promozionali che compaiono dopo l'accesso o dopo un aggiornamento.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableSoftLanding",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-spotlight",
+      "category": "suggerimenti",
+      "name": "Niente Windows Spotlight",
+      "description": "Disattiva tutte le funzioni Spotlight per il profilo predefinito: immagini dinamiche, suggerimenti di terze parti, schermata di benvenuto dopo gli aggiornamenti e contenuti consigliati in Centro notifiche e Impostazioni. Si perdono gli sfondi \"Contenuti in evidenza\".",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableWindowsSpotlightFeatures",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableThirdPartySuggestions",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableWindowsSpotlightWindowsWelcomeExperience",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableWindowsSpotlightOnActionCenter",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableWindowsSpotlightOnSettings",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-contenuti-consigliati",
+      "category": "suggerimenti",
+      "name": "Niente contenuti consigliati in Start e Impostazioni",
+      "description": "Azzera i canali di contenuti consigliati del Gestore recapito contenuti nel profilo predefinito: spariscono i riquadri promozionali dal menu Start, i suggerimenti nell'app Impostazioni e le proposte nella Sequenza temporale.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SystemPaneSuggestionsEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SubscribedContent-338388Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SubscribedContent-338389Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SubscribedContent-338393Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SubscribedContent-353694Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SubscribedContent-353696Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "niente-app-automatiche",
+      "category": "suggerimenti",
+      "name": "Niente app installate automaticamente",
+      "description": "Blocca l'installazione silenziosa delle app suggerite e delle app preinstallate dal produttore per i nuovi profili. Da abbinare alla rimozione delle app già presenti nell'immagine.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SilentInstalledAppsEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "PreInstalledAppsEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "OemPreInstalledAppsEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "PreInstalledAppsEverEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "schermata-blocco-pulita",
+      "category": "suggerimenti",
+      "name": "Schermata di blocco senza pubblicità",
+      "description": "Toglie le immagini a rotazione di Spotlight e i \"suggerimenti e curiosità\" dalla schermata di blocco: resta lo sfondo scelto dall'amministratore. Preferenza del profilo predefinito.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "RotatingLockScreenEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "RotatingLockScreenOverlayEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+          "name": "SubscribedContent-338387Enabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "start-senza-consigliati",
+      "category": "suggerimenti",
+      "name": "Menu Start senza sezione Consigliati",
+      "description": "Nasconde la sezione Consigliati del menu Start di Windows 11 e l'elenco \"Aggiunti di recente\". Il menu mostra solo le app aggiunte dall'amministratore.",
+      "impact": "sicuro",
+      "editions": [
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+          "name": "HideRecommendedSection",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+          "name": "HideRecentlyAddedApps",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "store-senza-aggiornamenti-automatici",
+      "category": "suggerimenti",
+      "name": "Microsoft Store senza aggiornamenti automatici",
+      "description": "Imposta il criterio di download automatico dello Store su \"Disattivato\" (valore 2): le app Store non si aggiornano più da sole. Le app restano indietro e vanno aggiornate a mano: da usare solo dove c'è una gestione centralizzata del software.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\WindowsStore",
+          "name": "AutoDownload",
+          "type": "REG_DWORD",
+          "data": "2"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-onedrive",
+      "category": "cloud",
+      "name": "Disattiva OneDrive",
+      "description": "Attiva il criterio \"Impedisci l'utilizzo di OneDrive per l'archiviazione file\": la sincronizzazione si ferma, OneDrive sparisce da Esplora file e il salvataggio automatico di Desktop, Documenti e Immagini nel cloud non parte più. Il client resta installato.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\OneDrive",
+          "name": "DisableFileSyncNGSC",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\OneDrive",
+          "name": "DisableFileSync",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "rimuovi-onedrive",
+      "category": "cloud",
+      "name": "Disinstalla il client OneDrive",
+      "description": "Chiude OneDrive e lancia la disinstallazione del client incluso in Windows. Chi usa OneDrive o SharePoint sincronizzato deve reinstallarlo a mano; non tocca i file già scaricati.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c taskkill /f /im OneDrive.exe",
+        "cmd /c if exist %SystemRoot%\\SysWOW64\\OneDriveSetup.exe %SystemRoot%\\SysWOW64\\OneDriveSetup.exe /uninstall",
+        "cmd /c if exist %SystemRoot%\\System32\\OneDriveSetup.exe %SystemRoot%\\System32\\OneDriveSetup.exe /uninstall"
+      ]
+    },
+    {
+      "id": "disattiva-widget",
+      "category": "cloud",
+      "name": "Disattiva i widget",
+      "description": "Attiva il criterio \"Consenti widget = disabilitato\" e toglie il pulsante dalla barra delle applicazioni: niente pannello meteo/notizie né popup al passaggio del mouse.",
+      "impact": "sicuro",
+      "editions": [
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Dsh",
+          "name": "AllowNewsAndInterests",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "TaskbarDa",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-notizie-interessi",
+      "category": "cloud",
+      "name": "Disattiva Notizie e interessi",
+      "description": "Spegne il pannello Notizie e interessi della barra delle applicazioni di Windows 10 (criterio Feed di Windows).",
+      "impact": "sicuro",
+      "editions": [
+        "10"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Feeds",
+          "name": "EnableFeeds",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-chat-teams",
+      "category": "cloud",
+      "name": "Togli l'icona Chat (Teams personale)",
+      "description": "Imposta il criterio Chat su \"Disabilitato\" (valore 3): l'icona sparisce dalla barra e l'utente non può rimetterla. Non tocca Microsoft Teams aziendale installato a parte.",
+      "impact": "sicuro",
+      "editions": [
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Chat",
+          "name": "ChatIcon",
+          "type": "REG_DWORD",
+          "data": "3"
+        }
+      ]
+    },
+    {
+      "id": "mostra-estensioni-file",
+      "category": "esplora",
+      "name": "Mostra le estensioni dei file",
+      "description": "Esplora file mostra .exe, .cmd, .js e simili: è la prima difesa contro gli allegati mascherati da documento. Preferenza del profilo predefinito, l'utente può rimetterla come vuole.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "HideFileExt",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "mostra-file-nascosti",
+      "category": "esplora",
+      "name": "Mostra i file nascosti",
+      "description": "Rende visibili i file e le cartelle con attributo nascosto (non quelli protetti di sistema). Comodo per l'assistenza, un po' più di confusione per l'utente finale.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "Hidden",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "mostra-file-sistema",
+      "category": "esplora",
+      "name": "Mostra anche i file protetti di sistema",
+      "description": "Toglie la protezione visiva su pagefile.sys, bootmgr, System Volume Information e simili. Serve in assistenza; su un PC di utente aumenta il rischio che qualcosa venga cancellato.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "ShowSuperHidden",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "esplora-apre-questo-pc",
+      "category": "esplora",
+      "name": "Esplora file si apre su Questo PC",
+      "description": "Apre Esplora file su Questo PC invece che su Accesso rapido/Home: si vedono subito dischi e unità di rete mappate.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "LaunchTo",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "barra-applicazioni-a-sinistra",
+      "category": "esplora",
+      "name": "Barra delle applicazioni allineata a sinistra",
+      "description": "Riporta Start e le icone a sinistra come in Windows 10. Solo estetica, nessuna funzione persa.",
+      "impact": "sicuro",
+      "editions": [
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "TaskbarAl",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "nascondi-visualizzazione-attivita",
+      "category": "esplora",
+      "name": "Nascondi il pulsante Visualizzazione attività",
+      "description": "Toglie il pulsante dei desktop virtuali dalla barra delle applicazioni. La funzione resta disponibile con WIN+TAB.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+          "name": "ShowTaskViewButton",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "mostra-percorso-completo",
+      "category": "esplora",
+      "name": "Percorso completo nella barra del titolo",
+      "description": "Esplora file scrive il percorso per esteso invece del solo nome della cartella: comodo quando si lavora su più condivisioni di rete.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CabinetState",
+          "name": "FullPath",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "menu-contestuale-classico",
+      "category": "esplora",
+      "name": "Menu contestuale classico di Windows 11",
+      "description": "Ripristina il menu del tasto destro completo, senza il passaggio \"Mostra altre opzioni\". Il comando viene eseguito al primo accesso, quindi vale per l'utente creato dall'installazione: sugli altri profili va rifatto. Ha effetto dopo il riavvio di Esplora file.",
+      "impact": "attenzione",
+      "editions": [
+        "11"
+      ],
+      "commands": [
+        "cmd /c reg add \"HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32\" /f /ve"
+      ]
+    },
+    {
+      "id": "niente-documenti-recenti",
+      "category": "esplora",
+      "name": "Niente cronologia dei documenti recenti",
+      "description": "Windows non tiene più l'elenco dei file aperti di recente né i jump list delle applicazioni. Utile sui PC condivisi; l'utente perde le scorciatoie ai file usati di frequente.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+          "name": "NoRecentDocsHistory",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "niente-ricerca-app-nello-store",
+      "category": "esplora",
+      "name": "Niente \"Cerca un'app nello Store\"",
+      "description": "Aprendo un file con estensione sconosciuta Windows non propone più di cercare un'applicazione nel Microsoft Store: resta la sola finestra \"Apri con\".",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+          "name": "NoUseStoreOpenWith",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "effetti-visivi-ridotti",
+      "category": "prestazioni",
+      "name": "Effetti visivi ridotti al minimo",
+      "description": "Imposta le prestazioni del sistema su \"Regola per ottenere le prestazioni migliori\" e toglie le animazioni delle finestre. Si perdono ombre, dissolvenze e anteprime animate; su hardware vecchio o in RDP l'interfaccia diventa molto più reattiva.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+          "name": "VisualFXSetting",
+          "type": "REG_DWORD",
+          "data": "2"
+        },
+        {
+          "scope": "HKCU",
+          "path": "Control Panel\\Desktop\\WindowMetrics",
+          "name": "MinAnimate",
+          "type": "REG_SZ",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-trasparenze",
+      "category": "prestazioni",
+      "name": "Disattiva le trasparenze",
+      "description": "Toglie l'effetto vetro di barra delle applicazioni, menu Start e finestre: meno lavoro per la scheda video, utile su macchine virtuali e desktop remoto.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+          "name": "EnableTransparency",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "menu-senza-ritardo",
+      "category": "prestazioni",
+      "name": "Menu senza ritardo di apertura",
+      "description": "Porta a zero il ritardo di apertura dei menu (predefinito 400 ms). L'interfaccia sembra più veloce; con il mouse si aprono più facilmente i sottomenu per sbaglio.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKCU",
+          "path": "Control Panel\\Desktop",
+          "name": "MenuShowDelay",
+          "type": "REG_SZ",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-sysmain",
+      "category": "prestazioni",
+      "name": "Disattiva SysMain (Superfetch)",
+      "description": "Ferma il precaricamento delle applicazioni in RAM. Su SSD il guadagno di avvio è minimo e si riduce l'attività continua del disco; su dischi meccanici l'apertura dei programmi può rallentare.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "SysMain",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-indicizzazione",
+      "category": "prestazioni",
+      "name": "Disattiva l'indicizzazione della ricerca",
+      "description": "Ferma il servizio Windows Search (WSearch). Sparisce l'indice: la ricerca nel menu Start e in Esplora file diventa lenta o non trova i contenuti dei documenti, e Outlook in modalità cache cerca molto più lentamente.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "WSearch",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-avvio-rapido",
+      "category": "prestazioni",
+      "name": "Disattiva l'avvio rapido",
+      "description": "Spegne l'ibernazione parziale usata all'arresto: lo spegnimento diventa completo. L'avvio è qualche secondo più lento ma gli aggiornamenti dei driver e le modifiche al BIOS/UEFI vengono applicati davvero, e i doppi avvii con Linux non trovano più il disco bloccato.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
+          "name": "HiberbootEnabled",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-ibernazione",
+      "category": "prestazioni",
+      "name": "Disattiva l'ibernazione",
+      "description": "Esegue powercfg /hibernate off: sparisce hiberfil.sys (diversi GB liberati) e con esso la voce Ibernazione e l'avvio rapido. Sui portatili si perde la sospensione su disco.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c powercfg /hibernate off"
+      ]
+    },
+    {
+      "id": "piano-prestazioni-elevate",
+      "category": "prestazioni",
+      "name": "Piano di alimentazione Prestazioni elevate",
+      "description": "Attiva lo schema Prestazioni elevate: la CPU non scende di frequenza e i dischi non si fermano. Consumo e rumore aumentano, sui portatili la batteria dura meno.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+      ]
+    },
+    {
+      "id": "niente-sospensione-a-rete",
+      "category": "prestazioni",
+      "name": "Niente sospensione e spegnimento schermo (rete elettrica)",
+      "description": "Con l'alimentatore collegato il PC non va mai in sospensione e lo schermo resta acceso. Adatto a PC di produzione, casse, totem e macchine da raggiungere in desktop remoto; su un portatile aumenta il consumo.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c powercfg /change standby-timeout-ac 0",
+        "cmd /c powercfg /change monitor-timeout-ac 0"
+      ]
+    },
+    {
+      "id": "disattiva-limitazione-energia",
+      "category": "prestazioni",
+      "name": "Disattiva la limitazione energetica dei processi",
+      "description": "Spegne il Power Throttling (la \"modalità efficienza\" di Gestione attività): i processi in secondo piano non vengono più rallentati. Utile su postazioni di calcolo o registratori; consumo e temperature salgono.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SYSTEM\\CurrentControlSet\\Control\\Power\\PowerThrottling",
+          "name": "PowerThrottlingOff",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-archiviazione-riservata",
+      "category": "prestazioni",
+      "name": "Disattiva l'archiviazione riservata",
+      "description": "Esegue dism /online /Set-ReservedStorageState /State:Disabled e libera i ~7 GB che Windows tiene da parte per gli aggiornamenti. Su dischi piccoli è spazio recuperato; gli aggiornamenti di funzionalità potrebbero poi fallire per mancanza di spazio.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c dism /online /Set-ReservedStorageState /State:Disabled"
+      ]
+    },
+    {
+      "id": "disattiva-servizi-xbox",
+      "category": "servizi",
+      "name": "Disattiva i servizi Xbox",
+      "description": "Disabilita XblAuthManager, XblGameSave, XboxGipSvc e XboxNetApiSvc. Su una postazione di lavoro non serve nulla di tutto questo; su un PC dove si gioca saltano salvataggi cloud, Game Pass e i controller Xbox via cavo.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "XblAuthManager",
+          "start": 4
+        },
+        {
+          "name": "XblGameSave",
+          "start": 4
+        },
+        {
+          "name": "XboxGipSvc",
+          "start": 4
+        },
+        {
+          "name": "XboxNetApiSvc",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-fax",
+      "category": "servizi",
+      "name": "Disattiva il servizio Fax",
+      "description": "Mette il servizio Fax su disabilitato. Si perde solo l'invio fax dal modem interno, funzione praticamente mai usata.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "Fax",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-registro-remoto",
+      "category": "servizi",
+      "name": "Disattiva il Registro remoto",
+      "description": "Disabilita RemoteRegistry: nessuno può più aprire il registro di questo PC dalla rete. Alcuni strumenti di inventario e la gestione remota di terze parti smettono di funzionare.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "RemoteRegistry",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-spooler",
+      "category": "servizi",
+      "name": "Disattiva lo spooler di stampa",
+      "description": "Disabilita del tutto il servizio Spooler: il PC non stampa più, su niente. Ha senso solo su server e macchine senza stampanti, dove chiude la superficie d'attacco tipo PrintNightmare.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "Spooler",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "spooler-senza-connessioni-remote",
+      "category": "servizi",
+      "name": "Spooler senza connessioni remote in ingresso",
+      "description": "Disattiva il criterio \"Consenti allo spooler di stampa di accettare connessioni client\" (RegisterSpoolerRemoteRpcEndPoint = 2). Il PC continua a stampare ma non fa più da server di stampa e non accetta connessioni RPC remote: è la mitigazione consigliata da Microsoft per PrintNightmare.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows NT\\Printers",
+          "name": "RegisterSpoolerRemoteRpcEndPoint",
+          "type": "REG_DWORD",
+          "data": "2"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-assistenza-remota",
+      "category": "servizi",
+      "name": "Disattiva Assistenza remota",
+      "description": "Nega le richieste di Assistenza remota in ingresso. Non tocca il Desktop remoto né i software di teleassistenza di terze parti.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services",
+          "name": "fAllowToGetHelp",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-servizio-mappe",
+      "category": "servizi",
+      "name": "Disattiva il gestore Mappe scaricate",
+      "description": "Disabilita MapsBroker: niente aggiornamento in background delle mappe offline. L'app Mappe, se resta installata, funziona solo online.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "MapsBroker",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-programma-insider",
+      "category": "servizi",
+      "name": "Disattiva il programma Windows Insider",
+      "description": "Blocca l'iscrizione alle build di anteprima e disabilita il servizio wisvc. Sui PC di produzione evita che qualcuno passi al canale Dev.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\PreviewBuilds",
+          "name": "AllowBuildPreview",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ],
+      "services": [
+        {
+          "name": "wisvc",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-bluetooth",
+      "category": "servizi",
+      "name": "Disattiva il supporto Bluetooth",
+      "description": "Disabilita il servizio bthserv: il PC non vede più dispositivi Bluetooth. Da non usare dove ci sono mouse, tastiere, cuffie o lettori di codici a barre senza fili.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "services": [
+        {
+          "name": "bthserv",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "niente-riavvio-automatico",
+      "category": "aggiornamenti",
+      "name": "Niente riavvio automatico con utente connesso",
+      "description": "Configura gli aggiornamenti automatici in modalità \"scarica e installa secondo pianificazione\" e impedisce il riavvio finché c'è un utente collegato: niente più PC riavviati durante una presentazione. Il riavvio va comunque fatto, prima o poi.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+          "name": "NoAutoUpdate",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+          "name": "AUOptions",
+          "type": "REG_DWORD",
+          "data": "4"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+          "name": "NoAutoRebootWithLoggedOnUsers",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "avvisa-prima-di-scaricare",
+      "category": "aggiornamenti",
+      "name": "Avvisa prima di scaricare gli aggiornamenti",
+      "description": "Imposta gli aggiornamenti automatici su \"Notifica prima del download\" (AUOptions 2): decide l'utente o il tecnico quando scaricare. Se non ci pensa nessuno il PC resta senza patch. Non combinarlo con \"Niente riavvio automatico\": scrivono lo stesso valore.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+          "name": "NoAutoUpdate",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+          "name": "AUOptions",
+          "type": "REG_DWORD",
+          "data": "2"
+        }
+      ]
+    },
+    {
+      "id": "rinvia-aggiornamenti-funzionalita",
+      "category": "aggiornamenti",
+      "name": "Rinvia gli aggiornamenti di funzionalità",
+      "description": "Blocca il passaggio alla versione successiva di Windows per 365 giorni (canale di disponibilità generale). Gli aggiornamenti di sicurezza mensili continuano ad arrivare. Serve dove i gestionali vanno certificati prima del salto di versione.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+          "name": "DeferFeatureUpdates",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+          "name": "DeferFeatureUpdatesPeriodInDays",
+          "type": "REG_DWORD",
+          "data": "365"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+          "name": "BranchReadinessLevel",
+          "type": "REG_DWORD",
+          "data": "16"
+        }
+      ]
+    },
+    {
+      "id": "niente-driver-da-windows-update",
+      "category": "aggiornamenti",
+      "name": "Niente driver da Windows Update",
+      "description": "Esclude i driver dagli aggiornamenti qualitativi e impedisce la ricerca driver su Windows Update. I driver restano quelli installati dal tecnico (anche quelli della libreria di Pixio); le periferiche nuove potrebbero restare senza driver finché non li si installa a mano.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+          "name": "ExcludeWUDriversInQualityUpdate",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\DriverSearching",
+          "name": "DontSearchWindowsUpdate",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\DriverSearching",
+          "name": "SearchOrderConfig",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-ottimizzazione-recapito",
+      "category": "aggiornamenti",
+      "name": "Disattiva Ottimizzazione recapito",
+      "description": "Mette la modalità di download su \"solo HTTP\" (DODownloadMode 0): il PC non scarica né distribuisce aggiornamenti da altri computer. Su reti con banda limitata verso Internet il traffico aumenta perché ogni PC scarica per conto suo.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization",
+          "name": "DODownloadMode",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-windows-update",
+      "category": "aggiornamenti",
+      "name": "Disattiva del tutto Windows Update",
+      "description": "Imposta NoAutoUpdate = 1 e disabilita i servizi wuauserv e UsoSvc. Il PC non riceverà più nessuna correzione di sicurezza: usalo solo su macchine isolate, di collaudo o legate a un software che non tollera aggiornamenti. Windows tende comunque a riattivare i servizi.",
+      "impact": "rischioso",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+          "name": "NoAutoUpdate",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ],
+      "services": [
+        {
+          "name": "wuauserv",
+          "start": 4
+        },
+        {
+          "name": "UsoSvc",
+          "start": 4
+        }
+      ]
+    },
+    {
+      "id": "disattiva-uac",
+      "category": "sicurezza",
+      "name": "Disattiva il Controllo account utente (UAC)",
+      "description": "Mette EnableLUA a 0: sparisce ogni richiesta di elevazione e ogni amministratore lavora sempre con privilegi pieni. Cade una delle difese principali di Windows e le app del Microsoft Store smettono di partire. Richiede il riavvio.",
+      "impact": "rischioso",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+          "name": "EnableLUA",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "uac-senza-desktop-sicuro",
+      "category": "sicurezza",
+      "name": "UAC senza schermo oscurato",
+      "description": "La richiesta UAC compare come finestra normale, senza passare al desktop sicuro. Serve su macchine virtuali e in desktop remoto dove l'oscuramento è lentissimo; un programma ostile potrebbe però simulare la finestra.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+          "name": "PromptOnSecureDesktop",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "uac-senza-conferma-amministratore",
+      "category": "sicurezza",
+      "name": "UAC senza conferma per gli amministratori",
+      "description": "Gli amministratori elevano senza alcuna richiesta (ConsentPromptBehaviorAdmin = 0), mentre l'UAC resta formalmente attivo. Qualsiasi programma lanciato dall'amministratore ottiene i privilegi pieni senza avvisare.",
+      "impact": "rischioso",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+          "name": "ConsentPromptBehaviorAdmin",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-smartscreen",
+      "category": "sicurezza",
+      "name": "Disattiva SmartScreen di Windows",
+      "description": "Windows non controlla più la reputazione dei programmi scaricati prima di eseguirli. Sparisce l'avviso \"PC protetto da Windows\" ma anche il filtro che blocca gli eseguibili sconosciuti.",
+      "impact": "rischioso",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\System",
+          "name": "EnableSmartScreen",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-defender",
+      "category": "sicurezza",
+      "name": "Disattiva Microsoft Defender Antivirus",
+      "description": "Scrive il criterio DisableAntiSpyware = 1. Il PC resta senza antivirus finché non se ne installa un altro. Sulle versioni recenti di Windows la Protezione da manomissioni ignora questo valore, quindi il criterio potrebbe non avere alcun effetto: è pensato per le macchine dove si installa subito un antivirus di terze parti.",
+      "impact": "rischioso",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows Defender",
+          "name": "DisableAntiSpyware",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "attiva-desktop-remoto",
+      "category": "sicurezza",
+      "name": "Attiva il Desktop remoto",
+      "description": "Consente le connessioni RDP in ingresso, impone l'autenticazione a livello di rete (NLA) e apre il gruppo di regole del firewall. Espone la porta 3389: usare solo in rete interna o dietro VPN e solo con password robuste. Le edizioni Home non supportano il server RDP.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SYSTEM\\CurrentControlSet\\Control\\Terminal Server",
+          "name": "fDenyTSConnections",
+          "type": "REG_DWORD",
+          "data": "0"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp",
+          "name": "UserAuthentication",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ],
+      "commands": [
+        "cmd /c netsh advfirewall firewall set rule group=\"Desktop remoto\" new enable=Yes",
+        "cmd /c netsh advfirewall firewall set rule group=\"remote desktop\" new enable=Yes"
+      ]
+    },
+    {
+      "id": "password-al-risveglio",
+      "category": "sicurezza",
+      "name": "Richiedi la password al risveglio",
+      "description": "Impone la richiesta di password all'uscita dalla sospensione, sia a batteria sia con l'alimentatore, e toglie all'utente la possibilità di disattivarla.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Power\\PowerSettings\\0e796bdb-100d-47d6-a2d5-f7d2daa51f51",
+          "name": "ACSettingIndex",
+          "type": "REG_DWORD",
+          "data": "1"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Power\\PowerSettings\\0e796bdb-100d-47d6-a2d5-f7d2daa51f51",
+          "name": "DCSettingIndex",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "nascondi-ultimo-utente",
+      "category": "sicurezza",
+      "name": "Non mostrare l'ultimo utente collegato",
+      "description": "La schermata di accesso non propone più il nome dell'ultimo utente: chi accede deve digitare sia nome sia password. Un po' più scomodo, un nome utente in meno da regalare a chi passa davanti al PC.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+          "name": "DontDisplayLastUserName",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-autoplay",
+      "category": "sicurezza",
+      "name": "Disattiva AutoPlay e AutoRun",
+      "description": "Nessun supporto rimovibile viene eseguito o proposto automaticamente (NoDriveTypeAutoRun = 255). Chiude la strada ai malware su chiavette USB; l'utente deve aprire il supporto da Esplora file.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+          "name": "NoDriveTypeAutoRun",
+          "type": "REG_DWORD",
+          "data": "255"
+        },
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
+          "name": "NoAutorun",
+          "type": "REG_DWORD",
+          "data": "1"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-smb1",
+      "category": "sicurezza",
+      "name": "Rimuovi il protocollo SMB 1.0",
+      "description": "Disattiva la funzionalità SMB1Protocol con DISM. È il protocollo usato da WannaCry: va tolto sempre, tranne dove ci sono NAS, fotocopiatrici o gestionali antichi che parlano solo SMB1.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_disable": [
+        "SMB1Protocol"
+      ]
+    },
+    {
+      "id": "disattiva-powershell-2",
+      "category": "sicurezza",
+      "name": "Rimuovi PowerShell 2.0",
+      "description": "Disattiva il motore PowerShell v2, che non registra i log dei blocchi di script ed è usato per aggirare i controlli. Script molto vecchi scritti per la v2 potrebbero non partire più.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_disable": [
+        "MicrosoftWindowsPowerShellV2Root"
+      ]
+    },
+    {
+      "id": "niente-richiesta-profilo-rete",
+      "category": "rete",
+      "name": "Niente richiesta \"Rete pubblica o privata?\"",
+      "description": "Crea la chiave NewNetworkWindowOff: collegando una rete nuova Windows non apre più il riquadro che chiede se renderla individuabile. La rete resta nel profilo predefinito (pubblico), quindi più chiuso.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c reg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Network\\NewNetworkWindowOff\" /f"
+      ]
+    },
+    {
+      "id": "disattiva-ipv6",
+      "category": "rete",
+      "name": "Disattiva IPv6",
+      "description": "Imposta DisabledComponents = 0xFF su Tcpip6: IPv6 viene disattivato su tutte le interfacce e si preferisce IPv4. Microsoft sconsiglia di disattivare IPv6 (alcuni componenti, DirectAccess e Hyper-V lo danno per scontato): farlo solo se la rete è interamente IPv4. Richiede il riavvio.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters",
+          "name": "DisabledComponents",
+          "type": "REG_DWORD",
+          "data": "255"
+        }
+      ]
+    },
+    {
+      "id": "disattiva-llmnr",
+      "category": "rete",
+      "name": "Disattiva LLMNR (risoluzione nomi multicast)",
+      "description": "Spegne la risoluzione nomi multicast, sfruttata dagli attacchi di tipo Responder per rubare gli hash delle credenziali. Serve che il DNS interno risolva correttamente i nomi dei PC.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient",
+          "name": "EnableMulticast",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "condivisione-senza-password",
+      "category": "rete",
+      "name": "Condivisione senza password protetta",
+      "description": "Toglie la restrizione che impedisce agli account senza password di accedere dalla rete (LimitBlankPasswordUse = 0). Rende possibile la condivisione \"aperta\" tipica dei piccoli uffici; abbassa nettamente la sicurezza: da non usare su reti non fidate.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "reg": [
+        {
+          "scope": "HKLM",
+          "path": "SYSTEM\\CurrentControlSet\\Control\\Lsa",
+          "name": "LimitBlankPasswordUse",
+          "type": "REG_DWORD",
+          "data": "0"
+        }
+      ]
+    },
+    {
+      "id": "consenti-ping",
+      "category": "rete",
+      "name": "Consenti il ping (ICMP in ingresso)",
+      "description": "Aggiunge una regola del firewall che accetta l'echo request IPv4. Il PC risponde al ping, cosa che serve a quasi tutti i sistemi di monitoraggio e all'inventario di rete.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c netsh advfirewall firewall add rule name=\"Pixio - Ping ICMPv4\" protocol=icmpv4:8,any dir=in action=allow"
+      ]
+    },
+    {
+      "id": "attiva-individuazione-rete",
+      "category": "rete",
+      "name": "Attiva Individuazione rete e condivisione file",
+      "description": "Apre i gruppi di regole del firewall di Individuazione rete e Condivisione file e stampanti (i comandi sono ripetuti in italiano e in inglese perché il nome del gruppo è tradotto). Il PC diventa visibile in Rete: comodo in ufficio, da evitare sulle reti pubbliche.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c netsh advfirewall firewall set rule group=\"Individuazione rete\" new enable=Yes",
+        "cmd /c netsh advfirewall firewall set rule group=\"Network Discovery\" new enable=Yes",
+        "cmd /c netsh advfirewall firewall set rule group=\"Condivisione file e stampanti\" new enable=Yes",
+        "cmd /c netsh advfirewall firewall set rule group=\"File and Printer Sharing\" new enable=Yes"
+      ]
+    },
+    {
+      "id": "attiva-net-35",
+      "category": "componenti",
+      "name": "Attiva .NET Framework 3.5",
+      "description": "Abilita la funzionalità NetFx3, richiesta da molti gestionali e gestori di stampanti fiscali. Senza collegamento a Internet o senza sorgente (sxs) l'operazione fallisce: prevedere il pacchetto o l'accesso a Windows Update.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_enable": [
+        "NetFx3"
+      ]
+    },
+    {
+      "id": "attiva-hyper-v",
+      "category": "componenti",
+      "name": "Attiva Hyper-V",
+      "description": "Abilita tutte le componenti Hyper-V. Richiede virtualizzazione attiva nel BIOS e un riavvio; convive male con VirtualBox e VMware Workstation nelle versioni più vecchie. Solo edizioni Pro, Enterprise ed Education.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_enable": [
+        "Microsoft-Hyper-V-All"
+      ]
+    },
+    {
+      "id": "attiva-telnet-client",
+      "category": "componenti",
+      "name": "Attiva il client Telnet",
+      "description": "Aggiunge telnet.exe, comodo per provare se una porta TCP risponde. Non attiva nessun server: nessuna porta viene aperta.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_enable": [
+        "TelnetClient"
+      ]
+    },
+    {
+      "id": "attiva-sandbox",
+      "category": "componenti",
+      "name": "Attiva Windows Sandbox",
+      "description": "Abilita la sandbox usa e getta per provare programmi sospetti. Richiede virtualizzazione hardware e riavvio; non disponibile nelle edizioni Home.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_enable": [
+        "Containers-DisposableClientVM"
+      ]
+    },
+    {
+      "id": "attiva-wsl",
+      "category": "componenti",
+      "name": "Attiva il sottosistema Linux (WSL)",
+      "description": "Abilita il sottosistema Windows per Linux e la piattaforma macchine virtuali. Serve un riavvio e poi l'installazione di una distribuzione; occupa spazio e apre un ambiente Linux completo sul PC.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_enable": [
+        "Microsoft-Windows-Subsystem-Linux",
+        "VirtualMachinePlatform"
+      ]
+    },
+    {
+      "id": "attiva-server-ssh",
+      "category": "componenti",
+      "name": "Attiva il server OpenSSH",
+      "description": "Installa la funzionalità facoltativa OpenSSH.Server, imposta il servizio sshd in avvio automatico e lo avvia. Apre la porta 22 in ingresso: usare solo in rete interna e con autenticazione a chiave.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "commands": [
+        "cmd /c dism /online /Add-Capability /CapabilityName:OpenSSH.Server~~~~0.0.1.0",
+        "cmd /c sc config sshd start= auto",
+        "cmd /c net start sshd"
+      ]
+    },
+    {
+      "id": "rimuovi-windows-media-player",
+      "category": "componenti",
+      "name": "Rimuovi Windows Media Player (classico)",
+      "description": "Disattiva la funzionalità WindowsMediaPlayer. Restano il nuovo Media Player del Microsoft Store e i codec di sistema; si perdono i lettori CD/DVD legati alla vecchia applicazione.",
+      "impact": "sicuro",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_disable": [
+        "WindowsMediaPlayer"
+      ]
+    },
+    {
+      "id": "attiva-client-nfs",
+      "category": "componenti",
+      "name": "Attiva il client NFS",
+      "description": "Abilita il client NFS per montare condivisioni Unix/Linux e datastore NAS. Aggiunge il comando mount e il supporto alle unità di rete NFS.",
+      "impact": "attenzione",
+      "editions": [
+        "10",
+        "11"
+      ],
+      "features_enable": [
+        "ServicesForNFS-ClientOnly",
+        "ClientForNFS-Infrastructure"
+      ]
+    }
+  ]
+}

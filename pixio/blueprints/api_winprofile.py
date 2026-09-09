@@ -2,6 +2,7 @@
 
 Rotte:
   GET    /api/winprofiles                      elenco + valori predefiniti + elenchi per la GUI
+                                               (compreso il catalogo delle ottimizzazioni, sezione 10)
   POST   /api/winprofiles                      crea (con "preset" come base, sovrascritto da "settings")
   GET    /api/winprofiles/<id>                 un profilo
   PUT    /api/winprofiles/<id>                 aggiorna nome/nota/impostazioni
@@ -44,6 +45,16 @@ def _presets():
         return []
 
 
+def _tweaks():
+    """Catalogo delle ottimizzazioni. Se il file manca la pagina deve aprirsi lo stesso, con
+    l'elenco vuoto: i profili già salvati continuano a funzionare, semplicemente non si possono
+    più scegliere nuove ottimizzazioni."""
+    try:
+        return winprofile.tweaks_catalog()
+    except Exception:  # noqa: BLE001 - il catalogo è un di più, non un requisito
+        return {"categories": [], "items": []}
+
+
 @bp.route("/api/winprofiles")
 def list_profiles():
     return jsonify({
@@ -56,6 +67,11 @@ def list_profiles():
         "groups": winprofile.groups_list(),
         "architectures": list(winprofile.ARCHITECTURES),
         "power_schemes": list(winprofile.POWER_SCHEMES),
+        # catalogo delle ottimizzazioni in stile nLite (docs/API.md, sezione 10)
+        "tweaks": _tweaks(),
+        "impacts": list(winprofile.IMPACTS),
+        "service_starts": [{"id": v, "name": winprofile.SERVICE_START_LABELS[v]}
+                           for v in winprofile.SERVICE_STARTS],
         "presets": _presets(),
         "server_ip": _server_ip(),
     })
