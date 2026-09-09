@@ -294,11 +294,14 @@ def has_udf(path):
 
 
 def mount_iso_ro(rp, mp):
-    """Loop mount in sola lettura, leggibile da tutti; prova udf (se presente), poi automatico."""
+    """Loop mount in sola lettura, leggibile ed eseguibile da tutti; prova udf (se presente), poi automatico.
+
+    Il bit di esecuzione serve: il setup di Windows viene lanciato dalla condivisione, e senza
+    quel bit Samba nega l'apertura in esecuzione."""
     attempts = []
     if has_udf(rp):
-        attempts.append(["mount", "-t", "udf", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp])
-    attempts.append(["mount", "-o", "loop,ro,mode=0444,dmode=0555", rp, mp])
+        attempts.append(["mount", "-t", "udf", "-o", "loop,ro,mode=0555,dmode=0555", rp, mp])
+    attempts.append(["mount", "-o", "loop,ro,mode=0555,dmode=0555", rp, mp])
     attempts.append(["mount", "-o", "loop,ro", rp, mp])
     err = ""
     for cmd in attempts:
@@ -581,7 +584,7 @@ def render_smb(cfg):
     share = lib.get("samba_share_name", "iso") or "iso"
     if not SMBNAME_RE.match(share):
         raise HelperError("nome share non valido")
-    iface, ip, _, _ = net_settings(cfg)
+    net_settings(cfg)      # convalida la rete configurata prima di scrivere il file
     lines = [
         "# Generato da Pixio (pixio-helper apply samba). Non modificare a mano.",
         "[global]",
@@ -594,8 +597,9 @@ def render_smb(cfg):
         "   max log size = 1000",
         "   disable netbios = yes",
         "   smb ports = 445",
-        f"   interfaces = lo {iface}",
-        "   bind interfaces only = yes",
+        # Niente "interfaces"/"bind interfaces only": smbd all'avvio puo' precedere l'indirizzo
+        # DHCP della scheda e restare in ascolto solo su 127.0.0.1. Da fuori sembra la porta 445
+        # chiusa (errore di sistema 53 sui PC in installazione) mentre in locale tutto risponde.
         "   load printers = no",
         "   printing = bsd",
         "   printcap name = /dev/null",
@@ -636,6 +640,10 @@ def render_smb(cfg):
             "   guest ok = no",
             f"   valid users = {wuser}",
             "   force user = nobody",
+            # I file dentro una ISO montata non hanno il bit di esecuzione, e Samba senza questo
+            # parametro rifiuta di aprirli in esecuzione: setup.exe si vede nella cartella ma
+            # avviarlo risponde "Accesso negato". Verificato in laboratorio con una prova A/B.
+            "   acl allow execute always = yes",
             "",
         ]
     return "\n".join(lines) + "\n"
@@ -705,7 +713,8 @@ def cmd_apply(a):
         enabled = cfg.get("library", {}).get("samba_share_enabled", True) or cfg.get("windows", {}).get("smb_export_enabled", False)
         if enabled:
             run(["systemctl", "enable", "--now", "smbd.service"])
-            run(["systemctl", "reload-or-restart", "smbd.service"])
+            # reload non riapre i socket: un cambio di porte o interfacce resterebbe senza effetto
+            run(["systemctl", "restart", "smbd.service"])
         else:
             run(["systemctl", "disable", "--now", "smbd.service"], check=False)
         run(["systemctl", "disable", "--now", "nmbd.service"], check=False)

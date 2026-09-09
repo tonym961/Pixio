@@ -87,9 +87,11 @@ def install_cmd(slug, cfg=None, iso=None):
             ":retry",
             "set /a tries+=1",
             f"net use S: \\\\{ip}\\pxe {cred} /persistent:no >nul 2>&1 && goto ok",
-            "if %tries% GEQ 5 goto diagnosi",
-            "echo    tentativo %tries% di 5...",
-            "ping -n 3 127.0.0.1 >nul",
+            "if %tries% GEQ 15 goto diagnosi",
+            "echo    tentativo %tries% di 15...",
+            # il ping va fatto al server, non al loopback: cosi' l'attesa serve davvero ad aspettare
+            # che la rete sia pronta invece di scandire dieci secondi a vuoto
+            f"ping -n 3 {ip} >nul",
             "goto retry",
             ":ok",
             "echo Cartella collegata.",
