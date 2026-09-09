@@ -430,6 +430,16 @@
   }
 
   // ------------------------------------------------------------------ router
+  // stato della tendina "Preset": ricordato fra una visita e l'altra
+  (function presetGroup() {
+    const grp = document.getElementById('nav-preset');
+    if (!grp) return;
+    try { if (localStorage.getItem('pixio.nav-preset-open') === '1') grp.open = true; } catch (e) { /* ignora */ }
+    grp.addEventListener('toggle', () => {
+      try { localStorage.setItem('pixio.nav-preset-open', grp.open ? '1' : '0'); } catch (e) { /* ignora */ }
+    });
+  }());
+
   const ROUTES = ['dashboard', 'iso', 'menu', 'driver', 'risposte', 'windows', 'debian', 'impostazioni', 'client', 'log', 'benvenuto'];
   const mainEl = document.getElementById('main');
 
@@ -454,6 +464,9 @@
       a.removeAttribute('aria-selected');
       if (sel) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
+    // la tendina "Preset" si apre da sola quando sei in una delle sue pagine
+    const grp = document.getElementById('nav-preset');
+    if (grp && grp.querySelector(`.nav[data-route="${name}"]`)) grp.open = true;
     appEl.classList.toggle('wizard-mode', name === 'benvenuto');
     document.title = (page && page.title ? page.title + ' · ' : '') + 'Pixio';
     if (!page) {

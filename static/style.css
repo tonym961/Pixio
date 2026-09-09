@@ -59,11 +59,18 @@ button{font:inherit}
 .nav:hover{background:var(--surface)}
 .nav[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
 .nav .n{font-size:11.5px;color:var(--muted);font-weight:500;white-space:nowrap}
-.navgroup{display:flex;flex-direction:column;gap:4px;margin:6px 0 2px}
-.navgroup-title{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:4px 12px 2px}
-.navgroup-items{display:flex;flex-direction:column;gap:4px;margin-left:12px;padding-left:8px;border-left:2px solid var(--line)}
+.navgroup{margin:2px 0}
+.navgroup-title{list-style:none;cursor:pointer;font:inherit;color:var(--ink);padding:9px 12px;border-radius:8px;display:flex;align-items:center;gap:8px;user-select:none}
+.navgroup-title::-webkit-details-marker{display:none}
+.navgroup-title:hover{background:var(--surface)}
+.navgroup-title:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.navgroup .caret{font-size:10px;color:var(--muted);transition:transform .15s}
+.navgroup[open] .caret{transform:rotate(90deg)}
+.navgroup:not([open]):has(.nav[aria-current="page"]) .navgroup-title{color:var(--accent);font-weight:600}
+.navgroup-items{display:flex;flex-direction:column;gap:4px;margin:4px 0 0 18px;padding-left:8px;border-left:2px solid var(--line)}
 .navgroup-items .nav.sub{padding-left:10px}
 .navgroup-items:has(.nav[aria-current="page"]){border-left-color:var(--accent)}
+@media (prefers-reduced-motion:reduce){.navgroup .caret{transition:none}}
 .side .foot{margin-top:auto;padding:10px 12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line)}
 .main{padding:22px 26px 40px;min-width:0}
 .app.wizard-mode .side{display:none}
@@ -331,9 +338,9 @@ details.custom .inner{padding-top:10px}
   .side .brand{padding:4px 8px}
   .navlist{flex-direction:row;flex-wrap:wrap;gap:4px}
   .nav{padding:7px 10px;font-size:14px}
-  .navgroup{flex-direction:row;align-items:center;gap:6px;margin:0}
-  .navgroup-title{padding:0 4px}
-  .navgroup-items{flex-direction:row;margin-left:0;padding-left:6px}
+  .navgroup{position:relative}
+  .navgroup-title{padding:9px 10px}
+  .navgroup[open] .navgroup-items{position:absolute;z-index:20;top:100%;left:0;min-width:170px;margin:4px 0 0;padding:6px;border-left:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:var(--shadow)}
   .side .foot{margin-top:0;margin-left:auto;border-top:0;padding:6px 8px}
   .main{padding:16px 14px 32px}
   .tiles{grid-template-columns:1fr 1fr}
