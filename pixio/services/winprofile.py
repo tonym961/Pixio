@@ -22,10 +22,12 @@ scelgono per identificativo in settings["tweaks"]; il catalogo si carica una vol
 se il file cambia (tweaks_catalog(), tweak(id)).
 
 Il campo settings["target"] dice a che tipo di Windows è destinato il profilo: "client" (Windows 10
-e 11, predefinito) oppure "server" (Windows Server 2016-2025 con interfaccia grafica). Ogni voce del
-catalogo dichiara in "editions" le piattaforme su cui ha davvero effetto: la validazione rifiuta le
-voci non compatibili col target, la generazione le salta senza errori e le app Appx da rimuovere
-vengono ignorate quando il target è "server" (docs/API.md, sezione 11).
+e 11 con Microsoft Store, predefinito), "10-ltsc" (Windows 10 Enterprise LTSC 2019/2021),
+"11-ltsc" (Windows 11 Enterprise LTSC 2024) oppure "server" (Windows Server 2016-2025 con
+interfaccia grafica). Ogni voce del catalogo dichiara in "editions" le piattaforme su cui ha
+davvero effetto: la validazione rifiuta le voci non compatibili col target, la generazione le salta
+senza errori e le app Appx da rimuovere vengono ignorate con i tipi senza Microsoft Store, cioè
+"server" e le due LTSC (docs/API.md, sezioni 11 e 12).
 
 ATTENZIONE alle password: autounattend.xml le contiene in chiaro (PlainText true) e il file viene servito
 ai client via HTTP senza autenticazione. È il funzionamento previsto dal contratto; la GUI lo dice a chiare
@@ -95,17 +97,53 @@ POWER_GUIDS = {
 }
 LOCAL_GROUPS = ("Users", "Administrators", "Power Users", "Remote Desktop Users", "Guests")
 
-# Tipo di Windows a cui è destinato il profilo (docs/API.md, sezione 11). Serve a tenere fuori dai
-# server le ottimizzazioni che toccano componenti che su Windows Server non esistono (Cortana,
-# Copilot, widget, Xbox, Microsoft Store, esperienze consumer, barra applicazioni di Windows 11).
-TARGETS = ("client", "server")
+# Tipo di Windows a cui è destinato il profilo (docs/API.md, sezioni 11 e 12). Serve a tenere fuori
+# dai server e dalle edizioni Enterprise LTSC le ottimizzazioni che toccano componenti che lì non
+# esistono: su Windows Server mancano Cortana, Copilot, widget, Xbox, Microsoft Store, esperienze
+# consumer e la barra applicazioni di Windows 11; nelle LTSC (Windows 10 Enterprise LTSC 2019/2021
+# e Windows 11 Enterprise LTSC 2024) mancano il Microsoft Store e le app che ne dipendono, Cortana,
+# Copilot, widget e notizie, Teams e Chat, Xbox e Game Bar, le esperienze consumer, i contenuti
+# consigliati e il client OneDrive preinstallato, mentre restano telemetria, Windows Search,
+# Defender, SmartScreen, UAC, Windows Update, servizi, rete, effetti visivi, energia e componenti
+# opzionali.
+TARGETS = ("client", "10-ltsc", "11-ltsc", "server")
 TARGET_LABELS = {
     "client": "Windows client (10 e 11)",
+    "10-ltsc": "Windows 10 Enterprise LTSC (2019 e 2021)",
+    "11-ltsc": "Windows 11 Enterprise LTSC (2024)",
     "server": "Windows Server (2016-2025, con interfaccia grafica)",
 }
 # Piattaforme ammesse nel campo "editions" del catalogo e piattaforme coperte da ogni target.
-PLATFORMS = ("10", "11", "server")
-TARGET_PLATFORMS = {"client": ("10", "11"), "server": ("server",)}
+PLATFORMS = ("10", "10-ltsc", "11", "11-ltsc", "server")
+PLATFORM_LABELS = {
+    "10": "Windows 10",
+    "10-ltsc": "Windows 10 Enterprise LTSC",
+    "11": "Windows 11",
+    "11-ltsc": "Windows 11 Enterprise LTSC",
+    "server": "Windows Server",
+}
+TARGET_PLATFORMS = {
+    "client": ("10", "11"),
+    "10-ltsc": ("10-ltsc",),
+    "11-ltsc": ("11-ltsc",),
+    "server": ("server",),
+}
+# Tipi di Windows senza Microsoft Store: la rimozione delle app Appx viene ignorata in generazione
+# (docs/API.md, sezione 12). L'elenco resta scritto nel profilo, così tornando a un tipo con lo
+# Store si ritrova.
+TARGETS_SENZA_STORE = ("10-ltsc", "11-ltsc", "server")
+# Perché una voce non compatibile non ha effetto su quel tipo di Windows: entra nel messaggio di
+# errore della validazione, che deve dire quale voce e perché.
+TARGET_MOTIVI = {
+    "server": "tocca componenti che su Windows Server non esistono",
+    "10-ltsc": "tocca componenti che in Windows 10 Enterprise LTSC non sono presenti (Microsoft "
+               "Store e le app che ne dipendono, Cortana, contenuti consigliati, esperienze "
+               "consumer, Xbox, OneDrive preinstallato, aggiornamenti di funzionalità)",
+    "11-ltsc": "tocca componenti che in Windows 11 Enterprise LTSC non sono presenti (Microsoft "
+               "Store e le app che ne dipendono, Cortana, Copilot, widget e notizie, Teams e Chat, "
+               "contenuti consigliati, esperienze consumer, Xbox, OneDrive preinstallato, "
+               "aggiornamenti di funzionalità)",
+}
 
 # Avvio dei servizi come lo scrive il registro (chiave Start): 2 automatico, 3 manuale, 4 disabilitato.
 # 0 e 1 (driver di avvio) non si toccano da un file di risposta: renderebbero il sistema non avviabile.
@@ -191,7 +229,8 @@ APPS = [
 
 # Valori predefiniti: PC italiano, disco UEFI, OOBE saltato, driver di Pixio attivi.
 DEFAULTS = {
-    "target": "client",          # "client" (Windows 10/11) oppure "server" (Windows Server)
+    # "client" (Windows 10/11), "10-ltsc", "11-ltsc" (Enterprise LTSC) oppure "server"
+    "target": "client",
     "language": "it-IT",
     "input_locale": "it-IT",
     "timezone": "W. Europe Standard Time",
@@ -250,16 +289,21 @@ def groups_list():
 
 
 def targets_list():
-    """Tipi di Windows per la tendina della GUI: [{id, name}] (docs/API.md, sezione 11)."""
+    """Tipi di Windows per la tendina della GUI: [{id, name}] (docs/API.md, sezioni 11 e 12)."""
     return [{"id": t, "name": TARGET_LABELS[t]} for t in TARGETS]
 
 
+def target_ha_store(target):
+    """True se su quel tipo di Windows c'è il Microsoft Store (e quindi le app Appx da rimuovere)."""
+    return _txt(target).lower() not in TARGETS_SENZA_STORE
+
+
 def check_target(valore, default="client"):
-    """Normalizza settings.target. Alza ValueError se non è né client né server."""
+    """Normalizza settings.target. Alza ValueError se non è uno dei tipi previsti."""
     t = _txt(valore).lower() or default
     if t not in TARGETS:
-        raise ValueError("Tipo di Windows non valido: " + " oppure ".join(TARGETS)
-                         + " (client = Windows 10/11, server = Windows Server)")
+        raise ValueError("Tipo di Windows non valido: " + ", ".join(TARGETS) + ". "
+                         + "; ".join("%s = %s" % (x, TARGET_LABELS[x]) for x in TARGETS))
     return t
 
 
@@ -354,8 +398,14 @@ def tweak_platforms(voce):
 
 
 def tweak_compatibile(voce, target):
-    """True se la voce ha effetto sul tipo di Windows scelto (docs/API.md, sezione 11)."""
+    """True se la voce ha effetto sul tipo di Windows scelto (docs/API.md, sezioni 11 e 12)."""
     return bool(tweak_platforms(voce) & set(TARGET_PLATFORMS.get(target, PLATFORMS)))
+
+
+def tweak_piattaforme_testo(voce):
+    """Piattaforme di una voce scritte per esteso, nell'ordine di PLATFORMS: "Windows 10, Windows 11"."""
+    p = tweak_platforms(voce)
+    return ", ".join(PLATFORM_LABELS[x] for x in PLATFORMS if x in p)
 
 
 def tweaks_incompatibili(tweak_ids_scelti, target):
@@ -372,8 +422,8 @@ def _tweaks_scelti(st):
     """Voci scelte nel profilo, sempre nell'ordine del catalogo (generazione stabile).
 
     Le voci non compatibili con settings.target vengono saltate senza sollevare eccezioni: la
-    validazione le rifiuta al salvataggio, ma un profilo salvato prima della distinzione
-    client/server deve continuare a generare un XML valido (docs/API.md, sezione 11).
+    validazione le rifiuta al salvataggio, ma un profilo salvato prima della distinzione fra
+    client, LTSC e server deve continuare a generare un XML valido (docs/API.md, sezioni 11 e 12).
     """
     indice = _load_tweaks()["index"]
     target = _txt(st.get("target")).lower() or DEFAULTS["target"]
@@ -481,15 +531,17 @@ def validate(settings, rifiuta_incompatibili=True):
     Con `rifiuta_incompatibili` (predefinito) le ottimizzazioni che non hanno effetto sul tipo di
     Windows scelto in `target` fanno fallire la validazione, dicendo quale voce e perché. La
     generazione dell'XML chiama invece la validazione con False e si limita a saltarle
-    (docs/API.md, sezione 11): un profilo salvato prima della distinzione client/server, o un
-    modello cambiato sotto i piedi, deve continuare a produrre un autounattend.xml valido.
+    (docs/API.md, sezioni 11 e 12): un profilo salvato prima della distinzione fra client, LTSC e
+    server, o un modello cambiato sotto i piedi, deve continuare a produrre un autounattend.xml
+    valido.
     """
     if settings is not None and not isinstance(settings, dict):
         raise ValueError("Impostazioni non valide: atteso un oggetto")
     s = deep_merge(copy.deepcopy(DEFAULTS), settings or {})
     out = {}
 
-    # --- tipo di Windows (client oppure server): decide quali ottimizzazioni sono ammesse
+    # --- tipo di Windows (client, 10-ltsc, 11-ltsc, server): decide quali ottimizzazioni sono
+    # ammesse e se le app del Microsoft Store hanno senso
     out["target"] = check_target(s.get("target"), DEFAULTS["target"])
 
     # --- lingua e area
@@ -667,8 +719,9 @@ def validate(settings, rifiuta_incompatibili=True):
         raise ValueError("Schema di alimentazione non valido: " + " oppure ".join(POWER_SCHEMES))
     out["power_scheme"] = scheme
 
-    # --- app da rimuovere (con target "server" restano scritte ma non generano comandi: vedi
-    # _pass_oobe. Non si scartano qui perché tornando al tipo "client" l'elenco deve riapparire)
+    # --- app da rimuovere (con i tipi senza Microsoft Store - server e LTSC - restano scritte ma
+    # non generano comandi: vedi _pass_oobe. Non si scartano qui perché tornando a un tipo con lo
+    # Store l'elenco deve riapparire)
     apps = []
     for a in _list(s.get("remove_apps")):
         a = _txt(a)
@@ -715,12 +768,8 @@ def validate(settings, rifiuta_incompatibili=True):
     indice = _load_tweaks()["index"]
     for tid in (tweaks_incompatibili(scelti, out["target"]) if rifiuta_incompatibili else []):
         voce = indice[tid]
-        piattaforme = ", ".join(p for p in PLATFORMS if p in tweak_platforms(voce))
-        if out["target"] == "server":
-            motivo = ("tocca componenti che su Windows Server non esistono; vale solo su "
-                      "Windows " + piattaforme)
-        else:
-            motivo = "vale solo su Windows Server"
+        motivo = TARGET_MOTIVI.get(out["target"], "")
+        motivo = (motivo + "; " if motivo else "") + "vale solo su " + tweak_piattaforme_testo(voce)
         raise ValueError("L'ottimizzazione \"%s\" (%s) non è compatibile con il tipo di Windows "
                          "scelto (%s): %s. Toglila dalla selezione oppure cambia il tipo di Windows."
                          % (voce.get("name", tid), tid, TARGET_LABELS[out["target"]], motivo))
@@ -1326,14 +1375,17 @@ def _pass_oobe(root, st, arch, em=None):
         agg(_reg_add("HKCU", avanzate, "HideFileExt", "REG_DWORD",
                      1 if st["hide_files_ext"] else 0),
             "Estensioni dei file " + ("nascoste" if st["hide_files_ext"] else "visibili"))
-    # Le app Appx da rimuovere non hanno senso su Windows Server: non c'è il Microsoft Store e le
-    # app preinstallate dei client non ci sono. Restano scritte nel profilo (così tornando al tipo
-    # "client" si ritrovano) ma non generano nessun comando: il contratto (docs/API.md, sezione 11)
-    # non prevede avvisi restituiti dalla validazione, quindi la cosa si dice qui e nell'XML.
-    apps_da_rimuovere = [] if st["target"] == "server" else st["remove_apps"]
-    if st["target"] == "server" and st["remove_apps"]:
-        shell.append(ET.Comment(" Le app da rimuovere sono state ignorate: il profilo è per Windows "
-                                "Server, dove le app del Microsoft Store non sono installate "))
+    # Le app Appx da rimuovere non hanno senso dove non c'è il Microsoft Store: Windows Server e le
+    # edizioni Enterprise LTSC non hanno né lo Store né le app preinstallate dei client. Restano
+    # scritte nel profilo (così tornando a un tipo con lo Store si ritrovano) ma non generano
+    # nessun comando: il contratto (docs/API.md, sezioni 11 e 12) non prevede avvisi restituiti
+    # dalla validazione, quindi la cosa si dice qui e nell'XML.
+    con_store = target_ha_store(st["target"])
+    apps_da_rimuovere = st["remove_apps"] if con_store else []
+    if not con_store and st["remove_apps"]:
+        shell.append(ET.Comment(" Le app da rimuovere sono state ignorate: il profilo è per %s, "
+                                "dove il Microsoft Store e le sue app non sono installati "
+                                % TARGET_LABELS.get(st["target"], st["target"])))
     for app in apps_da_rimuovere:
         agg("powershell -NoProfile -ExecutionPolicy Bypass -Command "
             f"\"Get-AppxPackage -AllUsers -Name '{app}' | Remove-AppxPackage -ErrorAction "

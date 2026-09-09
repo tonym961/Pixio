@@ -3,7 +3,7 @@
 Rotte:
   GET    /api/winprofiles                      elenco + valori predefiniti + elenchi per la GUI
                                                (compreso il catalogo delle ottimizzazioni, sezione 10,
-                                               e i tipi di Windows client/server, sezione 11)
+                                               e i tipi di Windows client/LTSC/server, sezioni 11 e 12)
   POST   /api/winprofiles                      crea (con "preset" come base, sovrascritto da "settings")
   GET    /api/winprofiles/<id>                 un profilo
   PUT    /api/winprofiles/<id>                 aggiorna nome/nota/impostazioni
@@ -66,8 +66,8 @@ def list_profiles():
         "apps": winprofile.apps_list(),
         "disk_modes": winprofile.disk_modes_list(),
         "groups": winprofile.groups_list(),
-        # tipo di Windows del profilo: client oppure server (docs/API.md, sezione 11).
-        # Ogni voce del catalogo porta il suo "editions", così la GUI filtra da sola.
+        # tipo di Windows del profilo: client, 10-ltsc, 11-ltsc oppure server (docs/API.md,
+        # sezioni 11 e 12). Ogni voce del catalogo porta il suo "editions", così la GUI filtra da sola.
         "targets": winprofile.targets_list(),
         "architectures": list(winprofile.ARCHITECTURES),
         "power_schemes": list(winprofile.POWER_SCHEMES),

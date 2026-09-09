@@ -282,3 +282,31 @@ Quattro preset Windows tarati per edizione, con `target`, `edition_index`, chiav
   piano prestazioni elevate, niente sospensione, aggiornamenti senza riavvio automatico.
 I preset generici esistenti (`win-postazione-aziendale`, `win-pc-singolo`, `win-laboratorio`, `win-minimale`, `win-privacy`, `win-prestazioni`)
 restano, con `target` coerente. Nella GUI i preset vanno mostrati raggruppati: prima quelli per edizione, poi quelli generici.
+
+## 13. Lingua di Windows installata in automatico
+Nuovo campo `settings.language_install` del profilo Windows:
+```
+{"enabled": false, "languages": ["it-IT"], "source": "windows-update" | "file",
+ "file_url": "", "set_system": true, "geo_id": 118, "keyboard": "it-IT"}
+```
+Serve alle ISO in inglese (per esempio Windows Server 2022 English, il cui install.wim contiene solo en-US):
+l'installazione parte in inglese e si ritrova in italiano da sola, senza interventi manuali.
+Comandi generati in `FirstLogonCommands` (verificati sulla documentazione Microsoft, modulo LanguagePackManagement
+presente in Windows 10/11 e Windows Server 2019/2022/2025):
+- sorgente `windows-update` (nessun file da procurarsi, serve accesso a Windows Update):
+  `powershell -NoProfile -ExecutionPolicy Bypass -Command "Install-Language -Language <tag> -CopyToSettings"`
+- sorgente `file` (pacchetto già caricato in Pixio, per le reti senza accesso a Windows Update):
+  `curl.exe -L -o %TEMP%\lang.cab <file_url>` seguito da
+  `dism /online /add-package /packagepath:%TEMP%\lang.cab /norestart`
+- con `set_system` a vero, dopo l'installazione della prima lingua:
+  `Set-SystemPreferredUILanguage <tag>`, `Set-WinUILanguageOverride -Language <tag>`,
+  `Set-WinUserLanguageList <tag> -Force`, `Set-Culture <tag>`, `Set-WinHomeLocation -GeoId <geo_id>`
+  (Italia = 118). Il cambio diventa effettivo al riavvio successivo, che il setup fa comunque.
+Validazione: tag BCP-47 (`^[a-z]{2}(-[A-Za-z]{2,8})*$`), massimo 5 lingue, `file_url` solo http/https,
+`geo_id` intero fra 0 e 100000, sorgente fra i due valori ammessi. Con `enabled` falso non viene generato nulla.
+`GET /api/winprofiles` espone `languages_install:[{tag,name,geo_id}]` con l'elenco delle lingue più comuni in Italia
+(italiano, inglese, tedesco, francese, spagnolo) per riempire la tendina.
+Nella GUI: riquadro "Lingua da installare" nella sezione Lingua e area, con interruttore, scelta della lingua,
+scelta della sorgente e campo per l'indirizzo del pacchetto, e una nota che spiega quando serve (ISO in una lingua diversa
+da quella voluta) e che con Windows Update il server deve poter raggiungere internet.
+Il preset `winserver` deve avere questa funzione già attiva su `it-IT` con sorgente Windows Update.

@@ -1,5 +1,5 @@
 {
-  "_nota": "Catalogo delle ottimizzazioni Windows in stile nLite (docs/API.md, sezione 10). File di sola lettura: fa parte del codice, non della configurazione. Percorsi e valori verificati sulla documentazione Microsoft e sui modelli amministrativi (ADMX): non aggiungere voci non verificate. Le chiavi HKLM sono criteri di sistema, quelle HKCU vengono scritte sul profilo predefinito (C:\\Users\\Default\\NTUSER.DAT) e valgono quindi per tutti gli utenti creati dopo l'installazione. Il campo \"editions\" elenca le piattaforme su cui la voce ha davvero effetto (\"10\", \"11\", \"server\" per Windows Server 2016-2025 con interfaccia grafica, docs/API.md sezione 11): le voci che toccano componenti assenti su Server (Cortana, Copilot, widget, Xbox, Microsoft Store, esperienze consumer, barra applicazioni di Windows 11) non hanno \"server\".",
+  "_nota": "Catalogo delle ottimizzazioni Windows in stile nLite (docs/API.md, sezione 10). File di sola lettura: fa parte del codice, non della configurazione. Percorsi e valori verificati sulla documentazione Microsoft e sui modelli amministrativi (ADMX): non aggiungere voci non verificate. Le chiavi HKLM sono criteri di sistema, quelle HKCU vengono scritte sul profilo predefinito (C:\\Users\\Default\\NTUSER.DAT) e valgono quindi per tutti gli utenti creati dopo l'installazione. Il campo \"editions\" elenca le piattaforme su cui la voce ha davvero effetto: \"10\" e \"11\" (client con Microsoft Store), \"10-ltsc\" e \"11-ltsc\" (Windows 10 Enterprise LTSC 2019/2021 e Windows 11 Enterprise LTSC 2024), \"server\" (Windows Server 2016-2025 con interfaccia grafica), docs/API.md sezioni 11 e 12. Le voci che toccano componenti assenti su Server (Cortana, Copilot, widget, Xbox, Microsoft Store, esperienze consumer, barra applicazioni di Windows 11) non hanno \"server\"; quelle che toccano componenti assenti nelle LTSC (Microsoft Store e le app che ne dipendono, Cortana, Copilot, widget e notizie, Teams e Chat, Xbox e Game Bar, esperienze consumer, contenuti consigliati, OneDrive preinstallato, aggiornamenti di funzionalità) non hanno \"10-ltsc\" né \"11-ltsc\".",
   "version": 1,
   "categories": [
     {
@@ -63,11 +63,13 @@
       "id": "telemetria-minima",
       "category": "privacy",
       "name": "Telemetria al minimo",
-      "description": "Imposta il criterio Consenti telemetria a 0 (Sicurezza). Windows smette di inviare i dati diagnostici facoltativi; su Home e Pro il livello minimo effettivo resta \"dati richiesti\", mentre Enterprise, Education e Windows Server arrivano davvero a zero. Si perdono le informazioni di Analisi desktop e alcune diagnosi automatiche degli errori.",
+      "description": "Imposta il criterio Consenti telemetria a 0 (Sicurezza). Windows smette di inviare i dati diagnostici facoltativi; su Home e Pro il livello minimo effettivo resta \"dati richiesti\", mentre Enterprise, Education, le Enterprise LTSC e Windows Server arrivano davvero a zero. Si perdono le informazioni di Analisi desktop e alcune diagnosi automatiche degli errori.",
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -88,7 +90,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "services": [
@@ -106,7 +110,7 @@
       "id": "niente-notifiche-feedback",
       "category": "privacy",
       "name": "Niente richieste di feedback",
-      "description": "Attiva il criterio \"Non visualizzare le notifiche di feedback\": Windows smette di chiedere all'utente com'è andata l'esperienza e non apre più l'Hub di feedback da solo. Su Windows Server non si applica: l'Hub di feedback e le sue notifiche non sono installati.",
+      "description": "Attiva il criterio \"Non visualizzare le notifiche di feedback\": Windows smette di chiedere all'utente com'è andata l'esperienza e non apre più l'Hub di feedback da solo. Su Windows Server e sulle edizioni Enterprise LTSC non si applica: l'Hub di feedback è un'app del Microsoft Store e non è installato.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -126,7 +130,7 @@
       "id": "disattiva-id-pubblicita",
       "category": "privacy",
       "name": "Disattiva l'ID pubblicità",
-      "description": "Blocca l'identificatore usato dalle app del Microsoft Store per mostrare annunci profilati, sia con il criterio di sistema sia nella preferenza del profilo utente. Gli annunci nelle app gratuite restano ma diventano generici. Su Windows Server non ci sono Microsoft Store né app che usano l'ID pubblicità: il criterio non cambierebbe nulla.",
+      "description": "Blocca l'identificatore usato dalle app del Microsoft Store per mostrare annunci profilati, sia con il criterio di sistema sia nella preferenza del profilo utente. Gli annunci nelle app gratuite restano ma diventano generici. Su Windows Server e sulle edizioni Enterprise LTSC non ci sono il Microsoft Store né le app che usano l'ID pubblicità: il criterio non cambierebbe nulla.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -153,11 +157,13 @@
       "id": "disattiva-cronologia-attivita",
       "category": "privacy",
       "name": "Disattiva la cronologia attività",
-      "description": "Windows non raccoglie più la Sequenza temporale (documenti e app aperti) e non la carica sul cloud. Si perde la ripresa delle attività fra dispositivi e la vista cronologica di Attività (WIN+TAB). La Sequenza temporale è una funzione dei Windows client: sulle installazioni Server non esiste.",
+      "description": "Windows non raccoglie più la Sequenza temporale (documenti e app aperti) e non la carica sul cloud. Si perde la ripresa delle attività fra dispositivi e la vista cronologica di Attività (WIN+TAB). La Sequenza temporale è una funzione dei Windows client, edizioni Enterprise LTSC comprese: sulle installazioni Server non esiste.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -187,7 +193,7 @@
       "id": "niente-esperienze-personalizzate",
       "category": "privacy",
       "name": "Niente esperienze personalizzate dai dati diagnostici",
-      "description": "Impedisce a Windows di usare i dati diagnostici per personalizzare consigli, annunci e suggerimenti mostrati nell'interfaccia. Applicato al profilo predefinito, vale per tutti gli utenti creati dopo l'installazione. Riguarda i suggerimenti personalizzati dell'interfaccia dei Windows client: su Server non vengono mostrati.",
+      "description": "Impedisce a Windows di usare i dati diagnostici per personalizzare consigli, annunci e suggerimenti mostrati nell'interfaccia. Applicato al profilo predefinito, vale per tutti gli utenti creati dopo l'installazione. Riguarda i suggerimenti personalizzati dell'interfaccia dei Windows client con Microsoft Store: su Server e sulle edizioni Enterprise LTSC non vengono mostrati.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -207,11 +213,13 @@
       "id": "niente-personalizzazione-input",
       "category": "privacy",
       "name": "Niente raccolta di scrittura e digitazione",
-      "description": "Disattiva la personalizzazione dell'input: Windows non raccoglie più testo digitato, input penna e rubrica per migliorare i suggerimenti. Si perdono i suggerimenti di digitazione personalizzati e il dizionario personale; il riconoscimento vocale online smette di funzionare. Su Windows Server non ci sono dettatura, input penna né suggerimenti di digitazione: la voce vale solo sui client.",
+      "description": "Disattiva la personalizzazione dell'input: Windows non raccoglie più testo digitato, input penna e rubrica per migliorare i suggerimenti. Si perdono i suggerimenti di digitazione personalizzati e il dizionario personale; il riconoscimento vocale online smette di funzionare. Su Windows Server non ci sono dettatura, input penna né suggerimenti di digitazione: la voce vale sui client, edizioni Enterprise LTSC comprese.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -245,7 +253,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -276,11 +286,13 @@
       "id": "niente-sincronizzazione-impostazioni",
       "category": "privacy",
       "name": "Niente sincronizzazione delle impostazioni",
-      "description": "Blocca la sincronizzazione di tema, password, preferenze e lingua con l'account Microsoft e impedisce all'utente di riattivarla. Utile sui PC condivisi; l'utente dovrà rifare le proprie personalizzazioni su ogni macchina. La sincronizzazione passa dall'account Microsoft, che su Windows Server non è previsto.",
+      "description": "Blocca la sincronizzazione di tema, password, preferenze e lingua con l'account Microsoft e impedisce all'utente di riattivarla. Utile sui PC condivisi; l'utente dovrà rifare le proprie personalizzazioni su ogni macchina. La sincronizzazione passa dall'account Microsoft, che su Windows Server non è previsto mentre sulle edizioni Enterprise LTSC si può usare lo stesso.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -303,11 +315,13 @@
       "id": "niente-cronologia-appunti",
       "category": "privacy",
       "name": "Niente cronologia e appunti condivisi",
-      "description": "Disattiva la cronologia degli appunti (WIN+V) e la condivisione degli appunti fra dispositivi: quello che si copia non resta in memoria né viene mandato al cloud. Si perde WIN+V. Microsoft non prevede questa funzione sulle edizioni Server: la voce vale solo sui client.",
+      "description": "Disattiva la cronologia degli appunti (WIN+V) e la condivisione degli appunti fra dispositivi: quello che si copia non resta in memoria né viene mandato al cloud. Si perde WIN+V. Microsoft non prevede questa funzione sulle edizioni Server: la voce vale sui client, edizioni Enterprise LTSC comprese.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -334,7 +348,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -355,7 +371,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -372,11 +390,13 @@
       "id": "solo-account-locali",
       "category": "privacy",
       "name": "Solo account locali (niente account Microsoft)",
-      "description": "Impedisce di aggiungere o usare account Microsoft per accedere a Windows (criterio Account: blocca gli account Microsoft, valore 3). Si perdono sincronizzazione, Store con licenze personali e ripristino della password via cloud. Su Windows Server l'accesso con account Microsoft non è previsto: il criterio non cambierebbe nulla.",
+      "description": "Impedisce di aggiungere o usare account Microsoft per accedere a Windows (criterio Account: blocca gli account Microsoft, valore 3). Si perdono sincronizzazione, Store con licenze personali e ripristino della password via cloud. Su Windows Server l'accesso con account Microsoft non è previsto: il criterio non cambierebbe nulla. Sulle edizioni Enterprise LTSC, che sono Enterprise a tutti gli effetti, l'account Microsoft si può invece aggiungere: lì il criterio serve.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -392,7 +412,7 @@
       "id": "disattiva-cortana",
       "category": "ricerca",
       "name": "Disattiva Cortana",
-      "description": "Attiva il criterio \"Consenti Cortana = disabilitato\": la ricerca resta ma non c'è più l'assistente vocale né l'elaborazione delle richieste sul cloud. Cortana non è installata sulle edizioni Server: lì il criterio non ha nulla da spegnere.",
+      "description": "Attiva il criterio \"Consenti Cortana = disabilitato\": la ricerca resta ma non c'è più l'assistente vocale né l'elaborazione delle richieste sul cloud. Cortana non è installata né sulle edizioni Server né sulle Enterprise LTSC (Windows 10 LTSC 2019/2021 e Windows 11 LTSC 2024): lì il criterio non ha nulla da spegnere.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -412,11 +432,13 @@
       "id": "ricerca-solo-locale",
       "category": "ricerca",
       "name": "Ricerca solo locale (niente risultati dal web)",
-      "description": "La casella di ricerca smette di interrogare Bing e il cloud: cerca solo file, app e impostazioni del PC. Si perdono i risultati web e le risposte rapide nel menu Start; la ricerca diventa sensibilmente più veloce. Su Windows Server la casella di ricerca non interroga Bing: la voce riguarda solo i client.",
+      "description": "La casella di ricerca smette di interrogare Bing e il cloud: cerca solo file, app e impostazioni del PC. Si perdono i risultati web e le risposte rapide nel menu Start; la ricerca diventa sensibilmente più veloce. Su Windows Server la casella di ricerca non interroga Bing: la voce riguarda i client. Sulle edizioni Enterprise LTSC Cortana non c'è ma Windows Search sì, e i risultati dal web arrivano lo stesso: la voce serve anche lì.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -446,7 +468,7 @@
       "id": "niente-evidenziazioni-ricerca",
       "category": "ricerca",
       "name": "Niente evidenziazioni nella ricerca",
-      "description": "Toglie le \"evidenziazioni della ricerca\" (ricorrenze, contenuti promozionali e immagini del giorno) dalla casella di ricerca della barra delle applicazioni. Le evidenziazioni della ricerca esistono solo sui Windows client.",
+      "description": "Toglie le \"evidenziazioni della ricerca\" (ricorrenze, contenuti promozionali e immagini del giorno) dalla casella di ricerca della barra delle applicazioni. Le evidenziazioni della ricerca sono contenuti promozionali che arrivano dal cloud: non compaiono sulle edizioni Server né sulle Enterprise LTSC.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -466,10 +488,11 @@
       "id": "ricerca-solo-icona",
       "category": "ricerca",
       "name": "Barra applicazioni: ricerca come sola icona",
-      "description": "Sostituisce la casella di ricerca larga con una piccola lente. Si recupera spazio sulla barra delle applicazioni; la ricerca continua a funzionare con WIN+S. Preferenza del profilo utente, modificabile dall'utente. Riguarda la barra delle applicazioni di Windows 11, assente sulle edizioni Server.",
+      "description": "Sostituisce la casella di ricerca larga con una piccola lente. Si recupera spazio sulla barra delle applicazioni; la ricerca continua a funzionare con WIN+S. Preferenza del profilo utente, modificabile dall'utente. Riguarda la barra delle applicazioni di Windows 11 (Windows 11 Enterprise LTSC 2024 compresa, dove Windows Search c'è), assente sulle edizioni Server.",
       "impact": "sicuro",
       "editions": [
-        "11"
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -485,7 +508,7 @@
       "id": "disattiva-copilot",
       "category": "ricerca",
       "name": "Disattiva Copilot",
-      "description": "Attiva il criterio \"Disattiva Windows Copilot\" (sia per il computer sia per il profilo predefinito) e toglie il pulsante dalla barra delle applicazioni. L'assistente non è più raggiungibile con WIN+C. Copilot non è presente sulle edizioni Server.",
+      "description": "Attiva il criterio \"Disattiva Windows Copilot\" (sia per il computer sia per il profilo predefinito) e toglie il pulsante dalla barra delle applicazioni. L'assistente non è più raggiungibile con WIN+C. Copilot non è presente sulle edizioni Server né su Windows 11 Enterprise LTSC 2024.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -518,7 +541,7 @@
       "id": "niente-esperienze-consumer",
       "category": "suggerimenti",
       "name": "Niente esperienze consumer (app installate da sole)",
-      "description": "Attiva \"Disattiva le esperienze consumer Microsoft\": Windows smette di installare da solo app consigliate e giochi (Candy Crush, TikTok, Spotify...) al primo accesso di un nuovo utente. Criterio riconosciuto su Enterprise ed Education; su Pro l'effetto è parziale. Le esperienze consumer e le app suggerite non esistono sulle installazioni Server.",
+      "description": "Attiva \"Disattiva le esperienze consumer Microsoft\": Windows smette di installare da solo app consigliate e giochi (Candy Crush, TikTok, Spotify...) al primo accesso di un nuovo utente. Criterio riconosciuto su Enterprise ed Education; su Pro l'effetto è parziale. Le esperienze consumer e le app suggerite non esistono sulle installazioni Server né sulle edizioni Enterprise LTSC, che sono senza Microsoft Store.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -538,7 +561,7 @@
       "id": "niente-suggerimenti-windows",
       "category": "suggerimenti",
       "name": "Niente suggerimenti e trucchi di Windows",
-      "description": "Spegne i messaggi \"Suggerimenti per Windows\" e le notifiche promozionali che compaiono dopo l'accesso o dopo un aggiornamento. I suggerimenti di Windows non vengono mostrati sulle edizioni Server.",
+      "description": "Spegne i messaggi \"Suggerimenti per Windows\" e le notifiche promozionali che compaiono dopo l'accesso o dopo un aggiornamento. I suggerimenti di Windows non vengono mostrati sulle edizioni Server né sulle Enterprise LTSC.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -558,7 +581,7 @@
       "id": "niente-spotlight",
       "category": "suggerimenti",
       "name": "Niente Windows Spotlight",
-      "description": "Disattiva tutte le funzioni Spotlight per il profilo predefinito: immagini dinamiche, suggerimenti di terze parti, schermata di benvenuto dopo gli aggiornamenti e contenuti consigliati in Centro notifiche e Impostazioni. Si perdono gli sfondi \"Contenuti in evidenza\". Windows Spotlight è una funzione dei client: su Server non c'è.",
+      "description": "Disattiva tutte le funzioni Spotlight per il profilo predefinito: immagini dinamiche, suggerimenti di terze parti, schermata di benvenuto dopo gli aggiornamenti e contenuti consigliati in Centro notifiche e Impostazioni. Si perdono gli sfondi \"Contenuti in evidenza\". Windows Spotlight è una funzione dei client con Microsoft Store: su Server e sulle edizioni Enterprise LTSC non c'è.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -606,7 +629,7 @@
       "id": "niente-contenuti-consigliati",
       "category": "suggerimenti",
       "name": "Niente contenuti consigliati in Start e Impostazioni",
-      "description": "Azzera i canali di contenuti consigliati del Gestore recapito contenuti nel profilo predefinito: spariscono i riquadri promozionali dal menu Start, i suggerimenti nell'app Impostazioni e le proposte nella Sequenza temporale. Il Gestore recapito contenuti non è presente sulle installazioni Server.",
+      "description": "Azzera i canali di contenuti consigliati del Gestore recapito contenuti nel profilo predefinito: spariscono i riquadri promozionali dal menu Start, i suggerimenti nell'app Impostazioni e le proposte nella Sequenza temporale. Il Gestore recapito contenuti non è presente sulle installazioni Server né sulle edizioni Enterprise LTSC.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -661,7 +684,7 @@
       "id": "niente-app-automatiche",
       "category": "suggerimenti",
       "name": "Niente app installate automaticamente",
-      "description": "Blocca l'installazione silenziosa delle app suggerite e delle app preinstallate dal produttore per i nuovi profili. Da abbinare alla rimozione delle app già presenti nell'immagine. Su Windows Server non vengono installate app suggerite: non c'è niente da bloccare.",
+      "description": "Blocca l'installazione silenziosa delle app suggerite e delle app preinstallate dal produttore per i nuovi profili. Da abbinare alla rimozione delle app già presenti nell'immagine. Su Windows Server e sulle edizioni Enterprise LTSC non vengono installate app suggerite (manca il Microsoft Store): non c'è niente da bloccare.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -702,7 +725,7 @@
       "id": "schermata-blocco-pulita",
       "category": "suggerimenti",
       "name": "Schermata di blocco senza pubblicità",
-      "description": "Toglie le immagini a rotazione di Spotlight e i \"suggerimenti e curiosità\" dalla schermata di blocco: resta lo sfondo scelto dall'amministratore. Preferenza del profilo predefinito. Le immagini a rotazione della schermata di blocco sono una funzione dei client.",
+      "description": "Toglie le immagini a rotazione di Spotlight e i \"suggerimenti e curiosità\" dalla schermata di blocco: resta lo sfondo scelto dall'amministratore. Preferenza del profilo predefinito. Le immagini a rotazione della schermata di blocco arrivano da Windows Spotlight: non ci sono sulle edizioni Server né sulle Enterprise LTSC.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -736,7 +759,7 @@
       "id": "start-senza-consigliati",
       "category": "suggerimenti",
       "name": "Menu Start senza sezione Consigliati",
-      "description": "Nasconde la sezione Consigliati del menu Start di Windows 11 e l'elenco \"Aggiunti di recente\". Il menu mostra solo le app aggiunte dall'amministratore. Riguarda il menu Start di Windows 11: le edizioni Server hanno un altro menu.",
+      "description": "Nasconde la sezione Consigliati del menu Start di Windows 11 e l'elenco \"Aggiunti di recente\". Il menu mostra solo le app aggiunte dall'amministratore. Riguarda i contenuti consigliati del menu Start di Windows 11: le edizioni Server hanno un altro menu e le Enterprise LTSC non ricevono contenuti consigliati.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -762,7 +785,7 @@
       "id": "store-senza-aggiornamenti-automatici",
       "category": "suggerimenti",
       "name": "Microsoft Store senza aggiornamenti automatici",
-      "description": "Imposta il criterio di download automatico dello Store su \"Disattivato\" (valore 2): le app Store non si aggiornano più da sole. Le app restano indietro e vanno aggiornate a mano: da usare solo dove c'è una gestione centralizzata del software. Il Microsoft Store non è presente sulle installazioni Server.",
+      "description": "Imposta il criterio di download automatico dello Store su \"Disattivato\" (valore 2): le app Store non si aggiornano più da sole. Le app restano indietro e vanno aggiornate a mano: da usare solo dove c'è una gestione centralizzata del software. Il Microsoft Store non è presente sulle installazioni Server né sulle edizioni Enterprise LTSC.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -782,7 +805,7 @@
       "id": "disattiva-onedrive",
       "category": "cloud",
       "name": "Disattiva OneDrive",
-      "description": "Attiva il criterio \"Impedisci l'utilizzo di OneDrive per l'archiviazione file\": la sincronizzazione si ferma, OneDrive sparisce da Esplora file e il salvataggio automatico di Desktop, Documenti e Immagini nel cloud non parte più. Il client resta installato. Su Windows Server OneDrive non è preinstallato: la voce è pensata per i client.",
+      "description": "Attiva il criterio \"Impedisci l'utilizzo di OneDrive per l'archiviazione file\": la sincronizzazione si ferma, OneDrive sparisce da Esplora file e il salvataggio automatico di Desktop, Documenti e Immagini nel cloud non parte più. Il client resta installato. Su Windows Server e sulle edizioni Enterprise LTSC il client OneDrive non è preinstallato: la voce è pensata per i client con Microsoft Store.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -809,7 +832,7 @@
       "id": "rimuovi-onedrive",
       "category": "cloud",
       "name": "Disinstalla il client OneDrive",
-      "description": "Chiude OneDrive e lancia la disinstallazione del client incluso in Windows. Chi usa OneDrive o SharePoint sincronizzato deve reinstallarlo a mano; non tocca i file già scaricati. Su Windows Server il client OneDrive non è preinstallato: non c'è niente da disinstallare.",
+      "description": "Chiude OneDrive e lancia la disinstallazione del client incluso in Windows. Chi usa OneDrive o SharePoint sincronizzato deve reinstallarlo a mano; non tocca i file già scaricati. Su Windows Server e sulle edizioni Enterprise LTSC il client OneDrive non è preinstallato: non c'è niente da disinstallare.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -825,7 +848,7 @@
       "id": "disattiva-widget",
       "category": "cloud",
       "name": "Disattiva i widget",
-      "description": "Attiva il criterio \"Consenti widget = disabilitato\" e toglie il pulsante dalla barra delle applicazioni: niente pannello meteo/notizie né popup al passaggio del mouse. I widget esistono solo su Windows 11: le edizioni Server non li hanno.",
+      "description": "Attiva il criterio \"Consenti widget = disabilitato\" e toglie il pulsante dalla barra delle applicazioni: niente pannello meteo/notizie né popup al passaggio del mouse. I widget esistono solo su Windows 11 con Microsoft Store: le edizioni Server e Windows 11 Enterprise LTSC 2024 non li hanno.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -851,7 +874,7 @@
       "id": "disattiva-notizie-interessi",
       "category": "cloud",
       "name": "Disattiva Notizie e interessi",
-      "description": "Spegne il pannello Notizie e interessi della barra delle applicazioni di Windows 10 (criterio Feed di Windows). Notizie e interessi è una funzione della sola barra delle applicazioni di Windows 10.",
+      "description": "Spegne il pannello Notizie e interessi della barra delle applicazioni di Windows 10 (criterio Feed di Windows). Notizie e interessi è una funzione della sola barra delle applicazioni di Windows 10 con Microsoft Store: su Windows 10 Enterprise LTSC non c'è.",
       "impact": "sicuro",
       "editions": [
         "10"
@@ -870,7 +893,7 @@
       "id": "disattiva-chat-teams",
       "category": "cloud",
       "name": "Togli l'icona Chat (Teams personale)",
-      "description": "Imposta il criterio Chat su \"Disabilitato\" (valore 3): l'icona sparisce dalla barra e l'utente non può rimetterla. Non tocca Microsoft Teams aziendale installato a parte. L'icona Chat esiste solo su Windows 11: le edizioni Server non la hanno.",
+      "description": "Imposta il criterio Chat su \"Disabilitato\" (valore 3): l'icona sparisce dalla barra e l'utente non può rimetterla. Non tocca Microsoft Teams aziendale installato a parte. L'icona Chat esiste solo su Windows 11 con Microsoft Store: le edizioni Server e Windows 11 Enterprise LTSC 2024 non la hanno.",
       "impact": "sicuro",
       "editions": [
         "11"
@@ -893,7 +916,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -914,7 +939,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -935,7 +962,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -956,7 +985,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -973,10 +1004,11 @@
       "id": "barra-applicazioni-a-sinistra",
       "category": "esplora",
       "name": "Barra delle applicazioni allineata a sinistra",
-      "description": "Riporta Start e le icone a sinistra come in Windows 10. Solo estetica, nessuna funzione persa. Riguarda la barra centrata di Windows 11: le edizioni Server hanno già la barra classica.",
+      "description": "Riporta Start e le icone a sinistra come in Windows 10. Solo estetica, nessuna funzione persa. Riguarda la barra centrata di Windows 11, Windows 11 Enterprise LTSC 2024 compresa: le edizioni Server hanno già la barra classica.",
       "impact": "sicuro",
       "editions": [
-        "11"
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -996,7 +1028,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1017,7 +1051,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1034,10 +1070,11 @@
       "id": "menu-contestuale-classico",
       "category": "esplora",
       "name": "Menu contestuale classico di Windows 11",
-      "description": "Ripristina il menu del tasto destro completo, senza il passaggio \"Mostra altre opzioni\". Il comando viene eseguito al primo accesso, quindi vale per l'utente creato dall'installazione: sugli altri profili va rifatto. Ha effetto dopo il riavvio di Esplora file. Il menu contestuale ridotto è una novità di Windows 11: le edizioni Server hanno già quello classico.",
+      "description": "Ripristina il menu del tasto destro completo, senza il passaggio \"Mostra altre opzioni\". Il comando viene eseguito al primo accesso, quindi vale per l'utente creato dall'installazione: sugli altri profili va rifatto. Ha effetto dopo il riavvio di Esplora file. Il menu contestuale ridotto è una novità di Windows 11, Windows 11 Enterprise LTSC 2024 compresa: le edizioni Server hanno già quello classico.",
       "impact": "attenzione",
       "editions": [
-        "11"
+        "11",
+        "11-ltsc"
       ],
       "commands": [
         "cmd /c reg add \"HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32\" /f /ve"
@@ -1051,7 +1088,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1068,7 +1107,7 @@
       "id": "niente-ricerca-app-nello-store",
       "category": "esplora",
       "name": "Niente \"Cerca un'app nello Store\"",
-      "description": "Aprendo un file con estensione sconosciuta Windows non propone più di cercare un'applicazione nel Microsoft Store: resta la sola finestra \"Apri con\". Su Windows Server non c'è il Microsoft Store, quindi la proposta non compare mai.",
+      "description": "Aprendo un file con estensione sconosciuta Windows non propone più di cercare un'applicazione nel Microsoft Store: resta la sola finestra \"Apri con\". Su Windows Server e sulle edizioni Enterprise LTSC non c'è il Microsoft Store, quindi la proposta non compare mai.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -1092,7 +1131,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1120,7 +1161,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1141,7 +1184,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1162,7 +1207,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "services": [
@@ -1180,7 +1227,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "services": [
@@ -1194,11 +1243,13 @@
       "id": "disattiva-avvio-rapido",
       "category": "prestazioni",
       "name": "Disattiva l'avvio rapido",
-      "description": "Spegne l'ibernazione parziale usata all'arresto: lo spegnimento diventa completo. L'avvio è qualche secondo più lento ma gli aggiornamenti dei driver e le modifiche al BIOS/UEFI vengono applicati davvero, e i doppi avvii con Linux non trovano più il disco bloccato. L'avvio rapido è una funzione dei Windows client: sulle installazioni Server l'ibernazione è già disattivata e non c'è nulla da spegnere.",
+      "description": "Spegne l'ibernazione parziale usata all'arresto: lo spegnimento diventa completo. L'avvio è qualche secondo più lento ma gli aggiornamenti dei driver e le modifiche al BIOS/UEFI vengono applicati davvero, e i doppi avvii con Linux non trovano più il disco bloccato. L'avvio rapido è una funzione dei Windows client, edizioni Enterprise LTSC comprese: sulle installazioni Server l'ibernazione è già disattivata e non c'è nulla da spegnere.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -1218,7 +1269,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -1233,7 +1286,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -1248,7 +1303,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -1260,11 +1317,13 @@
       "id": "disattiva-limitazione-energia",
       "category": "prestazioni",
       "name": "Disattiva la limitazione energetica dei processi",
-      "description": "Spegne il Power Throttling (la \"modalità efficienza\" di Gestione attività): i processi in secondo piano non vengono più rallentati. Utile su postazioni di calcolo o registratori; consumo e temperature salgono. La limitazione energetica dei processi è una funzione di risparmio dei Windows client: sulle installazioni Server la gestione dipende dal piano di alimentazione.",
+      "description": "Spegne il Power Throttling (la \"modalità efficienza\" di Gestione attività): i processi in secondo piano non vengono più rallentati. Utile su postazioni di calcolo o registratori; consumo e temperature salgono. La limitazione energetica dei processi è una funzione di risparmio dei Windows client, edizioni Enterprise LTSC comprese: sulle installazioni Server la gestione dipende dal piano di alimentazione.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "reg": [
         {
@@ -1280,11 +1339,13 @@
       "id": "disattiva-archiviazione-riservata",
       "category": "prestazioni",
       "name": "Disattiva l'archiviazione riservata",
-      "description": "Esegue dism /online /Set-ReservedStorageState /State:Disabled e libera i ~7 GB che Windows tiene da parte per gli aggiornamenti. Su dischi piccoli è spazio recuperato; gli aggiornamenti di funzionalità potrebbero poi fallire per mancanza di spazio. L'archiviazione riservata esiste solo sui Windows client: su Server non viene riservato nessuno spazio.",
+      "description": "Esegue dism /online /Set-ReservedStorageState /State:Disabled e libera i ~7 GB che Windows tiene da parte per gli aggiornamenti. Su dischi piccoli è spazio recuperato; gli aggiornamenti di funzionalità potrebbero poi fallire per mancanza di spazio. L'archiviazione riservata esiste solo sui Windows client: su Server non viene riservato nessuno spazio. Fra le LTSC c'è da Windows 10 Enterprise LTSC 2021 in poi; su LTSC 2019 (basata sulla 1809) il comando non trova nulla da liberare.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "commands": [
         "cmd /c dism /online /Set-ReservedStorageState /State:Disabled"
@@ -1294,7 +1355,7 @@
       "id": "disattiva-servizi-xbox",
       "category": "servizi",
       "name": "Disattiva i servizi Xbox",
-      "description": "Disabilita XblAuthManager, XblGameSave, XboxGipSvc e XboxNetApiSvc. Su una postazione di lavoro non serve nulla di tutto questo; su un PC dove si gioca saltano salvataggi cloud, Game Pass e i controller Xbox via cavo. I servizi Xbox non sono installati sulle edizioni Server.",
+      "description": "Disabilita XblAuthManager, XblGameSave, XboxGipSvc e XboxNetApiSvc. Su una postazione di lavoro non serve nulla di tutto questo; su un PC dove si gioca saltano salvataggi cloud, Game Pass e i controller Xbox via cavo. I servizi Xbox non sono installati sulle edizioni Server né sulle Enterprise LTSC, che non hanno né l'app Xbox né la Game Bar.",
       "impact": "sicuro",
       "editions": [
         "10",
@@ -1323,11 +1384,13 @@
       "id": "disattiva-fax",
       "category": "servizi",
       "name": "Disattiva il servizio Fax",
-      "description": "Mette il servizio Fax su disabilitato. Si perde solo l'invio fax dal modem interno, funzione praticamente mai usata. Su Windows Server il servizio appartiene al ruolo Server Fax, non installato di serie e tolto del tutto da Server 2019 in poi.",
+      "description": "Mette il servizio Fax su disabilitato. Si perde solo l'invio fax dal modem interno, funzione praticamente mai usata. Su Windows Server il servizio appartiene al ruolo Server Fax, non installato di serie e tolto del tutto da Server 2019 in poi; sui client, edizioni Enterprise LTSC comprese, il servizio c'è insieme a Fax e scanner di Windows.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "services": [
         {
@@ -1344,7 +1407,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "services": [
@@ -1362,7 +1427,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "services": [
@@ -1380,7 +1447,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1401,7 +1470,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1422,7 +1493,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "services": [
@@ -1436,11 +1509,13 @@
       "id": "disattiva-programma-insider",
       "category": "servizi",
       "name": "Disattiva il programma Windows Insider",
-      "description": "Blocca l'iscrizione alle build di anteprima e disabilita il servizio wisvc. Sui PC di produzione evita che qualcuno passi al canale Dev. Vale anche su Windows Server, che ha un proprio programma Insider.",
+      "description": "Blocca l'iscrizione alle build di anteprima e disabilita il servizio wisvc. Sui PC di produzione evita che qualcuno passi al canale Dev. Vale anche su Windows Server, che ha un proprio programma Insider. Le edizioni Enterprise LTSC non ricevono build di anteprima, ma il servizio wisvc c'è lo stesso: disabilitarlo chiude la porta a chi provasse a iscrivere la macchina.",
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1463,11 +1538,13 @@
       "id": "disattiva-bluetooth",
       "category": "servizi",
       "name": "Disattiva il supporto Bluetooth",
-      "description": "Disabilita il servizio bthserv: il PC non vede più dispositivi Bluetooth. Da non usare dove ci sono mouse, tastiere, cuffie o lettori di codici a barre senza fili. Le installazioni Server non hanno lo stack Bluetooth: il servizio bthserv non esiste.",
+      "description": "Disabilita il servizio bthserv: il PC non vede più dispositivi Bluetooth. Da non usare dove ci sono mouse, tastiere, cuffie o lettori di codici a barre senza fili. Le installazioni Server non hanno lo stack Bluetooth: il servizio bthserv non esiste. Sui client c'è sempre, edizioni Enterprise LTSC comprese.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "services": [
         {
@@ -1484,7 +1561,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1519,7 +1598,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1543,7 +1624,7 @@
       "id": "rinvia-aggiornamenti-funzionalita",
       "category": "aggiornamenti",
       "name": "Rinvia gli aggiornamenti di funzionalità",
-      "description": "Blocca il passaggio alla versione successiva di Windows per 365 giorni (canale di disponibilità generale). Gli aggiornamenti di sicurezza mensili continuano ad arrivare. Serve dove i gestionali vanno certificati prima del salto di versione. Riguarda i canali di disponibilità dei Windows client: le versioni LTSC di Windows Server non ricevono aggiornamenti di funzionalità, il passaggio di versione è un aggiornamento completo.",
+      "description": "Blocca il passaggio alla versione successiva di Windows per 365 giorni (canale di disponibilità generale). Gli aggiornamenti di sicurezza mensili continuano ad arrivare. Serve dove i gestionali vanno certificati prima del salto di versione. Riguarda i canali di disponibilità dei Windows client aggiornati ogni anno: né Windows Server né le edizioni Enterprise LTSC ricevono aggiornamenti di funzionalità (il passaggio a una LTSC successiva è un aggiornamento sul posto), quindi lì non c'è niente da rinviare.",
       "impact": "attenzione",
       "editions": [
         "10",
@@ -1581,7 +1662,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1616,7 +1699,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1637,7 +1722,9 @@
       "impact": "rischioso",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1668,7 +1755,9 @@
       "impact": "rischioso",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1689,7 +1778,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1710,7 +1801,9 @@
       "impact": "rischioso",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1731,7 +1824,9 @@
       "impact": "rischioso",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1752,7 +1847,9 @@
       "impact": "rischioso",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1773,7 +1870,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1805,7 +1904,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1833,7 +1934,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1854,7 +1957,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1882,7 +1987,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "features_disable": [
@@ -1897,7 +2004,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "features_disable": [
@@ -1912,7 +2021,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -1927,7 +2038,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1948,7 +2061,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1969,7 +2084,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "reg": [
@@ -1990,7 +2107,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -2005,7 +2124,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -2023,7 +2144,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "features_enable": [
@@ -2034,11 +2157,13 @@
       "id": "attiva-hyper-v",
       "category": "componenti",
       "name": "Attiva Hyper-V",
-      "description": "Abilita tutte le componenti Hyper-V. Richiede virtualizzazione attiva nel BIOS e un riavvio; convive male con VirtualBox e VMware Workstation nelle versioni più vecchie. Solo edizioni Pro, Enterprise ed Education. Su Windows Server Hyper-V è un ruolo con nomi diversi (Install-WindowsFeature Hyper-V): questa voce, che usa Microsoft-Hyper-V-All, vale solo sui client.",
+      "description": "Abilita tutte le componenti Hyper-V. Richiede virtualizzazione attiva nel BIOS e un riavvio; convive male con VirtualBox e VMware Workstation nelle versioni più vecchie. Solo edizioni Pro, Enterprise ed Education, quindi anche sulle Enterprise LTSC. Su Windows Server Hyper-V è un ruolo con nomi diversi (Install-WindowsFeature Hyper-V): questa voce, che usa Microsoft-Hyper-V-All, vale solo sui client.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "features_enable": [
         "Microsoft-Hyper-V-All"
@@ -2052,7 +2177,9 @@
       "impact": "sicuro",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "features_enable": [
@@ -2063,11 +2190,13 @@
       "id": "attiva-sandbox",
       "category": "componenti",
       "name": "Attiva Windows Sandbox",
-      "description": "Abilita la sandbox usa e getta per provare programmi sospetti. Richiede virtualizzazione hardware e riavvio; non disponibile nelle edizioni Home. Windows Sandbox non esiste sulle edizioni Server.",
+      "description": "Abilita la sandbox usa e getta per provare programmi sospetti. Richiede virtualizzazione hardware e riavvio; non disponibile nelle edizioni Home. Windows Sandbox non esiste sulle edizioni Server. Fra le LTSC c'è in Windows 10 Enterprise LTSC 2021 e in Windows 11 Enterprise LTSC 2024, mentre manca in LTSC 2019 (basata sulla 1809, precedente alla comparsa della funzionalità).",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "features_enable": [
         "Containers-DisposableClientVM"
@@ -2077,11 +2206,13 @@
       "id": "attiva-wsl",
       "category": "componenti",
       "name": "Attiva il sottosistema Linux (WSL)",
-      "description": "Abilita il sottosistema Windows per Linux e la piattaforma macchine virtuali. Serve un riavvio e poi l'installazione di una distribuzione; occupa spazio e apre un ambiente Linux completo sul PC. Su Windows Server è supportato da Server 2019 in poi; VirtualMachinePlatform, che serve a WSL 2, richiede Server 2022 o successivi.",
+      "description": "Abilita il sottosistema Windows per Linux e la piattaforma macchine virtuali. Serve un riavvio e poi l'installazione di una distribuzione; occupa spazio e apre un ambiente Linux completo sul PC. Su Windows Server è supportato da Server 2019 in poi; VirtualMachinePlatform, che serve a WSL 2, richiede Server 2022 o successivi. Sulle Enterprise LTSC il sottosistema è compreso nell'immagine (Microsoft lo dichiara in-box da Windows 10 Enterprise LTSC 2021).",
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "features_enable": [
@@ -2097,7 +2228,9 @@
       "impact": "attenzione",
       "editions": [
         "10",
+        "10-ltsc",
         "11",
+        "11-ltsc",
         "server"
       ],
       "commands": [
@@ -2110,11 +2243,13 @@
       "id": "rimuovi-windows-media-player",
       "category": "componenti",
       "name": "Rimuovi Windows Media Player (classico)",
-      "description": "Disattiva la funzionalità WindowsMediaPlayer. Restano il nuovo Media Player del Microsoft Store e i codec di sistema; si perdono i lettori CD/DVD legati alla vecchia applicazione. Su Windows Server la riproduzione multimediale fa parte dell'Esperienza desktop e si toglie con nomi diversi (MediaPlayback, Server-Media-Foundation): questa voce vale solo sui client.",
+      "description": "Disattiva la funzionalità WindowsMediaPlayer. Restano i codec di sistema e, sui client con Microsoft Store, il nuovo Media Player; sulle edizioni Enterprise LTSC lo Store non c'è, quindi dopo questa voce non resta nessun lettore multimediale. Si perdono anche i lettori CD/DVD legati alla vecchia applicazione. Su Windows Server la riproduzione multimediale fa parte dell'Esperienza desktop e si toglie con nomi diversi (MediaPlayback, Server-Media-Foundation): questa voce vale solo sui client.",
       "impact": "sicuro",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "features_disable": [
         "WindowsMediaPlayer"
@@ -2124,11 +2259,13 @@
       "id": "attiva-client-nfs",
       "category": "componenti",
       "name": "Attiva il client NFS",
-      "description": "Abilita il client NFS per montare condivisioni Unix/Linux e datastore NAS. Aggiunge il comando mount e il supporto alle unità di rete NFS. Su Windows Server il client NFS è la funzionalità NFS-Client di Server Manager, con nomi DISM diversi: questa voce vale solo sui client.",
+      "description": "Abilita il client NFS per montare condivisioni Unix/Linux e datastore NAS. Aggiunge il comando mount e il supporto alle unità di rete NFS. Su Windows Server il client NFS è la funzionalità NFS-Client di Server Manager, con nomi DISM diversi: questa voce vale sui client, edizioni Enterprise LTSC comprese.",
       "impact": "attenzione",
       "editions": [
         "10",
-        "11"
+        "10-ltsc",
+        "11",
+        "11-ltsc"
       ],
       "features_enable": [
         "ServicesForNFS-ClientOnly",
