@@ -65,6 +65,13 @@ def start_scan():
 def _startup():
     from . import sources
     _safe("marcatura job interrotti", jobs.mark_interrupted)
+    # le copie locali vivono in un thread: un riavvio le interrompe e senza questo resterebbero
+    # in stato "copying" per sempre, senza mai essere riprovate
+    try:
+        from . import autocache
+        _safe("copie locali interrotte", autocache.reset_interrupted)
+    except ImportError:
+        pass
     res = _safe("mount sorgenti", sources.mount_all)
     if res:
         log.info("mount sorgenti: %s", res)

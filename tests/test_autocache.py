@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 os.environ["PIXIO_NO_BACKGROUND"] = "1"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -424,3 +425,42 @@ def setUpModule():
 
 def tearDownModule():
     _iso_teardown()
+
+
+class CopieInterrotte(unittest.TestCase):
+    """Un riavvio del servizio uccide il thread della copia: senza recupero quella ISO
+    resterebbe "copying" per sempre e non verrebbe mai piu' riprovata."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_riporta_a_zero_e_butta_il_parziale(self):
+        from pixio.services import autocache
+        cache_dir = os.path.join(self.tmp, "cache")
+        os.makedirs(cache_dir)
+        parziale = os.path.join(cache_dir, "iso-a-meta.iso.part")
+        open(parziale, "wb").write(b"x" * 10)
+        cat = {"isos": {
+            "iso-a-meta": {"slug": "iso-a-meta", "cache": {"status": "copying",
+                                                           "path": os.path.join(cache_dir, "iso-a-meta.iso"),
+                                                           "progress": 42}},
+            "iso-finita": {"slug": "iso-finita", "cache": {"status": "ready", "path": "/x.iso", "progress": 100}},
+        }}
+        stati = {}
+        with mock.patch.object(autocache.catalog, "load", return_value=cat), \
+             mock.patch.object(autocache.catalog, "_set_cache_state",
+                               side_effect=lambda s, st, p, pr, error="": stati.setdefault(s, st)), \
+             mock.patch.object(autocache.C, "CACHE_DIR", cache_dir):
+            rimessi = autocache.reset_interrupted()
+        self.assertEqual(rimessi, ["iso-a-meta"])
+        self.assertEqual(stati, {"iso-a-meta": "none"})
+        self.assertFalse(os.path.exists(parziale), "il file parziale va buttato: non e' riutilizzabile")
+
+    def test_senza_copie_interrotte_non_tocca_niente(self):
+        from pixio.services import autocache
+        cat = {"isos": {"a": {"slug": "a", "cache": {"status": "ready", "path": "/x.iso", "progress": 100}}}}
+        with mock.patch.object(autocache.catalog, "load", return_value=cat), \
+             mock.patch.object(autocache.catalog, "_set_cache_state") as sets:
+            self.assertEqual(autocache.reset_interrupted(), [])
+        sets.assert_not_called()

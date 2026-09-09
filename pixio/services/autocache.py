@@ -429,6 +429,32 @@ def clear(slug=None):
     return {"freed": freed, "bytes": size}
 
 
+def reset_interrupted():
+    """Riporta a "non in cache" le copie rimaste a meta'.
+
+    Una copia vive in un thread del servizio: un riavvio (o un riavvio del server) la uccide e lo
+    stato resterebbe "copying" per sempre, escludendo quella ISO da ogni tentativo successivo
+    (is_candidate salta chi e' gia' "copying"). All'avvio nessuna copia puo' essere ancora viva,
+    quindi qui si riparte da zero e si butta via il file parziale.
+    Ritorna gli slug rimessi in coda."""
+    rimessi = []
+    for slug, e in (catalog.load().get("isos") or {}).items():
+        c = e.get("cache") or {}
+        if c.get("status") != "copying":
+            continue
+        parziale = (c.get("path") or "") + ".part"
+        try:
+            if parziale.endswith(".iso.part") and os.path.isfile(parziale):
+                os.unlink(parziale)
+        except OSError as ex:
+            log.warning("rimozione copia interrotta %s: %s", parziale, ex)
+        catalog._set_cache_state(slug, "none", "", 0)
+        rimessi.append(slug)
+    if rimessi:
+        log.info("copie interrotte da un riavvio, rimesse in coda: %s", ", ".join(rimessi))
+    return rimessi
+
+
 def _remove_orphans():
     """Elimina i file rimasti in CACHE_DIR e non più riferiti dal catalogo (copie interrotte)."""
     keep = {_cache_path(e) for e in catalog.load().get("isos", {}).values() if _cache_path(e)}
