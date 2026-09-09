@@ -11,7 +11,9 @@ BG_REL = "theme/bg.png"                       # -> HTTP_INJECT_DIR/theme/bg.png 
 W, H = 1024, 768
 MARGINS = {"left": 48, "right": 48, "top": 104, "bottom": 60}   # area di testo del menu dentro l'immagine
 HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
-DEFAULT_THEME = {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99", "logo_text": "PIXIO", "subtitle": "Avvio da rete"}
+DEFAULT_THEME = {"bg": "#0B1220", "accent": "#3FC1CF", "fg": "#E6ECF2", "muted": "#7C8A99",
+                 "logo_text": "PIXIO", "subtitle": "Avvio da rete", "style": "testo"}
+STYLES = ("testo", "grafico")
 _lock = threading.Lock()
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT_REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
@@ -28,6 +30,7 @@ def theme(cfg):
     t.update({k: v for k, v in (cfg.get("menu", {}).get("theme") or {}).items() if k in t})
     for k in ("bg", "accent", "fg", "muted"):
         t[k] = hexcol(t[k], DEFAULT_THEME[k])
+    t["style"] = t.get("style") if t.get("style") in STYLES else "testo"
     t["logo_text"] = str(t["logo_text"])[:16] or "PIXIO"
     t["subtitle"] = str(t["subtitle"])[:40]
     return t
@@ -128,7 +131,9 @@ def ipxe_header(cfg, server_ip):
     t = theme(cfg)
     m = MARGINS
     lines = []
-    if ensure_background(cfg, server_ip):
+    # Con lo sfondo grafico iPXE ridisegna l'immagine a ogni spostamento della selezione: bello ma lento
+    # sui PC reali, soprattutto in UEFI. Con lo stile "testo" restano solo i colori e il menu è immediato.
+    if t["style"] == "grafico" and ensure_background(cfg, server_ip):
         lines.append(f"console --picture {bg_url(server_ip)} --left {m['left']} --right {m['right']} --top {m['top']} --bottom {m['bottom']} ||")
     lines += [
         f"colour --rgb {ipxe_rgb(t['bg'])} 0 ||",        # nero   -> sfondo
