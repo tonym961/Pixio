@@ -202,3 +202,43 @@ Preset richiesti (almeno): Windows -> "Postazione aziendale" (dominio, OOBE salt
 "Windows Server" (nessun accesso automatico, RDP attivo), "Laboratorio/collaudo" (bypass requisiti, chiave generica, cancellazione disco);
 Debian -> "Server minimo" (solo standard + ssh-server, LVM), "Desktop ufficio" (GNOME, utente non root), "Server web" (ssh + nginx + certbot),
 "Host Proxmox/virtualizzazione" (partizionamento LVM ampio, nessun desktop), "Postazione tecnica" (Xfce, strumenti di rete).
+
+## 10. Ottimizzazioni Windows in stile nLite (catalogo di tweak)
+Catalogo in `data/windows-tweaks.json` (sola lettura, versionato):
+```
+{
+  "categories": [{"id": "privacy", "name": "Privacy e telemetria", "description": "..."}],
+  "tweaks": [{
+    "id": "disattiva-telemetria",            // slug stabile: finisce nei profili
+    "category": "privacy",
+    "name": "Disattiva la telemetria",
+    "description": "Una frase in italiano che spiega cosa cambia e cosa si perde.",
+    "impact": "sicuro" | "attenzione" | "rischioso",
+    "editions": ["10", "11"],                 // versioni di Windows su cui ha effetto
+    "reg": [{"scope": "HKLM"|"HKCU", "path": "SOFTWARE\\...", "name": "Valore", "type": "REG_DWORD"|"REG_SZ", "data": "0"}],
+    "services": [{"name": "DiagTrack", "start": 4}],       // 4 = disabilitato, 3 = manuale
+    "commands": ["comando eseguito al primo accesso"],
+    "features_enable": ["NetFx3"], "features_disable": ["MicrosoftWindowsPowerShellV2"]
+  }]
+}
+```
+Regole di applicazione nell'`autounattend.xml`:
+- `reg` con scope HKLM → `RunSynchronousCommand` nel passaggio *specialize* (`reg add ... /f`).
+- `reg` con scope HKCU → applicato al profilo predefinito, così vale per tutti gli utenti creati dopo:
+  `reg load HKU\PixioDef C:\Users\Default\NTUSER.DAT`, i vari `reg add HKU\PixioDef\...`, poi `reg unload HKU\PixioDef` (un solo carico/scarico per tutto il profilo).
+- `services` → `reg add HKLM\SYSTEM\CurrentControlSet\Services\<nome> /v Start /t REG_DWORD /d <start> /f` in *specialize*.
+- `commands` e rimozione app → `FirstLogonCommands` in *oobeSystem*; le app vengono rimosse sia per l'utente sia dal provisioning
+  (`Get-AppxPackage -AllUsers <id> | Remove-AppxPackage` e `Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq '<id>' | Remove-AppxProvisionedPackage -Online`).
+- `features_enable`/`features_disable` → `dism /online /enable-feature|/disable-feature /featurename:<nome> /norestart` in `FirstLogonCommands`.
+Campi nuovi in `settings` del profilo Windows: `tweaks` (lista di id del catalogo), `services_extra` (lista `{name, start}` aggiunti a mano),
+`features_enable`, `features_disable`. I campi booleani già esistenti (`disable_defender_prompt`, `hide_files_ext`, `disable_hibernate`, `power_scheme`)
+restano e non devono duplicare i tweak equivalenti.
+- `GET /api/winprofiles` restituisce anche `tweaks:{categories:[...], items:[...]}` (il catalogo) e `presets` con i tweak preselezionati.
+- `POST /api/winprofiles/<id>/preview` deve mostrare nell'XML i comandi generati dai tweak scelti.
+Il catalogo deve coprire almeno queste aree, con voci reali e verificate: telemetria e raccolta dati, Cortana e ricerca online nel menu Start,
+suggerimenti e pubblicità (contenuti consigliati, schermata di blocco, app installate automaticamente), OneDrive, Copilot e widget,
+Esplora file (estensioni, file nascosti, apertura su "Questo PC", barra applicazioni a sinistra, menu contestuale classico di Windows 11),
+prestazioni (effetti visivi, SysMain, indicizzazione, avvio rapido, ibernazione, piano energetico), servizi inutili in ambito aziendale (Xbox, Fax, stampa remota),
+aggiornamenti (rinvio funzionalità, niente riavvio automatico con utente connesso, driver esclusi da Windows Update),
+sicurezza e accesso (UAC, SmartScreen, RDP attivo con firewall, richiesta password al risveglio),
+rete (rilevamento rete, IPv6, condivisione password protetta), componenti opzionali (.NET 3.5, Hyper-V, client Telnet, SSH server, sandbox).
