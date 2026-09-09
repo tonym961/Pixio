@@ -18,6 +18,12 @@ ISO_EXT = (".iso",)
 MAX_DEPTH = 4
 _scan_lock = threading.Lock()
 USER_FIELDS = ("name", "enabled", "group", "order", "custom_recipe", "cache_wanted", "type_override")
+EDITIONS_MAX = 32
+# Nomi soliti dell'immagine di installazione, usati solo se il rilevamento non ha registrato il suo
+# percorso: le ISO scaricate con il Media Creation Tool hanno install.esd al posto di install.wim.
+INSTALL_CANDIDATES = ("sources/install.wim", "sources/install.esd",
+                      "x64/sources/install.wim", "x64/sources/install.esd")
+_editions_busy = threading.Lock()
 
 
 def load():
@@ -219,6 +225,170 @@ def register_local_file(path):
     return slug
 
 
+# ---------------------------------------------------------------- edizioni di install.wim
+# Quale edizione di Windows installare (docs/API.md, sezione 19) si scrive nell'autounattend.xml
+# come nome dell'immagine o come indice: sono i valori che stanno dentro sources/install.wim.
+# Leggerli costa un wiminfo su un file da 4 GB che spesso sta su una share CIFS, quindi il
+# risultato si tiene in cache nel record della ISO e si ricalcola solo quando la ISO viene montata
+# (o su richiesta esplicita dalla GUI), mai dentro una richiesta che deve rispondere subito.
+
+def _install_rel(e):
+    """Percorsi dell'immagine di installazione da provare dentro la ISO montata."""
+    rel = ((e.get("detect") or {}).get("files") or {}).get("install")
+    return [rel] if rel else list(INSTALL_CANDIDATES)
+
+
+def editions_of(e):
+    """Edizioni note della ISO: [{index, name, display_name}] dalla cache, [] se non si sa nulla.
+
+    Sola lettura: non tocca il disco. Se la cache non c'è si ripiega su quello che ha registrato
+    il rilevamento, che legge lo stesso file mentre la ISO è montata per l'analisi."""
+    if not isinstance(e, dict):
+        return []
+    for fonte in (e.get("editions"), e.get("detect")):
+        if isinstance(fonte, dict):
+            imgs = fonte.get("images")
+            if isinstance(imgs, list) and imgs:
+                return [x for x in imgs if isinstance(x, dict) and x.get("index")][:EDITIONS_MAX]
+    return []
+
+
+def editions_info(e):
+    """Da dove arriva l'elenco delle edizioni: {file, updated, error}, per la GUI."""
+    c = e.get("editions") if isinstance(e, dict) else None
+    if not isinstance(c, dict):
+        c = {}
+    return {"file": str(c.get("file") or ""), "updated": str(c.get("updated") or ""),
+            "error": str(c.get("error") or "")}
+
+
+def editions_stale(e):
+    """Vero se la cache manca o si riferisce a un file diverso da quello che c'è adesso."""
+    c = e.get("editions")
+    if not isinstance(c, dict) or not c.get("images"):
+        return True
+    return c.get("size") != e.get("size") or int(c.get("mtime") or 0) != int(e.get("mtime") or 0)
+
+
+def _read_editions(root, e):
+    """Legge le edizioni dall'immagine dentro la ISO montata. Ritorna (images, file, errore)."""
+    for rel in _install_rel(e):
+        if not rel:
+            continue
+        path = os.path.join(root, rel)
+        if not os.path.isfile(path):
+            continue
+        images, _ = detect.wim_images(path)
+        if images:
+            return images[:EDITIONS_MAX], rel, ""
+        return [], rel, "wiminfo non ha letto nessuna immagine"
+    return [], "", "immagine di installazione non trovata nella ISO"
+
+
+def refresh_editions(slug, force=False):
+    """Rilegge le edizioni della ISO e le salva nel catalogo. Ritorna la lista.
+
+    È lenta: si chiama da un job o da un thread, mai dentro una richiesta della GUI. Se la ISO non
+    è montata si ripiega sul rilevamento completo, che la monta una volta sola e ricava anche
+    tutto il resto."""
+    e = load()["isos"].get(slug)
+    if not e:
+        raise KeyError(slug)
+    if (e.get("type") or "") != "windows":
+        return []
+    if not force and not editions_stale(e):
+        return editions_of(e)
+    if slug not in _mounted_slugs():
+        _detect_one(slug)
+        return editions_of(load()["isos"].get(slug) or {})
+    images, rel, err = _read_editions(os.path.join(C.HTTP_ISO_DIR, slug), e)
+    if err:
+        log.warning("edizioni di %s: %s", slug, err)
+    dati = {"images": images, "file": rel, "error": err, "updated": now(),
+            "size": e.get("size"), "mtime": int(e.get("mtime") or 0)}
+
+    def upd(c):
+        x = c["isos"].get(slug)
+        if x:
+            x["editions"] = dati
+        return c
+    update_json(C.CATALOG_FILE, upd)
+    return images
+
+
+def start_editions_refresh(slugs):
+    """Rilegge le edizioni in un thread: chi ha chiesto il mount non deve aspettare wiminfo.
+
+    Uno alla volta: se una passata è già in corso le ISO rimaste le riprende quella dopo."""
+    slugs = [s for s in slugs if s]
+    if not slugs or not _editions_busy.acquire(blocking=False):
+        return None
+
+    def run():
+        try:
+            for s in slugs:
+                try:
+                    refresh_editions(s)
+                except Exception as ex:  # noqa: BLE001 - un errore su una ISO non ferma le altre
+                    log.warning("edizioni di %s: %s", s, ex)
+        finally:
+            _editions_busy.release()
+    t = threading.Thread(target=run, name="pixio-editions", daemon=True)
+    t.start()
+    return t
+
+
+def refresh_missing_editions():
+    """ISO Windows montate senza cache delle edizioni (o con una cache vecchia): le rilegge in un
+    thread. Serve ai cataloghi scritti prima di questa funzione, che altrimenti resterebbero senza
+    elenco finché qualcuno non smonta e rimonta la ISO."""
+    cat = load()
+    mounted = _mounted_slugs()
+    return start_editions_refresh([s for s, e in cat["isos"].items()
+                                   if s in mounted and isinstance(e, dict)
+                                   and (e.get("type") or "") == "windows" and editions_stale(e)])
+
+
+def _profili_per_risposta():
+    """{answer_id: {id, name, edition_index}} dei profili Windows che hanno generato le risposte.
+
+    Serve solo agli avvisi: se il modulo dei profili non c'è, di avvisi non se ne fanno."""
+    try:
+        from . import winprofile
+        return winprofile.profiles_by_answer()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def editions_labels(editions):
+    """Elenco leggibile delle edizioni: "1 Windows 11 Pro, 2 Windows 11 Home"."""
+    return ", ".join(f"{im.get('index')} {im.get('name') or im.get('display_name') or ''}".strip()
+                     for im in editions)
+
+
+def _avvisi_edizione(e, editions, profili):
+    """Avvisi per i profili collegati che installano un'edizione che in questa immagine non c'è.
+
+    Va visto prima di avviare l'installazione: dopo, il setup si ferma con "impossibile trovare
+    l'immagine" e il PC resta lì."""
+    if not editions or not profili:
+        return []
+    try:
+        from . import winprofile
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for aid in answers_of(e):
+        p = profili.get(aid)
+        ed = (p or {}).get("edition_index")
+        if not ed or winprofile.match_edition(editions, ed) is not None:
+            continue
+        out.append(f"Il profilo \"{p['name']}\" installa l'edizione \"{ed}\", che in questa "
+                   f"immagine non c'è. Edizioni disponibili: {editions_labels(editions)}. "
+                   "Correggila nella pagina Windows prima di avviare l'installazione.")
+    return out
+
+
 # ---------------------------------------------------------------- lettura
 def _mounted_slugs():
     """Slug montati in loop sotto HTTP_ISO_DIR, letti da /proc/self/mounts (nessun privilegio necessario)."""
@@ -237,9 +407,14 @@ def _mounted_slugs():
     return out
 
 
-def _decorate(e, mounted, idx=None):
+def _decorate(e, mounted, idx=None, profili=None):
     t = recipes.get_type(e.get("type") or "unknown") or {}
+    editions = editions_of(e)
+    ed_info = editions_info(e)
     e = dict(e)
+    # elenco pronto per la GUI: nel record il campo "editions" è la cache con i suoi metadati
+    e["editions"] = editions
+    e["editions_info"] = ed_info
     e["type_name"] = t.get("name", e.get("type"))
     e["category"] = t.get("category", "unknown")
     custom = e.get("custom_recipe")
@@ -260,6 +435,9 @@ def _decorate(e, mounted, idx=None):
         w.append(f"Rilevamento fallito: {e['detect']['error']}")
     if e.get("type") == "unknown" and not custom:
         w.append("Nessuna ricetta di boot: scegli un tipo o una ricetta personalizzata")
+    if ed_info.get("error"):
+        w.append(f"Edizioni non leggibili: {ed_info['error']}")
+    w.extend(_avvisi_edizione(e, editions, profili if profili is not None else {}))
     e["warnings"] = w
     return e
 
@@ -268,7 +446,8 @@ def list_isos():
     cat = load()
     mounted = _mounted_slugs()
     idx = answers_index()                          # una lettura sola per tutto il catalogo
-    out = [_decorate(e, mounted, idx) for e in cat["isos"].values()]
+    profili = _profili_per_risposta()              # idem per i profili Windows collegati
+    out = [_decorate(e, mounted, idx, profili) for e in cat["isos"].values()]
     out.sort(key=lambda x: (x.get("group") or "", x.get("order", 0), (x.get("name") or "").lower()))
     return out, cat.get("last_scan")
 
@@ -278,7 +457,7 @@ def get(slug):
     e = cat["isos"].get(slug)
     if not e:
         return None
-    return _decorate(e, _mounted_slugs())
+    return _decorate(e, _mounted_slugs(), None, _profili_per_risposta())
 
 
 def summary():
@@ -511,6 +690,8 @@ def mount(slug):
         raise FileNotFoundError("File ISO non raggiungibile")
     privileged.call("mount-iso", slug, path, timeout=120)
     write_inject_files(e)
+    if (e.get("type") or "") == "windows" and editions_stale(e):
+        start_editions_refresh([slug])      # in un thread: il mount deve rispondere subito
     if e.get("type") == "esxi":
         from . import esxi
         try:
@@ -574,6 +755,7 @@ def remount_enabled():
             except Exception as ex:  # noqa
                 errors[slug] = str(ex)
                 log.warning("rimontaggio %s: %s", slug, ex)
+    refresh_missing_editions()
     return errors
 
 

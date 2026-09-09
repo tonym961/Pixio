@@ -12,6 +12,8 @@ from . import recipes
 log = logging.getLogger("pixio.detect")
 MAX_DEPTH = 4
 MAX_ENTRIES = 20000
+MAX_IMAGES = 32          # immagini elencate per un .wim (il setup accetta indici da 1 a 32)
+WIMINFO_TIMEOUT = 60     # wiminfo legge solo l'intestazione, ma su una share lenta ci mette
 
 
 def iso_label(path):
@@ -69,22 +71,50 @@ def read_small(root, rel, limit=4096):
         return ""
 
 
-def wim_info(path):
-    """Nomi/versione delle immagini in un .wim tramite wiminfo (wimtools). Ritorna (names, version)."""
+def wim_images(path):
+    """Immagini dentro un .wim/.esd lette con wiminfo: ([{index, name, display_name}], version).
+
+    L'indice è quello che il setup di Windows vuole in /IMAGE/INDEX (parte da 1) e il nome quello
+    di /IMAGE/NAME: senza questo elenco l'edizione da installare si può solo indovinare, e un nome
+    sbagliato ferma l'installazione a metà. Le immagini restano nell'ordine di wiminfo.
+    """
     try:
-        p = subprocess.run(["wiminfo", path], capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.TimeoutExpired):
+        p = subprocess.run(["wiminfo", path], capture_output=True, text=True, timeout=WIMINFO_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.info("wiminfo %s: %s", path, e)
         return [], ""
-    names, version = [], ""
+    images, version, cur = [], "", None
     for line in p.stdout.splitlines():
         s = line.strip()
-        if s.startswith("Display Name:") or s.startswith("Name:"):
+        if s.startswith("Index:"):
             v = s.split(":", 1)[1].strip()
+            cur = {"index": int(v) if v.isdigit() else len(images) + 1, "name": "", "display_name": ""}
+            images.append(cur)
+            if len(images) >= MAX_IMAGES:
+                break
+        elif cur is not None and s.startswith("Display Name:"):
+            cur["display_name"] = s.split(":", 1)[1].strip()
+        elif cur is not None and s.startswith("Name:"):
+            cur["name"] = s.split(":", 1)[1].strip()
+        elif s.startswith("Version:") and not version:
+            version = s.split(":", 1)[1].strip()      # versione del formato WIM, non di Windows
+    return images, version
+
+
+def image_names(images):
+    """Nomi delle immagini nell'ordine di wiminfo (nome e nome visualizzato), senza doppioni."""
+    names = []
+    for im in images:
+        for v in (im.get("name"), im.get("display_name")):
             if v and v not in names:
                 names.append(v)
-        elif s.startswith("Version:") and not version:
-            version = s.split(":", 1)[1].strip()
-    return names, version
+    return names
+
+
+def wim_info(path):
+    """Nomi/versione delle immagini in un .wim tramite wiminfo (wimtools). Ritorna (names, version)."""
+    images, version = wim_images(path)
+    return image_names(images), version
 
 
 def match_type(index, root):
@@ -127,11 +157,12 @@ def describe(index, root, t, files, label):
         m2 = re.search(r"^version\s*=\s*(.+)$", ti, re.M)
         if m1:
             name = m1.group(1).strip() + (f" {m2.group(1).strip()}" if m2 else "")
-    editions = []
+    editions, images = [], []
     if t["id"] in ("windows", "winpe-tool"):
         wim = files.get("install") or files.get("bootwim")
         if wim:
-            editions, version = wim_info(os.path.join(root, wim))
+            images, version = wim_images(os.path.join(root, wim))
+            editions = image_names(images)
             if t["id"] == "windows" and editions:
                 base = re.sub(r"\s+(Home|Pro|Education|Enterprise|Core|N|Single Language|for Workstations|Standard|Datacenter|Essentials|Evaluation|\(.*\))+$", "", editions[0]).strip()
                 base = re.sub(r"\s+SERVER[A-Z]+(CORE)?\b", "", base).strip()      # nomi immagine dei server: SERVERSTANDARDCORE ecc.
@@ -163,13 +194,17 @@ def describe(index, root, t, files, label):
         name = "GParted live " + (v.split()[0] if v.split() else "")
     if t["id"] == "opensuse" and label:
         name = label.replace("-", " ")
-    return {"label": label, "name": name.strip(), "version": version, "editions": editions[:12]}
+    # "editions" resta l'elenco dei soli nomi (lo usa auto_group); "images" porta anche l'indice,
+    # che è quello che serve per scrivere InstallFrom nell'autounattend.xml
+    return {"label": label, "name": name.strip(), "version": version, "editions": editions[:12],
+            "images": images[:MAX_IMAGES]}
 
 
 def detect_file(slug, path):
     """Monta la ISO in DETECT_DIR/<slug>, la ispeziona e smonta. Ritorna dict 'detect' per il catalogo."""
     label = iso_label(path)
-    res = {"type": "unknown", "files": {}, "label": label, "name": "", "version": "", "editions": [], "error": ""}
+    res = {"type": "unknown", "files": {}, "label": label, "name": "", "version": "",
+           "editions": [], "images": [], "error": ""}
     try:
         r = privileged.call("mount-detect", slug, path, timeout=120)
     except privileged.HelperError as e:

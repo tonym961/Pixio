@@ -59,6 +59,14 @@ def install_cmd(slug, cfg=None, iso=None):
             L.append(f'drvload X:\\Windows\\System32\\{name} >nul 2>&1 && echo    ok {name} || echo    non caricato: {name}')
         L.append("echo.")
     L += [
+        # wimboot mette i file iniettati in X:\Windows\System32, ma il programma di installazione
+        # cerca autounattend.xml solo nella radice dei supporti e in \Windows\Panther: se non glielo
+        # passiamo con /unattend il file c'e' ma non viene usato, e l'installazione parte senza
+        # nessuna delle personalizzazioni scelte in Pixio.
+        "set PIXIO_UA=",
+        "if exist X:\\Windows\\System32\\autounattend.xml set PIXIO_UA=/unattend:X:\\Windows\\System32\\autounattend.xml",
+        "if defined PIXIO_UA (echo Personalizzazioni di Pixio: attive.) else (echo Nessuna personalizzazione: l'installazione fara' le domande.)",
+        "echo.",
         "echo Avvio la rete...",
         "wpeinit",
         # In Windows PE il firewall e' attivo e il client SMB non sempre e' avviato: senza queste due
@@ -94,7 +102,7 @@ def install_cmd(slug, cfg=None, iso=None):
             f'if not exist "S:\\iso\\{slug}\\setup.exe" goto senzasetup',
             "echo.",
             f"echo Avvio il programma di installazione da \\\\{ip}\\pxe\\iso\\{slug}",
-            f"S:\\iso\\{slug}\\setup.exe",
+            f"S:\\iso\\{slug}\\setup.exe %PIXIO_UA%",
             "goto fine_setup",
             # ------------------------------------------------------------------
             # Diagnosi: un solo schermo con la causa vera, cosi' basta fotografarlo.
@@ -146,7 +154,7 @@ def install_cmd(slug, cfg=None, iso=None):
         L += [
             "echo Installazione via rete non attiva nelle impostazioni di Pixio:",
             "echo avvio il programma di installazione del solo WinPE (senza immagine di Windows).",
-            "X:\\setup.exe",
+            "X:\\setup.exe %PIXIO_UA%",
             "goto fine_setup",
         ]
     L += [
