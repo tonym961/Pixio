@@ -6,7 +6,12 @@
    di /api/upload/init) e scarta i file che non sono driver (.exe di installazione, file di lingua, documentazione)
    mostrando quanti ne ha saltati; la casella "carica tutti i file" forza l'invio di tutto.
    Le schede cartella hanno una casella di selezione con barra delle azioni per accendere/spegnere i due
-   interruttori su più cartelle insieme o eliminarle in blocco. */
+   interruttori su più cartelle insieme o eliminarle in blocco.
+
+   Abbinamento alle immagini (docs/API.md, sezione 15): la riga "Si applica a" dice se la cartella vale per
+   tutte le immagini, solo per certi gruppi del menu di boot (es. "Windows Server") o solo per certe ISO.
+   Nel pannello dei file ogni file che finirebbe nel WinPE ha una casella per escluderlo, con "escludi tutti"
+   e "includi tutti": così i driver RAID vanno solo sui server e non appesantiscono il WinPE dei PC. */
 'use strict';
 (function () {
   const P = window.Pixio;
@@ -35,7 +40,16 @@
       help: 'Dopo aver mappato la share, drvload ricorsivo di tutti i .inf della cartella prima di setup.exe (richiede "Installazione Windows via rete" attiva).',
     },
   };
+  // Modalità di abbinamento della cartella alle immagini (campo apply_to del contratto API, sezione 15)
+  const APPLY = {
+    all: { label: 'Tutte le immagini', help: 'La cartella vale per ogni voce del menu di boot.' },
+    groups: { label: 'Solo alcuni gruppi', help: 'Solo le voci dei gruppi scelti nel menu di boot, per esempio "Windows Server".' },
+    isos: { label: 'Solo alcune immagini', help: 'Solo le ISO scelte, una per una.' },
+  };
+  const APPLY_MODES = ['all', 'groups', 'isos'];
+
   const folderUrl = (name) => '/api/drivers/folders/' + encodeURIComponent(name);
+  const fileUrl = (name, rel) => folderUrl(name) + '/files/' + String(rel).split('/').map(encodeURIComponent).join('/');
   const findFolder = (name) => ((D.data && D.data.folders) || []).find((f) => f.name === name);
   const sharePath = () => (D.data && D.data.samba_path) || ('\\\\' + ((P.state.status && P.state.status.server_ip) || 'pixio') + '\\drivers');
   const webUploadOff = () => !!(P.state.status && P.state.status.library && P.state.status.library.web_upload_enabled === false);
@@ -43,6 +57,45 @@
   const isUseful = (n) => USEFUL_RE.test(n || '');
   const isAllowed = (n) => EXT_RE.test(n || '');
   const fileUseful = (x) => (x && x.useful !== undefined ? !!x.useful : isUseful(x && x.name));
+
+  /* --- abbinamento cartella -> immagini ------------------------------------------------------------ */
+  /* Scelte possibili offerte dal server: gruppi del menu di boot e ISO Windows/WinPE del catalogo. */
+  function choices() {
+    const d = (D.data && (D.data.apply_choices || D.data)) || {};
+    return { groups: Array.isArray(d.groups) ? d.groups : [], isos: Array.isArray(d.isos) ? d.isos : [] };
+  }
+  /* apply_to della cartella, normalizzato: le cartelle vecchie (senza campo) valgono per tutte le immagini. */
+  function applyOf(f) {
+    const a = (f && f.apply_to) || {};
+    return {
+      mode: APPLY_MODES.indexOf(a.mode) >= 0 ? a.mode : 'all',
+      groups: Array.isArray(a.groups) ? a.groups.slice() : [],
+      isos: Array.isArray(a.isos) ? a.isos.slice() : [],
+    };
+  }
+  const isoName = (slug) => {
+    const x = choices().isos.find((i) => i.slug === slug);
+    return (x && x.name) || slug;
+  };
+  /* Riassunto leggibile per la scheda: "tutte le immagini", "solo Windows Server", "solo 2 immagini". */
+  function applySummary(f) {
+    const a = applyOf(f);
+    if (a.mode === 'all') return 'tutte le immagini';
+    if (a.mode === 'groups') {
+      if (!a.groups.length) return 'nessuna immagine';
+      return a.groups.length === 1 ? 'solo ' + a.groups[0] : 'solo ' + plural(a.groups.length, 'gruppo', 'gruppi');
+    }
+    if (!a.isos.length) return 'nessuna immagine';
+    return a.isos.length === 1 ? 'solo ' + isoName(a.isos[0]) : 'solo ' + plural(a.isos.length, 'immagine', 'immagini');
+  }
+  /* True quando la cartella è accesa ma non è abbinata a nessuna immagine: non verrebbe mai usata. */
+  const applyEmpty = (f) => {
+    const a = applyOf(f);
+    return a.mode !== 'all' && !(a.mode === 'groups' ? a.groups : a.isos).length;
+  };
+  const active = (f) => !!(f.winpe_inject || f.setup_load);
+  /* File della cartella che potrebbero finire nel WinPE (candidati): il server li marca con winpe_cand. */
+  const candidates = (f) => (f.files || []).filter((x) => (x.winpe_cand !== undefined ? !!x.winpe_cand : (!x.name.includes('/') && WINPE_RE.test(x.name))));
 
   // ---------------------------------------------------------------- nomi di cartelle e sottopercorsi
   // Stesse regole del server: cartella ^[A-Za-z0-9][A-Za-z0-9 ._()+-]{0,63}$
@@ -493,8 +546,36 @@
     if (f.winpe_size > MAX_INJECT) w.push(`I file al primo livello della cartella pesano ${P.fmtBytes(f.winpe_size)}: oltre 256 MB WinPE ne carica solo una parte. Lascia nella cartella solo i file del driver che serve davvero.`);
     if (f.winpe_inject && !f.winpe_files) w.push(`"${FLAGS.winpe_inject.label}" è attivo ma nella cartella non ci sono file .inf/.sys/.cat/.dll al primo livello: metti i file del driver direttamente nella cartella, non in sottocartelle.`);
     if (f.setup_load && !f.inf_count) w.push(`"${FLAGS.setup_load.label}" è attivo ma nella cartella non c'è nessun file .inf.`);
+    if (active(f) && applyEmpty(f)) w.push(`"Si applica a" è su "${APPLY[applyOf(f).mode].label}" ma non hai scelto niente: questa cartella non verrà usata da nessuna immagine. Scegli almeno una voce o torna a "${APPLY.all.label}".`);
+    if (active(f) && f.winpe_inject && f.excluded_files) w.push(`${plural(f.excluded_files, 'file escluso a mano', 'file esclusi a mano')} dall'iniezione nel WinPE: aprila con "Apri" per rivedere l'elenco.`);
     if (!f.valid_name) w.push('Nome cartella non valido (ammessi lettere, numeri, spazi, . _ - ( ) +, max 64): rinominala dalla share, altrimenti non viene usata dal setup.');
     return w.map((t) => `<div class="alert warn">${esc(t)}</div>`).join('');
+  }
+
+  /* Riga "Si applica a": tre modalità e, quando serve, l'elenco a caselle di gruppi o immagini. */
+  function applyHtml(f) {
+    const a = applyOf(f);
+    const ch = choices();
+    const off = D.busy.has(f.name) || !f.valid_name ? 'disabled' : '';
+    const modes = APPLY_MODES.map((m) => `<button class="btn small${a.mode === m ? ' primary' : ''}" type="button" data-apply="${m}" aria-pressed="${a.mode === m ? 'true' : 'false'}" title="${esc(APPLY[m].help)}" ${off}>${esc(APPLY[m].label)}</button>`).join('');
+    let list = '';
+    if (a.mode === 'groups') {
+      list = ch.groups.length
+        ? ch.groups.map((g) => `<label class="drv-apply-item"><input type="checkbox" data-apply-group="${esc(g)}" ${a.groups.indexOf(g) >= 0 ? 'checked' : ''} ${off}><span>${esc(g)}</span></label>`).join('')
+        : '<div class="hint">Nessun gruppo nel menu di boot: aggiungine in <a href="#/impostazioni">Impostazioni → Menu</a> o assegna un gruppo alle ISO.</div>';
+    } else if (a.mode === 'isos') {
+      list = ch.isos.length
+        ? ch.isos.map((i) => `<label class="drv-apply-item"><input type="checkbox" data-apply-iso="${esc(i.slug)}" ${a.isos.indexOf(i.slug) >= 0 ? 'checked' : ''} ${off}><span>${esc(i.name)}${i.group ? ` <span class="hint">(${esc(i.group)})</span>` : ''}</span></label>`).join('')
+        : '<div class="hint">Nel catalogo non ci sono ISO Windows o WinPE: sono le uniche che ricevono driver.</div>';
+    }
+    return `<div class="drv-apply">
+      <div class="drv-apply-head">
+        <div><div class="tt">Si applica a</div><div class="td">A quali immagini del menu di boot serve questa cartella: i driver RAID di un server non servono a un PC da ufficio.</div></div>
+        <div class="actions" role="group" aria-label="Si applica a: ${esc(f.name)}">${modes}</div>
+      </div>
+      ${list ? `<div class="drv-apply-list">${list}</div>` : ''}
+      <div class="drv-apply-sum hint">In uso su: <b>${esc(applySummary(f))}</b></div>
+    </div>`;
   }
 
   function folderHtml(f) {
@@ -502,13 +583,14 @@
     const sw = (flag) => P.switchHtml(!!f[flag], `data-flag="${flag}" aria-label="${esc(FLAGS[flag].label)}: ${esc(f.name)}" title="${esc(FLAGS[flag].help)}" ${busy || !f.valid_name ? 'disabled' : ''}`);
     const ign = Number(f.ignored_files || 0);
     const use = f.useful_files === undefined ? null : Number(f.useful_files);
+    const cand = f.winpe_candidates === undefined ? candidates(f).length : Number(f.winpe_candidates);
     return `<div class="drv-card${D.sel.has(f.name) ? ' picked' : ''}" data-folder="${esc(f.name)}">
       <div class="drv-head">
         <div class="drv-head-l">
           <label class="drv-pick" title="Seleziona la cartella per le azioni su più cartelle"><input type="checkbox" data-pick ${D.sel.has(f.name) ? 'checked' : ''} aria-label="Seleziona la cartella ${esc(f.name)}"></label>
           <div>
-            <div class="drv-name"><span>${esc(f.name)}</span>${f.valid_name ? '' : P.pill('nome non valido', 'bad')}${f.winpe_inject ? P.pill('WinPE', 'acc') : ''}${f.setup_load ? P.pill('setup', 'acc') : ''}</div>
-            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill neutral" title="File .inf/.sys/.cat/.dll al primo livello (quelli iniettati in WinPE)">WinPE: ${f.winpe_files} file · ${P.fmtBytes(f.winpe_size)}</span></div>
+            <div class="drv-name"><span>${esc(f.name)}</span>${f.valid_name ? '' : P.pill('nome non valido', 'bad')}${f.winpe_inject ? P.pill('WinPE', 'acc') : ''}${f.setup_load ? P.pill('setup', 'acc') : ''}${P.pill(applySummary(f), applyEmpty(f) ? 'warn' : (applyOf(f).mode === 'all' ? 'neutral' : 'acc'))}</div>
+            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File .inf/.sys/.cat/.dll che finiscono davvero nel WinPE, esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
           </div>
         </div>
         <div class="actions">
@@ -521,6 +603,7 @@
       ${warningsHtml(f)}
       <div class="toggle-row"><div><div class="tt">${esc(FLAGS.winpe_inject.label)}</div><div class="td">${esc(FLAGS.winpe_inject.help)}</div></div>${sw('winpe_inject')}</div>
       <div class="toggle-row"><div><div class="tt">${esc(FLAGS.setup_load.label)}</div><div class="td">${esc(FLAGS.setup_load.help)}</div></div>${sw('setup_load')}</div>
+      ${applyHtml(f)}
       <div class="drv-note"><label for="note-${f.name.replace(/\W/g, '_')}">Nota</label><input class="inline-input" id="note-${f.name.replace(/\W/g, '_')}" data-note value="${esc(f.note || '')}" maxlength="200" placeholder="es. Intel I225-V 2.5G, PC dell'aula 2 (salvata quando esci dal campo)" ${f.valid_name ? '' : 'disabled'}></div>
       <div class="uploads drv-uploads" data-uploads="${esc(f.name)}" hidden></div>
       <div class="drv-drop">Trascina qui i file o le sottocartelle del driver (anche uno .zip: viene estratto sul server) per caricarli in questa cartella</div>
@@ -544,6 +627,8 @@
       <span class="drv-bulk-g"><span class="k">${esc(FLAGS.setup_load.label)}</span>
         <button class="btn small" type="button" data-bulk="setup_load:on">Attiva</button>
         <button class="btn small" type="button" data-bulk="setup_load:off">Disattiva</button></span>
+      <span class="drv-bulk-g"><span class="k">Si applica a</span>
+        <button class="btn small" type="button" data-bulk="apply:all" title="Rimette le cartelle scelte su tutte le immagini">Tutte le immagini</button></span>
       <span class="drv-bulk-sp"></span>
       <button class="btn small" type="button" data-bulk="clean">Pulisci i file non usati</button>
       <button class="btn small danger" type="button" data-bulk="delete">Elimina le cartelle selezionate</button>
@@ -625,6 +710,60 @@
     } catch (e) { P.fail(e); }
     D.busy.delete(name);
     render();
+  }
+
+  /* --- abbinamento: salvataggio ---------------------------------------------------------------- */
+  async function saveApply(name, apply_to) {
+    const f = findFolder(name); if (!f) return;
+    D.busy.add(name); render();
+    try {
+      const r = await P.api('PATCH', folderUrl(name), { apply_to });
+      if (r && r.folder) Object.assign(f, r.folder); else f.apply_to = apply_to;
+      P.toast(`"${name}": in uso su ${applySummary(f)}`);
+    } catch (e) { P.fail(e); }
+    D.busy.delete(name);
+    render();
+  }
+  function setApplyMode(name, mode) {
+    const f = findFolder(name); if (!f || APPLY_MODES.indexOf(mode) < 0) return;
+    const a = applyOf(f);
+    if (a.mode === mode) return;
+    saveApply(name, { mode, groups: a.groups, isos: a.isos });
+  }
+  /* Spunta/toglie un gruppo o una ISO dall'elenco della cartella. */
+  function toggleApply(name, kind, value, on) {
+    const f = findFolder(name); if (!f) return;
+    const a = applyOf(f);
+    const list = a[kind].filter((x) => x !== value);
+    if (on) list.push(value);
+    a[kind] = list;
+    saveApply(name, a);
+  }
+
+  /* --- esclusione dei singoli file dall'iniezione nel WinPE ------------------------------------- */
+  async function setExcluded(name, rel, escluso) {
+    const f = findFolder(name); if (!f) return;
+    try {
+      const r = await P.api('PATCH', fileUrl(name, rel), { excluded: escluso });
+      if (r && r.folder) Object.assign(f, r.folder);
+      render();
+    } catch (e) { P.fail(e); await load(); }
+  }
+  /* "Escludi tutti" / "Includi tutti": una chiamata per file, solo su quelli che cambiano davvero. */
+  async function excludeAll(name, escluso, btn) {
+    const f = findFolder(name); if (!f) return;
+    const da = candidates(f).filter((x) => !!x.excluded !== escluso).map((x) => x.name);
+    if (!da.length) { P.toast(escluso ? 'Sono già esclusi tutti' : 'Non ci sono file esclusi'); return; }
+    P.setBusy(btn, true, '…');
+    const errs = [];
+    for (let i = 0; i < da.length; i++) {
+      try { await P.api('PATCH', fileUrl(name, da[i]), { excluded: escluso }); }
+      catch (e) { errs.push(`${da[i]} (${(e && e.message) || e})`); }
+    }
+    P.setBusy(btn, false);
+    P.toast(`${plural(da.length - errs.length, 'file', 'file')} ${escluso ? 'esclusi dal' : 'rimessi nel'} WinPE`, errs.length ? 'warn' : 'ok');
+    if (errs.length) P.toast('Non riusciti: ' + errs.join('; '), 'bad', 9000);
+    await load();
   }
 
   async function saveNote(name, input) {
@@ -743,11 +882,28 @@
     await load();
   }
 
+  /* Riporta le cartelle selezionate su "tutte le immagini" (la sola modalità sensata in blocco). */
+  async function bulkApplyAll() {
+    const names = Array.from(D.sel);
+    if (!names.length) return;
+    try {
+      const r = await P.api('PATCH', '/api/drivers/folders', { names, apply_to: { mode: 'all', groups: [], isos: [] } });
+      const upd = (r && r.updated) || [];
+      const errs = (r && r.errors) || {};
+      const bad = Object.keys(errs);
+      let msg = `Si applica a: tutte le immagini su ${plural(upd.length, 'cartella', 'cartelle')}`;
+      if (bad.length) msg += ` · non riuscito su ${bad.map((k) => `${k} (${errs[k]})`).join('; ')}`;
+      P.toast(msg, bad.length ? 'warn' : 'ok', bad.length ? 9000 : 4000);
+    } catch (e) { P.fail(e); }
+    await load();
+  }
+
   function onBulk(cmd) {
     if (cmd === 'none') { D.sel.clear(); render(); return; }
     if (cmd === 'all') { ((D.data && D.data.folders) || []).forEach((f) => D.sel.add(f.name)); render(); return; }
     if (cmd === 'clean') { cleanSelected($('[data-bulk="clean"]', D.root)); return; }
     if (cmd === 'delete') { bulkDelete(); return; }
+    if (cmd === 'apply:all') { bulkApplyAll(); return; }
     const [flag, val] = cmd.split(':');
     if (FLAGS[flag]) bulkFlag(flag, val === 'on');
   }
@@ -763,11 +919,20 @@
 
   function renderDrawer(f) {
     const files = f.files || [];
+    const cand = f.winpe_candidates === undefined ? candidates(f).length : Number(f.winpe_candidates);
     const rows = files.map((x) => {
-      const top = !x.name.includes('/');
-      const winpe = top && WINPE_RE.test(x.name);
+      // candidato = potrebbe finire nel WinPE; winpe = ci finisce davvero (esclusioni e doppioni a parte)
+      const isCand = x.winpe_cand !== undefined ? !!x.winpe_cand : (!x.name.includes('/') && WINPE_RE.test(x.name));
+      const inWinpe = x.winpe !== undefined ? !!x.winpe : (isCand && !x.excluded);
       const use = fileUseful(x);
-      return `<tr class="${use ? '' : 'drv-unused'}"><td><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.name)}</span>${winpe ? ' ' + P.pill('WinPE', 'acc') : ''}${use ? '' : ' <span class="pill neutral" title="Estensione che non serve a installare il driver: resta nella cartella ma non viene usata">non usato</span>'}</td><td class="num">${P.fmtBytes(x.size)}</td><td class="num hint">${esc(P.fmtDate(x.mtime))}</td><td class="actions-cell"><button class="btn small danger" type="button" data-file="${esc(x.name)}" aria-label="Elimina ${esc(x.name)}">Elimina</button></td></tr>`;
+      const box = isCand
+        ? `<label class="drv-inc" title="Togli la spunta per lasciare questo file fuori dal WinPE"><input type="checkbox" data-inc="${esc(x.name)}" ${x.excluded ? '' : 'checked'} aria-label="Metti ${esc(x.name)} nel WinPE"></label>`
+        : '<span class="hint">—</span>';
+      const tag = !isCand ? ''
+        : (x.excluded ? ' <span class="pill warn" title="Escluso a mano: non viene iniettato nel WinPE">escluso</span>'
+          : (inWinpe ? ' ' + P.pill('WinPE', 'acc')
+            : ' <span class="pill neutral" title="Un altro file con lo stesso nome ha la precedenza: nel WinPE i nomi sono tutti nella stessa cartella">doppione</span>'));
+      return `<tr class="${use ? '' : 'drv-unused'}${x.excluded ? ' drv-excluded' : ''}"><td class="num">${box}</td><td><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.name)}</span>${tag}${use ? '' : ' <span class="pill neutral" title="Estensione che non serve a installare il driver: resta nella cartella ma non viene usata">non usato</span>'}</td><td class="num">${P.fmtBytes(x.size)}</td><td class="num hint">${esc(P.fmtDate(x.mtime))}</td><td class="actions-cell"><button class="btn small danger" type="button" data-file="${esc(x.name)}" aria-label="Elimina ${esc(x.name)}">Elimina</button></td></tr>`;
     }).join('');
     const ign = Number(f.ignored_files || 0);
     const use = f.useful_files === undefined ? null : Number(f.useful_files);
@@ -775,19 +940,28 @@
     P.drawer.body.innerHTML = `
       <div class="drawer-sec">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${P.pill(f.count + ' file', 'neutral')}${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? P.pill(ign + ' non usati', 'warn') : ''}${P.pill(P.fmtBytes(f.size), 'neutral')}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}${f.winpe_inject ? P.pill(FLAGS.winpe_inject.label, 'ok') : ''}${f.setup_load ? P.pill(FLAGS.setup_load.label, 'ok') : ''}</div>
-        <div class="hint" style="margin-top:8px">Percorso da Windows: <span class="mono">${esc(sharePath())}\\${esc(f.name)}</span>. I file con l'etichetta <b>WinPE</b> sono quelli al primo livello iniettati all'avvio quando "${esc(FLAGS.winpe_inject.label)}" è attivo; quelli marcati <b>non usato</b> restano sul disco ma non servono a installare il driver.</div>
+        <div class="hint" style="margin-top:8px">Percorso da Windows: <span class="mono">${esc(sharePath())}\\${esc(f.name)}</span>. I file con l'etichetta <b>WinPE</b> sono quelli iniettati all'avvio quando "${esc(FLAGS.winpe_inject.label)}" è attivo; quelli marcati <b>non usato</b> restano sul disco ma non servono a installare il driver.</div>
+        <div class="hint" style="margin-top:6px">Si applica a: <b>${esc(applySummary(f))}</b>${applyEmpty(f) ? ' — nessuna immagine riceverà questi driver' : ''}. Si cambia dalla scheda della cartella.</div>
         ${f.note ? `<div class="hint" style="margin-top:6px">Nota: ${esc(f.note)}</div>` : ''}
       </div>
       <div class="drawer-sec">
+        ${cand ? `<div class="drv-inc-bar"><div><b>${f.winpe_files} ${f.winpe_files === 1 ? 'file finirà' : 'file finiranno'} nel WinPE</b> su ${plural(cand, 'possibile', 'possibili')}${f.excluded_files ? ` · ${plural(f.excluded_files, 'escluso a mano', 'esclusi a mano')}` : ''} · ${P.fmtBytes(f.winpe_size)}</div>
+          <div class="actions"><button class="btn small" type="button" data-dr="none">Escludi tutti</button><button class="btn small" type="button" data-dr="all">Includi tutti</button></div></div>` : ''}
         <div class="actions" style="margin-bottom:10px">${Number(f.ignored_files) ? `<button class="btn small" type="button" data-dr="clean">Pulisci i ${f.ignored_files} file non usati</button>` : ''}<button class="btn small primary" type="button" data-dr="upload" ${webUploadOff() ? 'disabled' : ''}>Carica file</button><span class="hint">${files.length >= 2000 ? 'Elenco limitato ai primi 2000 file.' : ''}</span></div>
-        ${files.length ? `<div class="tbl-wrap"><table><thead><tr><th>File</th><th>Dimensione</th><th>Modificato</th><th><span class="sr-only">Azioni</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
+        ${files.length ? `<div class="tbl-wrap"><table><thead><tr><th title="Spunta = il file finisce nel WinPE">WinPE</th><th>File</th><th>Dimensione</th><th>Modificato</th><th><span class="sr-only">Azioni</span></th></tr></thead><tbody>${rows}</tbody></table></div>`
         : '<div class="empty"><h3>Cartella vuota</h3><p>Carica qui i file estratti del driver (.inf, .sys, .cat) o uno .zip, oppure copiali dalla share.</p></div>'}
       </div>`;
     P.drawer.body.onclick = (e) => {
       const b = e.target.closest('[data-file],[data-dr]'); if (!b) return;
       if (b.dataset.dr === 'upload') queue.pick(f.name);
       else if (b.dataset.dr === 'clean') cleanFolder(f.name, b);
+      else if (b.dataset.dr === 'none') excludeAll(f.name, true, b);
+      else if (b.dataset.dr === 'all') excludeAll(f.name, false, b);
       else if (b.dataset.file != null) deleteFile(f.name, b.dataset.file, b);
+    };
+    P.drawer.body.onchange = (e) => {
+      const c = e.target.closest('input[data-inc]'); if (!c) return;
+      setExcluded(f.name, c.getAttribute('data-inc'), !c.checked);
     };
   }
 
@@ -814,7 +988,7 @@
       $('#drv-folders', root).addEventListener('click', pickFolders);
       $('#drv-copy', root).addEventListener('click', copyPath);
       root.addEventListener('click', (e) => {
-        const b = e.target.closest('[data-act],[data-flag],[data-up],[data-bulk],[data-q]'); if (!b) return;
+        const b = e.target.closest('[data-act],[data-flag],[data-up],[data-bulk],[data-q],[data-apply]'); if (!b) return;
         if (b.dataset.q === 'close') { queue.batch.closed = true; renderQueue(); return; }
         if (b.dataset.bulk) { onBulk(b.dataset.bulk); return; }
         if (b.dataset.up) {
@@ -823,6 +997,7 @@
           return;
         }
         const card = b.closest('.drv-card'); const name = card && card.dataset.folder;
+        if (b.dataset.apply) { if (name && !b.disabled) setApplyMode(name, b.dataset.apply); return; }
         if (b.dataset.flag) { if (name && !b.disabled) setFlag(name, b.dataset.flag, b); return; }
         const act = b.dataset.act;
         if (act === 'new') newFolderDialog();
@@ -833,6 +1008,14 @@
         else if (act === 'delete' && name) deleteFolder(name, b);
       });
       root.addEventListener('change', (e) => {
+        const ap = e.target.closest('input[data-apply-group],input[data-apply-iso]');
+        if (ap) {
+          const card = ap.closest('.drv-card'); if (!card) return;
+          const g = ap.getAttribute('data-apply-group');
+          toggleApply(card.dataset.folder, g === null ? 'isos' : 'groups',
+                      g === null ? ap.getAttribute('data-apply-iso') : g, ap.checked);
+          return;
+        }
         const pick = e.target.closest('input[data-pick]');
         if (pick) {
           const card = pick.closest('.drv-card'); if (!card) return;

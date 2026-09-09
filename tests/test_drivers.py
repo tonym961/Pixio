@@ -4,6 +4,10 @@ con estrazione sicura (rifiuto di '../' e percorsi assoluti), eliminazione file.
 Sezione 14 del contratto (docs/API.md): campo "path" per caricare cartelle intere mantenendo le
 sottocartelle, contatori useful_files / ignored_files, PATCH su piu' cartelle insieme.
 
+Sezione 15: campo apply_to (tutte le immagini / gruppi del menu / singole ISO) con la sua validazione,
+filtro delle cartelle per la ISO che si sta avviando, esclusione dei singoli file dall'iniezione nel
+WinPE e generazione dello script iPXE, che deve dare a ogni immagine solo i driver che le competono.
+
 Esecuzione: cd /opt/pixio && python3 -m unittest tests.test_drivers
 I percorsi di config vengono reindirizzati in una directory temporanea in setUpClass e ripristinati alla fine,
 così il modulo convive con tests/test_plumbing.py nella stessa discovery.
@@ -472,6 +476,228 @@ class DriversApiTest(unittest.TestCase):
         fs = self._folders()
         for n in ("Multi A", "Multi B", "Multi C"):
             self.assertFalse(fs[n]["winpe_inject"] or fs[n]["setup_load"], n)
+
+    # ---------------------------------------------------------------- sezione 15: driver abbinati alle ISO
+    def _catalog(self):
+        """Catalogo di prova: un server, un PC e uno strumento WinPE, piu' una ISO Linux."""
+        import json
+        isos = {
+            "win-server-2022": {"slug": "win-server-2022", "name": "Windows Server 2022", "type": "windows",
+                                "group": "Windows Server", "enabled": True, "order": 1, "source": "local",
+                                "file": "ws2022.iso", "path": "/x/ws2022.iso", "missing": False,
+                                "detect": {"type": "windows", "files": {"bootwim": "sources/boot.wim", "bcd": "boot/bcd",
+                                                                        "bootsdi": "boot/boot.sdi", "install": "sources/install.wim"}}},
+            "win11-pro": {"slug": "win11-pro", "name": "Windows 11 Pro", "type": "windows", "group": "Windows",
+                          "enabled": True, "order": 2, "source": "local", "file": "w11.iso", "path": "/x/w11.iso",
+                          "missing": False,
+                          "detect": {"type": "windows", "files": {"bootwim": "sources/boot.wim", "bcd": "boot/bcd",
+                                                                  "bootsdi": "boot/boot.sdi", "install": "sources/install.wim"}}},
+            "hirens-pe": {"slug": "hirens-pe", "name": "Hiren's BootCD PE", "type": "winpe-tool", "group": "Strumenti",
+                          "enabled": True, "order": 3, "source": "local", "file": "hbcd.iso", "path": "/x/hbcd.iso",
+                          "missing": False,
+                          "detect": {"type": "winpe-tool", "files": {"bootwim": "hbcd_pe_x64.wim", "bcd": "boot/bcd",
+                                                                     "bootsdi": "boot/boot.sdi"}}},
+            "debian-13": {"slug": "debian-13", "name": "Debian 13", "type": "debian-installer", "group": "Linux",
+                          "enabled": True, "order": 4, "source": "local", "file": "deb.iso", "path": "/x/deb.iso",
+                          "missing": False, "detect": {"type": "debian-installer", "files": {}}},
+        }
+        with open(C.CATALOG_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"isos": isos, "last_scan": None}, fh)
+        return isos
+
+    def _reset_drivers(self):
+        """Spegne winpe_inject / setup_load su tutte le cartelle lasciate dai test precedenti."""
+        names = list(self._folders())
+        if names:
+            r = self.client.patch("/api/drivers/folders",
+                                  json={"names": names, "winpe_inject": False, "setup_load": False,
+                                        "apply_to": {"mode": "all"}}, headers=self.h)
+            self.assertEqual(r.status_code, 200, r.get_json())
+
+    def test_12_apply_to_default_and_validation(self):
+        from pixio.services import drivers
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": "Apply Val"}, headers=self.h).status_code, 201)
+        f = self._folders()["Apply Val"]
+        # valore predefinito: vale per tutte le immagini (retrocompatibilita')
+        self.assertEqual(f["apply_to"], {"mode": "all", "groups": [], "isos": []})
+        # le scelte possibili arrivano con l'elenco delle cartelle
+        self._catalog()
+        d = self.client.get("/api/drivers").get_json()
+        self.assertEqual(sorted(d["apply_choices"]), ["groups", "isos"])
+        self.assertEqual(d["groups"], d["apply_choices"]["groups"])
+        self.assertEqual(d["isos"], d["apply_choices"]["isos"])
+        self.assertIn("Windows Server", d["groups"])
+        self.assertIn("Linux", d["groups"])
+        slugs = {i["slug"]: i for i in d["isos"]}
+        # solo le ISO che avviano un WinPE: la Debian non riceve driver
+        self.assertEqual(sorted(slugs), ["hirens-pe", "win-server-2022", "win11-pro"])
+        self.assertEqual(slugs["win-server-2022"]["name"], "Windows Server 2022")
+        self.assertEqual(slugs["win-server-2022"]["group"], "Windows Server")
+        # modifica valida
+        r = self.client.patch("/api/drivers/folders/Apply%20Val",
+                              json={"apply_to": {"mode": "groups", "groups": ["Windows Server", "Windows Server", " Windows "]}},
+                              headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        # duplicati tolti e spazi ripuliti
+        self.assertEqual(r.get_json()["folder"]["apply_to"], {"mode": "groups", "groups": ["Windows Server", "Windows"], "isos": []})
+        r = self.client.patch("/api/drivers/folders/Apply%20Val",
+                              json={"apply_to": {"mode": "isos", "isos": ["win-server-2022"]}}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        a = r.get_json()["folder"]["apply_to"]
+        self.assertEqual(a["mode"], "isos")
+        self.assertEqual(a["isos"], ["win-server-2022"])
+        # apply_to si sostituisce tutto insieme: quello che non arriva viene azzerato
+        # (la SPA rimanda sempre l'oggetto completo, così l'elenco già scelto non si perde cambiando modalità)
+        self.assertEqual(a["groups"], [])
+        r = self.client.patch("/api/drivers/folders/Apply%20Val",
+                              json={"apply_to": {"mode": "groups", "groups": ["Windows"], "isos": ["win-server-2022"]}},
+                              headers=self.h)
+        self.assertEqual(r.get_json()["folder"]["apply_to"],
+                         {"mode": "groups", "groups": ["Windows"], "isos": ["win-server-2022"]})
+        # valori rifiutati
+        for bad in ({"mode": "tutte"}, {"mode": 3}, {"mode": "all", "groups": "Windows"},
+                    {"mode": "all", "groups": [3]}, {"mode": "all", "groups": ["x" * 61]},
+                    {"mode": "all", "groups": ["g"] * 51}, {"mode": "all", "isos": "win11-pro"},
+                    {"mode": "all", "isos": [7]}, {"mode": "all", "isos": ["Win11 Pro"]},
+                    {"mode": "all", "isos": ["../fuori"]}, {"mode": "all", "isos": ["x"] * 501},
+                    "all", ["all"], 5):
+            r = self.client.patch("/api/drivers/folders/Apply%20Val", json={"apply_to": bad}, headers=self.h)
+            self.assertEqual(r.status_code, 400, bad)
+            self.assertIn("error", r.get_json())
+        # il valore valido precedente non e' stato toccato
+        self.assertEqual(self._folders()["Apply Val"]["apply_to"],
+                         {"mode": "groups", "groups": ["Windows"], "isos": ["win-server-2022"]})
+        # stessa validazione a livello di servizio
+        self.assertEqual(drivers.check_apply_to(None), {"mode": "all", "groups": [], "isos": []})
+        with self.assertRaises(ValueError):
+            drivers.check_apply_to({"mode": "gruppi"})
+        self.client.delete("/api/drivers/folders/Apply%20Val", headers=self.h)
+
+    def test_13_apply_to_filters_folders(self):
+        from pixio.services import drivers
+        self._reset_drivers()
+        cat = self._catalog()
+        server_iso, pc_iso = cat["win-server-2022"], cat["win11-pro"]
+        tool_iso, linux_iso = cat["hirens-pe"], cat["debian-13"]
+        for n, payload in (("RAID server", "raid"), ("Rete PC", "nic"), ("Comuni", "com"), ("Solo Hirens", "hir")):
+            self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+            base = payload
+            _put_file(self.client, self.h, n, f"{base}.inf", b"i" * 8)
+            _put_file(self.client, self.h, n, f"{base}.sys", b"s" * 8)
+            r = self.client.patch(f"/api/drivers/folders/{n.replace(' ', '%20')}",
+                                  json={"winpe_inject": True, "setup_load": True}, headers=self.h)
+            self.assertEqual(r.status_code, 200, r.get_json())
+        self.client.patch("/api/drivers/folders/RAID%20server",
+                          json={"apply_to": {"mode": "groups", "groups": ["Windows Server"]}}, headers=self.h)
+        self.client.patch("/api/drivers/folders/Rete%20PC",
+                          json={"apply_to": {"mode": "groups", "groups": ["Windows"]}}, headers=self.h)
+        self.client.patch("/api/drivers/folders/Solo%20Hirens",
+                          json={"apply_to": {"mode": "isos", "isos": ["hirens-pe"]}}, headers=self.h)
+        # "Comuni" resta su "all"
+
+        def cartelle(iso):
+            return sorted({c for c, _n, _p in drivers.winpe_inject_files(iso)})
+        # filtro per gruppo
+        self.assertEqual(cartelle(server_iso), ["Comuni", "RAID server"])
+        self.assertEqual(cartelle(pc_iso), ["Comuni", "Rete PC"])
+        # filtro per singola ISO
+        self.assertEqual(cartelle(tool_iso), ["Comuni", "Solo Hirens"])
+        # una ISO di un gruppo che nessuno ha scelto riceve solo le cartelle "all"
+        self.assertEqual(cartelle(linux_iso), ["Comuni"])
+        # senza ISO: nessun filtro, comportamento di prima
+        self.assertEqual(cartelle(None), ["Comuni", "RAID server", "Rete PC", "Solo Hirens"])
+        # i file arrivano davvero, non solo le cartelle
+        nomi = sorted(n for c, n, _p in drivers.winpe_inject_files(server_iso))
+        self.assertEqual(nomi, ["com.inf", "com.sys", "raid.inf", "raid.sys"])
+        # stesso filtro per le cartelle caricate prima del setup di Windows
+        self.assertEqual(sorted(drivers.setup_load_folders(server_iso)), ["Comuni", "RAID server"])
+        self.assertEqual(sorted(drivers.setup_load_folders(pc_iso)), ["Comuni", "Rete PC"])
+        self.assertEqual(sorted(drivers.setup_load_folders(None)),
+                         ["Comuni", "RAID server", "Rete PC", "Solo Hirens"])
+        # il confronto sul gruppo non guarda maiuscole e spazi
+        self.assertEqual(cartelle({"slug": "altro", "group": "  windows server  "}), ["Comuni", "RAID server"])
+        # un elenco vuoto vuol dire "nessuna immagine"
+        self.client.patch("/api/drivers/folders/RAID%20server",
+                          json={"apply_to": {"mode": "groups", "groups": []}}, headers=self.h)
+        self.assertEqual(cartelle(server_iso), ["Comuni"])
+        self.client.patch("/api/drivers/folders/RAID%20server",
+                          json={"apply_to": {"mode": "groups", "groups": ["Windows Server"]}}, headers=self.h)
+
+    def test_14_excluded_files_not_injected(self):
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "Esclusioni"
+        self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+        for f in ("a.inf", "a.sys", "b.inf", "note.txt"):
+            _put_file(self.client, self.h, n, f, b"x" * 12)
+        _put_file(self.client, self.h, n, "c.inf", b"x" * 12, path="x64/c.inf")
+        _put_file(self.client, self.h, n, "vecchio.inf", b"x" * 12, path="x86/vecchio.inf")
+        self.client.patch(f"/api/drivers/folders/{n}", json={"winpe_inject": True}, headers=self.h)
+        f = self._folders()[n]
+        per_nome = {x["name"]: x for x in f["files"]}
+        # candidati: i .inf/.sys/.cat/.dll fuori dalle cartelle a 32 bit
+        self.assertTrue(per_nome["a.inf"]["winpe_cand"] and per_nome["x64/c.inf"]["winpe_cand"])
+        self.assertFalse(per_nome["note.txt"]["winpe_cand"])
+        self.assertFalse(per_nome["x86/vecchio.inf"]["winpe_cand"])
+        self.assertEqual((f["winpe_files"], f["winpe_candidates"], f["excluded_files"]), (4, 4, 0))
+        self.assertEqual(sorted(x[1] for x in drivers.winpe_inject_files()), ["a.inf", "a.sys", "b.inf", "c.inf"])
+        # esclusione di un file
+        r = self.client.patch(f"/api/drivers/folders/{n}/files/b.inf", json={"excluded": True}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        f = r.get_json()["folder"]
+        self.assertEqual(f["excluded"], ["b.inf"])
+        self.assertEqual((f["winpe_files"], f["winpe_candidates"], f["excluded_files"]), (3, 4, 1))
+        per_nome = {x["name"]: x for x in f["files"]}
+        self.assertTrue(per_nome["b.inf"]["excluded"])
+        self.assertFalse(per_nome["b.inf"]["winpe"])
+        self.assertTrue(per_nome["a.inf"]["winpe"])
+        self.assertEqual(sorted(x[1] for x in drivers.winpe_inject_files()), ["a.inf", "a.sys", "c.inf"])
+        self.assertNotIn("b.inf", [x[1] for x in drivers.winpe_inject_files(None)])
+        # e il file resta sul disco
+        self.assertTrue(os.path.isfile(os.path.join(C.DRIVERS_DIR, n, "b.inf")))
+        # rimesso dentro
+        r = self.client.patch(f"/api/drivers/folders/{n}/files/b.inf", json={"excluded": False}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["folder"]["excluded"], [])
+        self.assertIn("b.inf", [x[1] for x in drivers.winpe_inject_files()])
+        # corpo senza "excluded" -> 400; cartella inesistente -> 404
+        self.assertEqual(self.client.patch(f"/api/drivers/folders/{n}/files/b.inf", json={}, headers=self.h).status_code, 400)
+        self.assertEqual(self.client.patch("/api/drivers/folders/Fantasma/files/b.inf",
+                                           json={"excluded": True}, headers=self.h).status_code, 404)
+        self.client.patch(f"/api/drivers/folders/{n}", json={"winpe_inject": False}, headers=self.h)
+
+    def test_15_ipxe_script_per_iso(self):
+        from pixio.services import ipxe_menu
+        self._reset_drivers()
+        self._catalog()
+        for n, base, apply_to in (("Driver server", "megaraid", {"mode": "groups", "groups": ["Windows Server"]}),
+                                  ("Driver PC", "i225", {"mode": "groups", "groups": ["Windows"]}),
+                                  ("Driver comuni", "usb3", {"mode": "all"})):
+            self.assertEqual(self.client.post("/api/drivers/folders", json={"name": n}, headers=self.h).status_code, 201)
+            _put_file(self.client, self.h, n, f"{base}.inf", b"i" * 8)
+            self.client.patch("/api/drivers/folders/" + n.replace(" ", "%20"),
+                              json={"winpe_inject": True, "apply_to": apply_to}, headers=self.h)
+        srv, _w = ipxe_menu.entry_script("win-server-2022", "efi")
+        pc, _w = ipxe_menu.entry_script("win11-pro", "efi")
+        # la ISO server riceve i driver server e quelli comuni, non quelli abbinati al PC
+        self.assertIn("megaraid.inf", srv)
+        self.assertIn("usb3.inf", srv)
+        self.assertNotIn("i225.inf", srv)
+        # e viceversa
+        self.assertIn("i225.inf", pc)
+        self.assertIn("usb3.inf", pc)
+        self.assertNotIn("megaraid.inf", pc)
+        # le righe sono quelle di iniezione dei driver, con l'URL della cartella giusta
+        self.assertIn("initrd http://10.10.0.254/pxe/drivers/Driver%20server/megaraid.inf megaraid.inf || goto failed", srv)
+        # install.cmd: lo stesso filtro vale per i drvload dentro il WinPE
+        from pixio.services import winpe
+        self.assertIn("megaraid.inf", winpe.install_cmd("win-server-2022"))
+        self.assertNotIn("megaraid.inf", winpe.install_cmd("win11-pro"))
+        self.assertIn("i225.inf", winpe.install_cmd("win11-pro"))
+        # una ISO che non c'e' non fa saltare nulla (nessun filtro applicabile)
+        self.assertIsNone(winpe.iso_for("mai-vista"))
+        self.assertTrue(winpe.install_cmd("mai-vista"))
+        self._reset_drivers()
 
     # ---------------------------------------------------------------- nessuna regressione su ISO e risposte
     def test_11_iso_and_answers_unchanged(self):

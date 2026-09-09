@@ -289,7 +289,7 @@
         <td>${P.switchHtml(!!iso.enabled, `data-act="toggle" aria-label="Nel menu: ${esc(iso.name)}" ${busy ? 'disabled' : ''} ${iso.missing ? 'disabled title="File mancante"' : ''}`)}</td>
         <td><div class="iso-name">${esc(iso.name || iso.file)}</div><div class="iso-file mono">${esc(iso.rel_path || iso.file || '')}</div></td>
         <td>${sourcePill(iso)}</td><td>${esc(iso.type_name || typeName(iso.type))}${iso.group ? `<div class="hint">${esc(iso.group)}</div>` : ''}</td>
-        <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}</td>
+        <td class="num">${P.fmtBytes(iso.size)}</td><td>${platBadges(iso)}</td><td>${statusPill(iso)}${iso.answer_id ? ' ' + P.pill('automatica: ' + (iso.answer_name || iso.answer_id), 'acc') : ''}</td>
         <td class="actions-cell"><button class="btn small" type="button" data-act="details">${noRecipe ? 'Ricetta manuale' : 'Dettagli'}</button></td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
@@ -338,10 +338,50 @@
   async function openDetails(slug) {
     P.drawer.open('Dettagli ISO', '<div class="loading">Caricamento…</div>');
     try {
-      const [iso, groups] = await Promise.all([P.get('/api/catalog/' + encodeURIComponent(slug)), loadGroups()]);
+      const [iso, groups] = await Promise.all([P.get('/api/catalog/' + encodeURIComponent(slug)), loadGroups(), loadAnswers()]);
       if (!P.drawer.isOpen()) return;
       renderDrawer(iso, groups);
     } catch (e) { P.fail(e); P.drawer.close(); }
+  }
+
+  /* Risposte automatiche (autounattend, preseed, cloud-init, kickstart) da collegare alla ISO. */
+  const ANSWER_KINDS = {
+    windows: ['windows'], 'winpe-tool': ['windows'],
+    'debian-installer': ['debian'], 'debian-live': ['debian'],
+    'ubuntu-casper': ['ubuntu'], 'redhat-installer': ['redhat'], 'fedora-live': ['redhat'],
+  };
+
+  async function loadAnswers() {
+    if (CAT.answers) return CAT.answers;
+    try {
+      const r = await P.api('GET', '/api/answers');
+      CAT.answers = (r && r.answers) || [];
+    } catch (e) { CAT.answers = []; }
+    return CAT.answers;
+  }
+
+  function answersFor(iso) {
+    const kinds = ANSWER_KINDS[iso.type] || [];
+    const all = CAT.answers || [];
+    const buone = all.filter((a) => kinds.includes(a.kind));
+    const altre = all.filter((a) => !kinds.includes(a.kind));
+    return { buone, altre };
+  }
+
+  function answerFieldHtml(iso) {
+    const { buone, altre } = answersFor(iso);
+    if (!(CAT.answers || []).length) {
+      return `<div class="field"><span class="field-label">Installazione automatica</span>
+        <div class="hint">Nessuna risposta disponibile. Creane una nella pagina Risposte, oppure da Preset → Windows o Debian con "Salva come risposta".</div></div>`;
+    }
+    const opt = (a) => `<option value="${esc(a.id)}" ${a.id === iso.answer_id ? 'selected' : ''}>${esc(a.name)} (${esc(a.kind)})</option>`;
+    return `<div class="field"><label for="d-answer">Installazione automatica</label>
+      <select id="d-answer">
+        <option value="">Nessuna: installazione guidata a mano</option>
+        ${buone.length ? `<optgroup label="Adatte a questa immagine">${buone.map(opt).join('')}</optgroup>` : ''}
+        ${altre.length ? `<optgroup label="Altre risposte">${altre.map(opt).join('')}</optgroup>` : ''}
+      </select>
+      <div class="hint">La risposta viene servita al PC durante l'installazione: per Windows finisce nel WinPE come autounattend.xml, per Linux diventa il file di preconfigurazione sulla riga di comando del kernel.</div></div>`;
   }
 
   function renderDrawer(iso, groups) {
@@ -375,6 +415,7 @@
           <div class="field"><label for="d-group">Gruppo</label><select id="d-group">${groups.map((g) => `<option value="${esc(g)}" ${g === iso.group ? 'selected' : ''}>${esc(g)}</option>`).join('')}${iso.group && !groups.includes(iso.group) ? `<option value="${esc(iso.group)}" selected>${esc(iso.group)}</option>` : ''}<option value="__new">Nuovo gruppo…</option></select><input id="d-group-new" placeholder="Nome del nuovo gruppo" hidden aria-label="Nome del nuovo gruppo"></div>
           <div class="field"><label for="d-type">Tipo (ricetta)</label><select id="d-type">${types.map((t) => `<option value="${esc(t.id)}" ${t.id === (iso.type || 'unknown') ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>
         </div>
+        ${answerFieldHtml(iso)}
         <dl class="kv">
           <dt>Rilevato</dt><dd>${esc(det.label || iso.type_name || '—')}${det.version ? ' · versione ' + esc(det.version) : ''}</dd>
           ${(det.files || []).length ? `<dt>File chiave</dt><dd class="mono" style="font-size:12px">${det.files.map(esc).join('<br>')}</dd>` : ''}
@@ -427,6 +468,11 @@
         let group = $('#d-group', body).value; if (group === '__new') group = $('#d-group-new', body).value.trim();
         if (group && group !== iso.group) patch.group = group;
         const type = $('#d-type', body).value; if (type && type !== iso.type) patch.type = type;
+        const ansEl = $('#d-answer', body);
+        if (ansEl) {
+          const ans = ansEl.value || null;
+          if ((ans || null) !== (iso.answer_id || null)) patch.answer_id = ans;
+        }
         if ($('#d-cr-on', body).checked) {
           const kernel = $('#d-cr-kernel', body).value.trim();
           if (!kernel) { P.toast('Indica il kernel della ricetta personalizzata', 'bad'); $('#d-cr-kernel', body).focus(); return; }

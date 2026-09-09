@@ -85,10 +85,8 @@ def check_apply_to(v):
         if x not in ss:
             ss.append(x)
 
-    if mode == "groups" and not gs:
-        raise ValueError("apply_to: scegli almeno un gruppo, oppure usa la modalità \"all\"")
-    if mode == "isos" and not ss:
-        raise ValueError("apply_to: scegli almeno un'immagine, oppure usa la modalità \"all\"")
+    # Un elenco vuoto e' ammesso e vuol dire "nessuna immagine": stato scomodo ma coerente, che la GUI
+    # segnala con un avviso invece di rifiutare la modifica mentre l'utente sta ancora scegliendo.
     return {"mode": mode, "groups": gs, "isos": ss}
 
 
