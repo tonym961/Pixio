@@ -344,3 +344,59 @@ details.custom .inner{padding-top:10px}
 .ministat .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
 .ministat .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .fp{font-size:11.5px;overflow-wrap:anywhere}
+
+/* ---------- pagina Windows: sezione Ottimizzazioni (catalogo in stile nLite) ---------- */
+.tw-sum{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:10px}
+.tw-sum .tw-num{flex:none;text-align:center;min-width:64px}
+.tw-sum .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tw-sum .n{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
+.tw-sum .grow{flex:1 1 240px;min-width:0;overflow-wrap:anywhere}
+.tw-filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.tw-filters .search{min-width:200px;flex:1 1 220px;max-width:none}
+.tw-filters select{font:inherit;font-size:13.5px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--surface);color:var(--ink);flex:none;max-width:100%}
+
+.tw-cats{display:grid;gap:8px}
+.tw-cat{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);overflow:hidden;min-width:0}
+.tw-cat>summary{cursor:pointer;list-style:none;padding:9px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-weight:600;font-size:13.5px}
+.tw-cat>summary::-webkit-details-marker{display:none}
+.tw-cat>summary::before{content:"\25B8";display:inline-block;color:var(--muted);font-size:12px;flex:none;transition:transform .12s}
+.tw-cat[open]>summary::before{transform:rotate(90deg)}
+.tw-cat>summary:hover{background:var(--surface)}
+.tw-cat .cname{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.tw-cat .cbtns{display:flex;gap:6px;flex:none}
+.tw-inner{padding:10px 12px 12px;border-top:1px solid var(--line);background:var(--surface)}
+.tw-cdesc{font-size:12px;color:var(--muted);margin-bottom:8px;overflow-wrap:anywhere}
+.tw-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:8px}
+.tw-item{display:flex;gap:9px;align-items:flex-start;border:1px solid var(--line);border-left:3px solid var(--line-strong);border-radius:8px;padding:8px 10px;background:var(--surface-2);min-width:0;cursor:pointer}
+.tw-item:hover{border-color:var(--line-strong)}
+.tw-item>input{flex:none;width:auto;margin:3px 0 0;cursor:pointer}
+.tw-item .b{flex:1 1 auto;min-width:0;display:grid;gap:2px}
+.tw-item .t{font-weight:600;font-size:13px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;overflow-wrap:anywhere}
+.tw-item .d{font-size:12px;color:var(--muted);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden}
+.tw-item .m{font-size:11px;color:var(--muted);font-family:var(--mono);overflow-wrap:anywhere}
+.tw-item.imp-sicuro{border-left-color:var(--ok)}
+.tw-item.imp-attenzione{border-left-color:var(--warn)}
+.tw-item.imp-rischioso{border-left-color:var(--bad);background:var(--bad-soft)}
+.tw-item.on{background:var(--accent-soft);border-color:var(--accent)}
+.tw-item.imp-rischioso.on{background:var(--bad-soft);border-color:var(--bad);box-shadow:inset 0 0 0 1px var(--bad)}
+.tw-cats .empty{padding:22px 16px}
+
+.tw-extra{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.tw-extra .field{margin-bottom:16px}
+.tw-extra .field:last-child{margin-bottom:0}
+.tw-rows{display:grid;gap:6px;margin-top:6px}
+.tw-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tw-row input{flex:1 1 160px;min-width:140px}
+.tw-row select{flex:0 1 200px;min-width:150px;width:auto}
+.tw-row .btn{flex:none}
+
+@media (max-width:900px){
+  .tw-items{grid-template-columns:1fr}
+  .tw-cat>summary{gap:6px}
+  .tw-cat .cbtns{width:100%}
+  .tw-cat .cbtns .btn{flex:1}
+}
+/* elenco profili + form della pagina Windows: era un grid-template scritto a mano nell'HTML,
+   che vinceva sulla regola responsive di .menu-grid e lasciava il form strettissimo sui telefoni */
+.menu-grid.wp-grid{grid-template-columns:minmax(260px,1fr) minmax(0,2.6fr)}
+@media (max-width:900px){.menu-grid.wp-grid{grid-template-columns:1fr}}

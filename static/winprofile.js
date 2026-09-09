@@ -15,7 +15,7 @@
 
   // Stato della pagina: meta = elenchi dal server, cur = profilo in modifica (id null = nuovo),
   // tw = stato della sezione Ottimizzazioni (selezione, filtri, elenchi a mano)
-  const W = { root: null, meta: null, list: [], cur: null, dirty: false, loadingPreview: false, tw: null };
+  const W = { root: null, meta: null, list: [], cur: null, dirty: false, previewSeq: 0, tw: null };
 
   const idUrl = (id) => '/api/winprofiles/' + encodeURIComponent(id);
   const clone = (o) => JSON.parse(JSON.stringify(o == null ? null : o));
@@ -189,6 +189,324 @@
     return `<div class="field"><label for="${id}">${esc(label)}</label><textarea id="${id}" class="mono" rows="${rows || 4}">${esc(value || '')}</textarea>${hint ? `<div class="hint">${hint}</div>` : ''}</div>`;
   }
 
+  // ---------------------------------------------------------------- ottimizzazioni (stile nLite)
+  /* Il catalogo arriva da GET /api/winprofiles nel campo "tweaks" ({categories:[{id,name,description}],
+     items:[{id,category,name,description,impact,editions,reg,services,commands,features_*}]}).
+     La selezione vive in un insieme (W.tw.sel) e NON nelle caselle di spunta: con un filtro attivo le
+     voci nascoste non stanno nel DOM e rileggerle da lì cancellerebbe le scelte fatte prima. */
+
+  function twCatalogo() { return (W.meta && W.meta.tweaks) || { categories: [], items: [] }; }
+  function twVoci() { return twCatalogo().items || []; }
+  function twCategorie() { return twCatalogo().categories || []; }
+
+  // colore dell'etichetta di impatto: verde = sicuro, giallo = attenzione, rosso = rischioso
+  const TW_PILL = { sicuro: 'ok', attenzione: 'warn', rischioso: 'bad' };
+
+  function twInit(s) {
+    const noti = Object.create(null);
+    twVoci().forEach((t) => { noti[t.id] = true; });
+    const elenco = (s.tweaks || []).map(String);
+    W.tw = {
+      sel: new Set(elenco.filter((x) => noti[x])),
+      // identificativi non più presenti nel catalogo: si segnalano e non si salvano (il server li rifiuta)
+      ignoti: elenco.filter((x) => !noti[x]),
+      servizi: (s.services_extra || []).map((x) => (typeof x === 'string'
+        ? { name: x, start: 4 }
+        : { name: (x && x.name) || '', start: Number(x && x.start) || 4 })),
+      funz: (s.features_enable || []).map((n) => ({ name: String(n), on: true }))
+        .concat((s.features_disable || []).map((n) => ({ name: String(n), on: false }))),
+      q: '', imp: '', stato: '', open: Object.create(null),
+    };
+  }
+
+  function twFiltroAttivo() { return !!(W.tw.q.trim() || W.tw.imp || W.tw.stato); }
+
+  function twVisibile(t) {
+    if (W.tw.imp && t.impact !== W.tw.imp) return false;
+    if (W.tw.stato === 'on' && !W.tw.sel.has(t.id)) return false;
+    if (W.tw.stato === 'off' && W.tw.sel.has(t.id)) return false;
+    const q = W.tw.q.trim().toLowerCase();
+    if (!q) return true;
+    const testo = ((t.name || '') + ' ' + (t.description || '')).toLowerCase();
+    return q.split(/\s+/).every((parola) => testo.indexOf(parola) >= 0);
+  }
+
+  function twDiCategoria(cid) { return twVoci().filter((t) => t.category === cid); }
+  function twAttive() { return twVoci().filter((t) => W.tw.sel.has(t.id)); }
+
+  function twVoceHtml(t) {
+    const on = W.tw.sel.has(t.id);
+    const imp = t.impact || 'sicuro';
+    const n = (a) => (Array.isArray(a) ? a.length : 0);
+    const dett = [];
+    if (n(t.reg)) dett.push(n(t.reg) === 1 ? '1 chiave di registro' : n(t.reg) + ' chiavi di registro');
+    if (n(t.services)) dett.push(n(t.services) === 1 ? '1 servizio' : n(t.services) + ' servizi');
+    if (n(t.commands)) dett.push(n(t.commands) === 1 ? '1 comando' : n(t.commands) + ' comandi');
+    const nf = n(t.features_enable) + n(t.features_disable);
+    if (nf) dett.push(nf === 1 ? '1 funzionalità Windows' : nf + ' funzionalità Windows');
+    const ed = t.editions || [];
+    const soloEd = ed.length === 1 ? ` <span class="pill neutral">solo Windows ${esc(ed[0])}</span>` : '';
+    return `<label class="tw-item imp-${esc(imp)}${on ? ' on' : ''}" title="${esc(t.description || '')}">
+      <input type="checkbox" data-tweak="${esc(t.id)}" ${on ? 'checked' : ''}>
+      <span class="b">
+        <span class="t">${esc(t.name)} <span class="pill ${TW_PILL[imp] || 'neutral'}">${esc(imp)}</span>${soloEd}</span>
+        <span class="d">${esc(t.description || '')}</span>
+        ${dett.length ? `<span class="m">${esc(dett.join(' · '))} · ${esc(t.id)}</span>` : `<span class="m">${esc(t.id)}</span>`}
+      </span>
+    </label>`;
+  }
+
+  function twCategorieHtml() {
+    const filtro = twFiltroAttivo();
+    const blocchi = [];
+    twCategorie().forEach((c) => {
+      const tutte = twDiCategoria(c.id);
+      if (!tutte.length) return;
+      const viste = tutte.filter(twVisibile);
+      if (filtro && !viste.length) return;
+      const nsel = tutte.filter((t) => W.tw.sel.has(t.id)).length;
+      // con un filtro attivo le categorie si aprono da sole (si vede subito cosa corrisponde);
+      // altrimenti restano aperte quelle già scelte dal tecnico o con almeno una voce attiva
+      const aperta = filtro ? true
+        : (W.tw.open[c.id] !== undefined ? W.tw.open[c.id] : nsel > 0);
+      blocchi.push(`<details class="tw-cat" data-cat="${esc(c.id)}"${aperta ? ' open' : ''}>
+        <summary>
+          <span class="cname">${esc(c.name)}</span>
+          <span class="pill ${nsel ? 'acc' : 'neutral'}" data-cat-count="${esc(c.id)}">${nsel} / ${tutte.length}</span>
+          <span class="cbtns">
+            <button class="btn small" type="button" data-tw-act="tutti" data-cat="${esc(c.id)}" title="Spunta tutte le voci mostrate di questa categoria">Seleziona tutto</button>
+            <button class="btn small" type="button" data-tw-act="nessuno" data-cat="${esc(c.id)}" title="Togli la spunta a tutte le voci mostrate di questa categoria">Deseleziona tutto</button>
+          </span>
+        </summary>
+        <div class="tw-inner">
+          <div class="tw-cdesc">${esc(c.description || '')}${filtro && viste.length < tutte.length
+            ? ` <span class="muted">— ${viste.length} voci su ${tutte.length} corrispondono al filtro</span>` : ''}</div>
+          <div class="tw-items">${viste.map(twVoceHtml).join('')}</div>
+        </div>
+      </details>`);
+    });
+    if (!blocchi.length) {
+      return `<div class="empty"><h3>Nessuna ottimizzazione trovata</h3>
+        <p>Nessuna voce corrisponde al testo cercato o al filtro scelto. Svuota la ricerca oppure rimetti "Tutti gli impatti".</p></div>`;
+    }
+    return blocchi.join('');
+  }
+
+  function twTestataHtml() {
+    const imps = (W.meta && W.meta.impacts) || ['sicuro', 'attenzione', 'rischioso'];
+    return `<div class="tw-sum">
+        <div class="tw-num"><div class="k">Attive</div><div class="n" id="wp-tw-n">0</div></div>
+        <div class="tw-num"><div class="k">Rischiose</div><div class="n" id="wp-tw-nrisk">0</div></div>
+        <div class="grow hint" id="wp-tw-hint"></div>
+        <button class="btn small" type="button" data-tw-act="azzera">Azzera tutte</button>
+      </div>
+      <div class="tw-filters">
+        <input class="search" id="wp-tw-q" type="search" data-nodirty
+               aria-label="Cerca fra le ottimizzazioni"
+               placeholder="Cerca fra le ottimizzazioni (nome o descrizione)" value="${esc(W.tw.q)}">
+        <select id="wp-tw-imp" data-nodirty aria-label="Filtra per impatto">
+          <option value="">Tutti gli impatti</option>
+          ${imps.map((i) => `<option value="${esc(i)}"${W.tw.imp === i ? ' selected' : ''}>Solo impatto ${esc(i)}</option>`).join('')}
+        </select>
+        <select id="wp-tw-stato" data-nodirty aria-label="Mostra solo le voci attive o non attive">
+          <option value="">Attive e non attive</option>
+          <option value="on"${W.tw.stato === 'on' ? ' selected' : ''}>Solo le attive</option>
+          <option value="off"${W.tw.stato === 'off' ? ' selected' : ''}>Solo le non attive</option>
+        </select>
+        <button class="btn small" type="button" data-tw-act="espandi">Espandi tutte</button>
+        <button class="btn small" type="button" data-tw-act="comprimi">Comprimi tutte</button>
+      </div>`;
+  }
+
+  function twServiziHtml() {
+    const avvii = (W.meta && W.meta.service_starts)
+      || [{ id: 4, name: 'disabilitato' }, { id: 3, name: 'in avvio manuale' }, { id: 2, name: 'in avvio automatico' }];
+    const righe = W.tw.servizi;
+    return `${righe.length ? `<div class="tw-rows">${righe.map((r, i) => `
+        <div class="tw-row">
+          <input class="mono" maxlength="64" placeholder="DiagTrack" value="${esc(r.name)}" aria-label="Sigla del servizio ${i + 1}">
+          <select aria-label="Avvio del servizio ${i + 1}">${avvii.map((o) => `<option value="${esc(o.id)}"${Number(r.start) === Number(o.id) ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select>
+          <button class="btn small danger" type="button" data-tw-act="serv-del" data-i="${i}">Togli</button>
+        </div>`).join('')}</div>`
+      : '<div class="hint">Nessun servizio aggiunto a mano: qui finiscono solo quelli che imposti tu, oltre a quelli già portati dalle ottimizzazioni spuntate sopra.</div>'}
+      <div class="actions" style="margin-top:8px"><button class="btn small" type="button" data-tw-act="serv-add">Aggiungi servizio</button></div>`;
+  }
+
+  function twFunzHtml() {
+    const righe = W.tw.funz;
+    return `${righe.length ? `<div class="tw-rows">${righe.map((r, i) => `
+        <div class="tw-row">
+          <input class="mono" maxlength="80" placeholder="NetFx3" value="${esc(r.name)}" aria-label="Nome della funzionalità ${i + 1}">
+          <select aria-label="Cosa fare della funzionalità ${i + 1}">
+            <option value="on"${r.on ? ' selected' : ''}>da attivare</option>
+            <option value="off"${r.on ? '' : ' selected'}>da disattivare</option>
+          </select>
+          <button class="btn small danger" type="button" data-tw-act="feat-del" data-i="${i}">Togli</button>
+        </div>`).join('')}</div>`
+      : '<div class="hint">Nessuna funzionalità aggiunta a mano.</div>'}
+      <div class="actions" style="margin-top:8px"><button class="btn small" type="button" data-tw-act="feat-add">Aggiungi funzionalità</button></div>`;
+  }
+
+  /** Contenitori della sezione: la testata resta ferma (la ricerca non deve perdere il fuoco),
+      l'elenco delle categorie e i due elenchi a mano si ridisegnano da soli. */
+  function twRender() {
+    const box = $('#wp-tw', W.root);
+    if (!box || !W.tw) return;
+    if (!twVoci().length) {
+      box.innerHTML = `<div class="alert warn">Il catalogo delle ottimizzazioni non è disponibile
+        (<span class="mono">data/windows-tweaks.json</span> mancante o illeggibile). Le ottimizzazioni già
+        salvate nel profilo restano dove sono, ma da qui non se ne possono scegliere di nuove.</div>`;
+      return;
+    }
+    box.innerHTML = `${W.tw.ignoti.length ? `<div class="alert warn">Questo profilo contiene
+        ${W.tw.ignoti.length} ottimizzazioni che non sono più nel catalogo
+        (<span class="mono">${esc(W.tw.ignoti.join(', '))}</span>): salvando il profilo vengono tolte.</div>` : ''}
+      <div id="wp-tw-head">${twTestataHtml()}</div>
+      <div class="tw-cats" id="wp-tw-cats"></div>
+      <div class="tw-extra">
+        <div class="field"><span class="field-label">Servizi da disabilitare a mano</span>
+          <div class="hint">Sigla del servizio (quella di <span class="mono">sc.exe</span>: <span class="mono">DiagTrack</span>, <span class="mono">WSearch</span>…), non il nome visualizzato. Diventa una voce <span class="mono">Start</span> nel registro durante l'installazione.</div>
+          <div id="wp-tw-serv"></div>
+        </div>
+        <div class="field"><span class="field-label">Funzionalità di Windows da attivare o disattivare</span>
+          <div class="hint">Nome usato da <span class="mono">dism</span> (<span class="mono">NetFx3</span>, <span class="mono">SMB1Protocol</span>, <span class="mono">Microsoft-Hyper-V-All</span>…). Vengono applicate al primo accesso; la stessa funzionalità non può essere sia da attivare sia da disattivare.</div>
+          <div id="wp-tw-feat"></div>
+        </div>
+      </div>`;
+    twRenderCategorie();
+    twRenderElenchi();
+    twConteggi();
+  }
+
+  function twRenderCategorie() {
+    const cont = $('#wp-tw-cats', W.root);
+    if (!cont) return;
+    cont.innerHTML = twCategorieHtml();
+    // l'evento toggle di <details> non risale: si aggancia a ogni categoria dopo il disegno
+    $$('details.tw-cat', cont).forEach((d) => {
+      d.addEventListener('toggle', () => { W.tw.open[d.dataset.cat] = d.open; });
+    });
+  }
+
+  function twRenderElenchi() {
+    const s = $('#wp-tw-serv', W.root);
+    const f = $('#wp-tw-feat', W.root);
+    if (s) s.innerHTML = twServiziHtml();
+    if (f) f.innerHTML = twFunzHtml();
+  }
+
+  /** Aggiorna i contatori (riepilogo in cima e pillola di ogni categoria) senza ridisegnare l'elenco. */
+  function twConteggi() {
+    const box = $('#wp-tw', W.root);
+    if (!box || !W.tw) return;
+    const attive = twAttive();
+    const risch = attive.filter((t) => t.impact === 'rischioso');
+    const n = $('#wp-tw-n', box);
+    if (n) n.textContent = String(attive.length);
+    const nr = $('#wp-tw-nrisk', box);
+    if (nr) { nr.textContent = String(risch.length); nr.className = 'n' + (risch.length ? ' bad-text' : ' muted'); }
+    const h = $('#wp-tw-hint', box);
+    if (h) {
+      h.innerHTML = `Su ${twVoci().length} ottimizzazioni disponibili in ${twCategorie().length} categorie.`
+        + (risch.length
+          ? ` <span class="bad-text">Attive rischiose: ${esc(risch.map((t) => t.name).join(', '))}.</span>`
+          : ' Nessuna voce rischiosa selezionata.');
+    }
+    $$('[data-cat-count]', box).forEach((el) => {
+      const tutte = twDiCategoria(el.dataset.catCount);
+      const s = tutte.filter((t) => W.tw.sel.has(t.id)).length;
+      el.textContent = s + ' / ' + tutte.length;
+      el.className = 'pill ' + (s ? 'acc' : 'neutral');
+    });
+  }
+
+  /** Rilegge nei due elenchi a mano quello che il tecnico ha scritto (le caselle di spunta no:
+      quelle stanno in W.tw.sel, che è già aggiornato a ogni click). */
+  function twSync() {
+    const box = $('#wp-tw', W.root);
+    if (!box || !W.tw) return;
+    const leggi = (sel) => $$(sel + ' .tw-row', box).map((r) => {
+      const i = r.querySelector('input');
+      const s = r.querySelector('select');
+      return { name: i ? i.value.trim() : '', val: s ? s.value : '' };
+    });
+    W.tw.servizi = leggi('#wp-tw-serv').map((r) => ({ name: r.name, start: Number(r.val) || 4 }));
+    W.tw.funz = leggi('#wp-tw-feat').map((r) => ({ name: r.name, on: r.val !== 'off' }));
+  }
+
+  function twAggiungiInSettings(s) {
+    if (!W.tw) return;
+    if (!twVoci().length) return;   // catalogo non disponibile: non si tocca quello che c'è già
+    twSync();
+    s.tweaks = twVoci().map((t) => t.id).filter((id) => W.tw.sel.has(id));
+    s.services_extra = W.tw.servizi.filter((r) => r.name);
+    s.features_enable = W.tw.funz.filter((r) => r.on && r.name).map((r) => r.name);
+    s.features_disable = W.tw.funz.filter((r) => !r.on && r.name).map((r) => r.name);
+  }
+
+  function twBind(box) {
+    const cont = $('#wp-tw', box);
+    if (!cont) return;
+    cont.addEventListener('click', async (e) => {
+      const b = e.target.closest('button[data-tw-act]');
+      if (!b) return;
+      // i pulsanti di categoria stanno dentro <summary>: senza questo aprirebbero/chiuderebbero il blocco
+      e.preventDefault();
+      e.stopPropagation();
+      const act = b.dataset.twAct;
+      if (act === 'tutti' || act === 'nessuno') {
+        twDiCategoria(b.dataset.cat).filter(twVisibile).forEach((t) => {
+          if (act === 'tutti') W.tw.sel.add(t.id); else W.tw.sel.delete(t.id);
+        });
+        W.dirty = true;
+        twRenderCategorie();
+        twConteggi();
+        return;
+      }
+      if (act === 'azzera') {
+        if (!W.tw.sel.size) { P.toast('Non c\'è nessuna ottimizzazione attiva', 'info'); return; }
+        const ok = await P.confirm(`Togliere tutte le ${W.tw.sel.size} ottimizzazioni attive?`, {
+          ok: 'Azzera', danger: true,
+          detail: 'I servizi e le funzionalità aggiunti a mano restano: si tolgono dai loro elenchi.',
+        });
+        if (!ok) return;
+        W.tw.sel.clear();
+        W.dirty = true;
+        twRenderCategorie();
+        twConteggi();
+        return;
+      }
+      if (act === 'espandi' || act === 'comprimi') {
+        const apri = act === 'espandi';
+        twCategorie().forEach((c) => { W.tw.open[c.id] = apri; });
+        $$('details.tw-cat', cont).forEach((d) => { d.open = apri; });
+        return;
+      }
+      if (act === 'serv-add') { twSync(); W.tw.servizi.push({ name: '', start: 4 }); W.dirty = true; twRenderElenchi(); return; }
+      if (act === 'feat-add') { twSync(); W.tw.funz.push({ name: '', on: true }); W.dirty = true; twRenderElenchi(); return; }
+      if (act === 'serv-del') { twSync(); W.tw.servizi.splice(Number(b.dataset.i), 1); W.dirty = true; twRenderElenchi(); return; }
+      if (act === 'feat-del') { twSync(); W.tw.funz.splice(Number(b.dataset.i), 1); W.dirty = true; twRenderElenchi(); }
+    });
+    cont.addEventListener('change', (e) => {
+      const c = e.target.closest('input[data-tweak]');
+      if (c) {
+        if (c.checked) W.tw.sel.add(c.dataset.tweak); else W.tw.sel.delete(c.dataset.tweak);
+        const riga = c.closest('.tw-item');
+        if (riga) riga.classList.toggle('on', c.checked);
+        twConteggi();
+        return;
+      }
+      if (e.target.id === 'wp-tw-imp') { W.tw.imp = e.target.value; twRenderCategorie(); twConteggi(); return; }
+      if (e.target.id === 'wp-tw-stato') { W.tw.stato = e.target.value; twRenderCategorie(); twConteggi(); }
+    });
+    cont.addEventListener('input', (e) => {
+      if (e.target.id !== 'wp-tw-q') return;
+      W.tw.q = e.target.value;
+      twRenderCategorie();
+      twConteggi();
+    });
+  }
+
   // ---------------------------------------------------------------- form
 
   function renderEditor() {
@@ -201,6 +519,7 @@
     const noti = apps().map((a) => a.id);
     const altre = (s.remove_apps || []).filter((a) => noti.indexOf(a) < 0);
     const nuovoProfilo = !W.cur.id;
+    twInit(s);   // stato della sezione Ottimizzazioni: va preparato prima del disegno
 
     box.innerHTML = `
       <div class="ph" style="margin-bottom:12px">
@@ -288,6 +607,11 @@
         ${tendina('wp-power', 'Schema di alimentazione', s.power_scheme || 'bilanciato', (meta.power_schemes || ['bilanciato', 'prestazioni']).map((x) => ({ id: x, name: x === 'prestazioni' ? 'Prestazioni elevate' : 'Bilanciato' })))}
       </div>
 
+      <div class="card"><h3>Ottimizzazioni</h3>
+        <div class="hint" style="margin-bottom:12px">Catalogo in stile nLite: ogni voce scrive criteri di registro, imposta servizi o esegue comandi durante l'installazione. Le voci <strong>sicure</strong> tolgono solo fastidi, quelle con <strong>attenzione</strong> fanno perdere qualche funzione, quelle <strong>rischiose</strong> abbassano la sicurezza del PC: usale solo se sai cosa comportano. Tutto quello che spunti qui finisce nell'anteprima dell'XML in fondo alla pagina.</div>
+        <div id="wp-tw"></div>
+      </div>
+
       <div class="card"><h3>App e comandi</h3>
         <div class="field"><span class="field-label">App preinstallate da rimuovere</span>
           <div class="checks" id="wp-apps" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 14px">${apps().map((a) => `<label><input type="checkbox" data-app="${esc(a.id)}" ${(s.remove_apps || []).indexOf(a.id) >= 0 ? 'checked' : ''}> ${esc(a.name)}</label>`).join('')}</div>
@@ -322,8 +646,12 @@
     $('#wp-dom-on', box).addEventListener('change', (e) => {
       $('#wp-dom-box', box).hidden = !e.target.checked;
     });
-    box.addEventListener('input', () => { W.dirty = true; });
-    box.addEventListener('change', () => { W.dirty = true; });
+    // ricerca e filtri delle ottimizzazioni non sono modifiche del profilo: non sporcano il form
+    const sporca = (e) => { if (!e.target.closest('[data-nodirty]')) W.dirty = true; };
+    box.addEventListener('input', sporca);
+    box.addEventListener('change', sporca);
+    twRender();
+    twBind(box);
     anteprima(true);
   }
 
@@ -374,26 +702,39 @@
     s.remove_apps = scelte.concat(righe('wp-apps-altre').filter((x) => scelte.indexOf(x) < 0));
     s.run_commands = righe('wp-commands');
     s.drivers_from_pixio = b('wp-drivers');
+    // ottimizzazioni scelte + servizi e funzionalità aggiunti a mano (sezione Ottimizzazioni)
+    twAggiungiInSettings(s);
     return s;
   }
 
   // ---------------------------------------------------------------- azioni
 
+  /* Ogni richiesta prende un gettone: quando ne parte una nuova (tipico dopo il salvataggio, che
+     ridisegna il form e quindi crea un altro <pre>) la risposta di quella vecchia viene buttata.
+     Con molte ottimizzazioni l'XML supera i 40 KB e la richiesta precedente può ancora essere in
+     volo: scartandola il riquadro non resta mai fermo al messaggio iniziale. */
   async function anteprima(silenziosa) {
     const pre = $('#wp-preview', W.root);
-    if (!pre || !W.cur || W.loadingPreview) return;
-    W.loadingPreview = true;
-    const settings = leggiForm();
+    if (!pre || !W.cur) return;
+    const gettone = W.previewSeq = (W.previewSeq || 0) + 1;
+    let settings;
+    try {
+      settings = leggiForm();
+    } catch (e) {
+      pre.textContent = 'Anteprima non disponibile: ' + e.message;
+      if (!silenziosa) P.fail(e);
+      return;
+    }
     try {
       const r = W.cur.id
         ? await P.post(idUrl(W.cur.id) + '/preview', { settings })
         : await P.post('/api/winprofiles/preview', { name: v('wp-name') || W.cur.name, preset: W.cur.preset || '', settings });
+      if (gettone !== W.previewSeq) return;      // ne è partita una più recente
       pre.textContent = r.xml || '';
     } catch (e) {
+      if (gettone !== W.previewSeq) return;
       pre.textContent = 'Anteprima non disponibile: ' + e.message;
       if (!silenziosa) P.fail(e);
-    } finally {
-      W.loadingPreview = false;
     }
   }
 
@@ -491,13 +832,14 @@
       W.root = root;
       W.cur = null;
       W.dirty = false;
+      W.tw = null;
       root.innerHTML = `
         <div class="ph">
           <div><h2>Windows</h2><div class="sub">Profili di installazione automatica: generano un file <span class="mono">autounattend.xml</span> da usare come risposta.</div></div>
           <div class="actions"><button class="btn" type="button" id="wp-reload">Aggiorna</button><button class="btn primary" type="button" id="wp-new">Nuovo profilo</button></div>
         </div>
         <div class="alert warn">Le password (amministratore, secondo utente, dominio, share dei driver) finiscono <strong>in chiaro</strong> nel file di risposta, che i PC scaricano via HTTP senza autenticazione. È il funzionamento previsto dal setup di Windows: usa password dedicate all'installazione e cambiale subito dopo.</div>
-        <div class="menu-grid" style="grid-template-columns:minmax(260px,1fr) minmax(0,2.6fr)">
+        <div class="menu-grid wp-grid">
           <div class="panel"><div class="hd"><h3>Profili</h3></div><div class="bd" id="wp-list"><div class="loading">Caricamento…</div></div></div>
           <div id="wp-editor"><div class="loading">Caricamento…</div></div>
         </div>`;
@@ -534,6 +876,7 @@
       W.meta = null;
       W.list = [];
       W.dirty = false;
+      W.tw = null;
     },
   };
 })();
