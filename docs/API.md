@@ -200,7 +200,8 @@ Profilo: `{id, name, note, updated, settings:{...}}`. Campi di `settings` (tutti
 `product_key`, `computer_name` (supporta `*` = casuale), `organization`, `owner`,
 `admin_user`, `admin_password`, `autologon` (bool), `autologon_count`,
 `extra_user` (nome, password, gruppo), `join_domain:{enabled, domain, ou, user, password}`,
-`disk:{mode: "auto-uefi"|"auto-bios"|"manuale", wipe (bool), efi_mb, msr_mb, recovery_mb}`,
+`disk:{mode: "auto-uefi"|"auto-bios"|"manuale", wipe (bool), efi_mb, msr_mb, recovery_mb}`
+(con `mode` automatico `wipe` deve essere `true`: vedi sezione 23),
 `skip_oobe` (privacy, EULA, rete, account Microsoft), `bypass_requirements` (TPM/SecureBoot/RAM/CPU per Windows 11),
 `disable_defender_prompt`, `hide_files_ext`, `disable_hibernate`, `power_scheme` ("bilanciato"|"prestazioni"),
 `remove_apps` (lista di pacchetti Appx da rimuovere), `run_commands` (comandi FirstLogon), `drivers_from_pixio` (bool: aggiunge il percorso della share driver in DriverPaths).
@@ -523,12 +524,29 @@ trovare l'immagine". Pixio legge quindi le edizioni davvero presenti e le propon
 `render_autounattend(profile, server_ip, cfg=None, editions=None)`. Con `editions` (cioè quando si sa
 per quale immagine si sta generando) il valore di `edition_index` viene confrontato con le edizioni
 presenti — numero = indice, testo = nome o nome visualizzato, senza distinzione fra maiuscole e
-minuscole — e se non corrisponde:
-- immagine con una sola edizione: si installa quella;
-- immagine con più edizioni: `InstallFrom` non viene generato, così l'edizione la chiede il programma
-  di installazione invece di fallire.
-In tutti e due i casi finisce un avviso nei log di Pixio (`pixio.winprofile`). Senza `editions` il
+minuscole — e se non corrisponde si ripiega su `edition_fallback(editions, target)`: la prima
+edizione (indice più basso) coerente con il tipo di Windows del profilo, e se nessuna lo è la prima
+dell'immagine. `InstallFrom` viene quindi generato sempre, tranne quando `edition_index` è vuoto.
+In tutti i casi finisce un avviso nei log di Pixio (`pixio.winprofile`). Senza `editions` il
 comportamento è quello di prima.
+
+**Perché non si omette `InstallFrom`.** Fino al 10 settembre 2026 con più di un'edizione Pixio
+ometteva il blocco, "perché una domanda in più è sempre meglio di un'installazione che si pianta".
+Per il programma di installazione un `ImageInstall/OSImage` senza `InstallFrom` non significa
+"scegli tu": con la chiave di prodotto vuota abbina tutte le immagini del `.wim`
+(`ProductKey: Matching Install Wim: No edition provided, matching all images`), ne trova più di una
+e apre la pagina **Selezione immagine** aspettando che qualcuno prema Avanti
+(`SelectImageIndex: Found multiple matching images. Querying for image index`). Su un PC avviato
+dalla rete davanti allo schermo non c'è nessuno: quella domanda È l'installazione che si pianta.
+`WillShowUI=OnError` non evita niente, è il valore predefinito e vale solo per gli errori.
+Il valore vuoto invece resta vuoto: "Chiedi durante l'installazione" è una scelta esplicita del
+tecnico e la GUI avvisa che su un'immagine con più edizioni ferma l'installazione automatica.
+
+**Controllo al salvataggio.** `winprofile.check_edition_for_isos(profile_id, settings)`, chiamata da
+`update()`, rifiuta con `ValueError` (400 dall'API) un profilo la cui edizione non è in nessuna delle
+ISO abbinate, elencando quelle presenti. Serve a non far scoprire l'errore davanti a un PC in
+installazione. Basta che l'edizione sia in una delle ISO abbinate; alla creazione il profilo non è
+ancora legato a nessuna risposta, quindi non c'è niente da confrontare e il controllo non scatta.
 
 Il file salvato come risposta però resta buono per una ISO sola: al boot l'XML viene rigenerato per
 l'immagine che sta partendo (sezione 20).
@@ -539,7 +557,9 @@ l'immagine che sta partendo (sezione 20).
   chi usa lo stesso profilo su ISO diverse. Senza ISO abbinata resta un campo libero, con i nomi
   tipici del tipo di Windows come suggerimento e la spiegazione di dove trovare quello giusto.
 - Se il valore salvato non è fra le edizioni dell'immagine compare un avviso con l'elenco di quelle
-  buone, e l'elenco dei profili mostra la pillola "edizione non nell'immagine". Senza ISO abbinata
+  buone (e la spiegazione che il salvataggio verrà rifiutato finché non si sceglie), e l'elenco dei
+  profili mostra la pillola "edizione non nell'immagine". Con "Chiedi durante l'installazione" su
+  un'immagine che contiene più di un'edizione compare l'avviso che il setup si fermerà ad aspettare. Senza ISO abbinata
   vale la regola `winprofile.edition_target_warning()`, che riconosce i casi palesi (un nome non
   LTSC su un profilo LTSC, un nome di Server su un profilo client).
 - Dettagli della ISO: riga "Edizioni" con nomi e indici, e negli avvisi in cima al pannello una riga
@@ -566,7 +586,9 @@ adesso, dal profilo che ha creato la risposta, con
 `render_autounattend(prof, server_ip, editions=winprofile.editions_for_iso(slug))`:
 - l'edizione del profilo è nell'immagine → si scrive com'è;
 - immagine con una sola edizione → si installa quella;
-- immagine con più edizioni → `InstallFrom` non viene generato e l'edizione la chiede il setup.
+- immagine con più edizioni → si installa la prima coerente con il `target` del profilo
+  (`11-ltsc` su una ISO LTSC 2024 → indice 1, "Windows 11 Enterprise LTSC 2024"), mai un
+  `InstallFrom` assente: senza, il setup si ferma sulla pagina "Selezione immagine" (sezione 19).
 
 Ogni scarto lascia due righe nei log: `pixio.boot` dice quale profilo e quale ISO (nome del catalogo)
 con l'elenco delle edizioni presenti, `pixio.winprofile` dice la decisione presa (sezione 19).
@@ -748,3 +770,45 @@ La pagina **Log** ha due schede: "In diretta" (i log del server, invariata) e "I
 l'elenco di quello che i PC hanno depositato — momento, PC, immagine, esito, la riga di errore e quanti
 file — il pannello laterale che apre il contenuto di ogni singolo file (con l'elenco a tendina per
 passare da `setupact.log` a `autounattend.xml`) e i pulsanti per eliminare una cartella o svuotare tutto.
+
+## 23. Partizionamento automatico e cancellazione del disco sono la stessa scelta
+Motivo: guasto del 10 settembre 2026, `0x80042565`. Il profilo dell'utente aveva
+`disk.mode = "auto-uefi"` con `disk.wipe = false`, e il generatore traduceva quel flag pari pari in
+`<WillWipeDisk>false</WillWipeDisk>` scrivendo subito dopo quattro `CreatePartition` che ricostruiscono
+il disco da zero (ripristino 750 MB, EFI 300 MB, MSR 16 MB, Windows con `Extend`). Le due cose insieme
+non stanno in piedi:
+
+- senza azzeramento il programma di installazione non crea nessuna tabella nuova, lavora su quella che
+  trova (`ResolvePartitionTypeToCreate: disk 0 already has 1 allocated partitions`). Su un disco già
+  usato — il caso normale di Pixio, che reinstalla PC in servizio — crea la prima partizione e poi si
+  ferma sulla EFI (`CreatePartition: Disk 0 doesn't support creation of partitions of the specified
+  type`, `hr = 0x80042565`), col disco già modificato;
+- i `PartitionID` sono numeri di posizione sul disco ("The first partition on a disk has the value of
+  1"), non l'ordine di creazione: `_partizioni_uefi` li conta da 1 e li usa in `ModifyPartition` e in
+  `InstallTo`. Senza azzeramento le partizioni nuove prendono i numeri successivi a quelle esistenti e
+  quei `ModifyPartition` formattano le partizioni che c'erano prima. È il caso peggiore, perché non si
+  ferma: distrugge dati in silenzio, e capita proprio a chi ha tolto la spunta per proteggerli.
+
+Regola: `wipe` ha senso solo con `mode = "manuale"`, che non genera alcun `DiskConfiguration` e lascia
+le schermate del disco al setup. Con `mode` automatico il disco 0 viene sempre azzerato.
+
+- `validate()` rifiuta `wipe=false` con `mode` automatico (`ValueError`, 400 dall'API), quindi un
+  profilo così non si salva più.
+- `validate(..., rifiuta_incompatibili=False)` — cioè la validazione della generazione — invece lo
+  corregge a `true` e lascia un avviso in `pixio.winprofile`: i profili già salvati in
+  `/var/lib/pixio/winprofiles.json` devono continuare a produrre un `autounattend.xml` che funziona,
+  senza che l'utente debba riaprirli uno per uno.
+- Il generatore scrive comunque `<WillWipeDisk>true</WillWipeDisk>` nelle modalità automatiche, con un
+  commento XML che spiega che lo schema sotto vale solo su un disco vuoto.
+- GUI (pagina Windows, riquadro Disco): con il partizionamento automatico la spunta "Cancella il disco
+  0" è mostrata bloccata su sì, con la spiegazione; con quello manuale sparisce, sostituita dalla riga
+  che dice che Pixio non tocca nessuna partizione. Un profilo salvato con la combinazione impossibile
+  mostra un avviso nel riquadro e la pillola "disco: incoerenza corretta" nell'elenco dei profili.
+
+### Nota: BypassNRO
+Lo stesso giro ha spostato `BypassNRO` dal passaggio `windowsPE` a `specialize`. In `windowsPE` i
+`RunSynchronousCommand` girano dentro Windows PE, dove `HKLM\SOFTWARE` è l'alveare del disco RAM:
+sparisce al riavvio e l'OOBE del sistema installato non ha mai visto quel valore (le `LabConfig`
+restano invece in `windowsPE`, perché lì le legge il programma di installazione). `specialize` gira nel
+Windows appena applicato, prima dell'OOBE: è dove il modello scritto a mano di `services/answers.py` la
+metteva da sempre.

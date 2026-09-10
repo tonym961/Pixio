@@ -457,26 +457,61 @@ def edition_warning(editions, valore):
             f"Edizioni disponibili: {editions_labels(editions)}.")
 
 
-def edition_for_image(valore, editions, nome_profilo=""):
+def edition_fallback(editions, target=""):
+    """Edizione da installare quando quella chiesta dal profilo nell'immagine non c'è.
+
+    Si sceglie la prima (indice più basso) coerente con il tipo di Windows del profilo — su una ISO
+    Enterprise LTSC 2024 è l'indice 1, "Windows 11 Enterprise LTSC 2024", non la N — e se nessuna lo
+    è si prende comunque la prima dell'immagine: meglio installare l'edizione sbagliata e dirlo che
+    lasciare il PC fermo davanti alla pagina di scelta. Ritorna il nome dell'immagine (o il suo
+    indice come testo se il nome manca), "" se l'elenco è vuoto."""
+    voci = sorted([e for e in (editions or []) if isinstance(e, dict)],
+                  key=lambda e: _int(e.get("index"), 99))
+
+    def nome(e):
+        return _txt(e.get("name")) or _txt(e.get("display_name")) or str(e.get("index") or 1)
+
+    if not voci:
+        return ""
+    for e in voci:
+        if not edition_target_warning(target, nome(e)):
+            return nome(e)
+    return nome(voci[0])
+
+
+def edition_for_image(valore, editions, nome_profilo="", target=""):
     """Valore da scrivere in InstallFrom sapendo quali edizioni contiene l'immagine.
 
-    Regola: se il valore corrisponde si usa così com'è; se l'immagine ha una sola edizione si usa
-    quella (l'intenzione era chiaramente installare l'unica presente); se ne ha più d'una si torna
-    a stringa vuota, cioè InstallFrom non viene generato e l'edizione la chiede il setup — una
-    domanda in più è sempre meglio di un'installazione che si pianta."""
+    Regola: se il valore corrisponde si usa così com'è; se non corrisponde si ripiega
+    sull'edizione dell'immagine coerente con il tipo di Windows del profilo (edition_fallback).
+
+    Prima Pixio, con più di un'edizione nell'immagine, tornava stringa vuota e ometteva
+    InstallFrom, "perché una domanda in più è sempre meglio di un'installazione che si pianta". In
+    un'installazione via PXE quella domanda È l'installazione che si pianta: per il setup un
+    ImageInstall/OSImage senza InstallFrom non significa "scegli tu", significa "chiedi
+    all'utente". Con la chiave di prodotto vuota abbina tutte le immagini del .wim, ne trova più di
+    una, apre la pagina "Selezione immagine" e aspetta che qualcuno prema Avanti; davanti a un PC
+    avviato dalla rete non c'è nessuno e l'installazione resta ferma lì per sempre (guasto del
+    10 settembre 2026: 5 minuti e 47 secondi di attesa nel setupact.log di laboratorio, per sempre
+    sul PC dell'utente).
+
+    Il valore vuoto invece resta vuoto: "Chiedi durante l'installazione" è una scelta esplicita del
+    tecnico, non un errore di battitura, e la GUI avvisa che su un'immagine con più edizioni ferma
+    l'installazione automatica."""
     v = _txt(valore)
     if not v or not editions or match_edition(editions, v) is not None:
         return v
     chi = f"profilo \"{nome_profilo}\": " if nome_profilo else ""
+    scelta = edition_fallback(editions, target)
     if len(editions) == 1:
-        solo = _txt(editions[0].get("name")) or str(editions[0].get("index") or 1)
         log.warning("%sl'edizione \"%s\" non è nell'immagine, si installa l'unica presente (\"%s\")",
-                    chi, v, solo)
-        return solo
-    log.warning("%sl'edizione \"%s\" non è nell'immagine (disponibili: %s): InstallFrom non "
-                "generato, l'edizione la chiede il programma di installazione",
-                chi, v, editions_labels(editions))
-    return ""
+                    chi, v, scelta)
+        return scelta
+    log.warning("%sl'edizione \"%s\" non è nell'immagine (disponibili: %s): si installa \"%s\", "
+                "correggi l'edizione del profilo. Il ripiego serve solo a non lasciare il PC fermo "
+                "sulla pagina \"Selezione immagine\" del programma di installazione",
+                chi, v, editions_labels(editions), scelta)
+    return scelta
 
 
 def edition_target_warning(target, valore):
@@ -594,6 +629,36 @@ def iso_bindings():
     for voci in out.values():
         voci.sort(key=lambda x: (x["name"] or "").lower())
     return out
+
+
+def check_edition_for_isos(profile_id, settings):
+    """Rifiuta di salvare un profilo che chiede un'edizione che le ISO abbinate non contengono.
+
+    È il controllo che sarebbe servito il 10 settembre 2026: il profilo chiedeva "Windows 11 Pro" su
+    una ISO Enterprise LTSC 2024, che quell'edizione non ha, e il difetto si è visto solo davanti al
+    PC in installazione. Le ISO sono quelle a cui è collegata la risposta generata dal profilo
+    (iso_bindings), quindi il controllo scatta solo quando si sa davvero cosa c'è dentro
+    l'immagine; un profilo non ancora abbinato a nessuna ISO si salva come prima.
+
+    Se il profilo gira su più ISO basta che l'edizione sia in almeno una: sulle altre l'XML la
+    corregge da solo al momento dell'avvio (edition_for_image) e la GUI lo dice.
+    """
+    ed = _txt((settings or {}).get("edition_index"))
+    if not ed or not profile_id:
+        return
+    try:
+        legami = [i for i in (iso_bindings().get(profile_id) or []) if i.get("editions")]
+    except Exception:  # noqa: BLE001 - senza catalogo il salvataggio non si blocca
+        return
+    if not legami or any(match_edition(i["editions"], ed) is not None for i in legami):
+        return
+    nomi = ", ".join(i["name"] for i in legami)
+    disponibili = editions_labels(legami[0]["editions"])
+    raise ValueError(
+        f"L'edizione \"{ed}\" non è dentro {nomi}: il programma di installazione si fermerebbe "
+        f"sulla pagina \"Selezione immagine\" ad aspettare che qualcuno scelga, e su un PC avviato "
+        f"dalla rete non c'è nessuno davanti allo schermo. Scegli una delle edizioni presenti "
+        f"({disponibili})")
 
 
 # ---------------------------------------------------------------- catalogo delle ottimizzazioni
@@ -1065,7 +1130,27 @@ def validate(settings, rifiuta_incompatibili=True):
         raise ValueError("Partizione di ripristino non valida: da 0 (nessuna) a 8192 MB")
     if 0 < rec < 300:
         raise ValueError("Partizione di ripristino troppo piccola: almeno 300 MB, oppure 0 per non crearla")
-    out["disk"] = {"mode": mode, "wipe": _bool(dk.get("wipe"), True),
+    # Partizionamento automatico e "non cancellare il disco" sono una combinazione impossibile: lo
+    # schema che Pixio scrive (ripristino, EFI, MSR, Windows) è un disco costruito da zero, e senza
+    # azzeramento il setup lo appende alla tabella che trova già lì. Sul primo disco già usato —
+    # cioè il caso normale di Pixio, che reinstalla PC in servizio — la configurazione fallisce a
+    # metà (0x80042565) col disco già modificato, oppure i PartitionID 1, 2 e 4 di ModifyPartition
+    # e InstallTo finiscono sulle partizioni preesistenti e le formatta. Al salvataggio si rifiuta;
+    # per i profili già salvati (validazione con rifiuta_incompatibili=False, che è quella della
+    # generazione) si corregge, così l'autounattend.xml resta un file che può funzionare.
+    wipe = _bool(dk.get("wipe"), True)
+    if mode != "manuale" and not wipe:
+        if rifiuta_incompatibili:
+            raise ValueError(
+                "Con il partizionamento automatico il disco 0 va per forza azzerato: Pixio ricrea "
+                "le partizioni da zero e senza cancellazione il programma di installazione le "
+                "aggiunge a quelle già presenti, fallendo a metà o formattando le partizioni "
+                "sbagliate. Lascia la spunta \"Cancella il disco 0\", oppure scegli il "
+                "partizionamento manuale, che lascia scegliere le partizioni dal setup")
+        log.warning("profilo con partizionamento %s e cancellazione del disco disattivata: "
+                    "combinazione impossibile, il disco 0 viene azzerato lo stesso", mode)
+        wipe = True
+    out["disk"] = {"mode": mode, "wipe": wipe,
                    "efi_mb": efi, "msr_mb": msr, "recovery_mb": rec}
 
     # --- opzioni di sistema
@@ -1614,10 +1699,11 @@ def _pass_windows_pe(root, st, arch, server_ip="", cfg=None):
         righe.append(('cmd /c reg add "HKLM\\SYSTEM\\Setup\\MoSetup" /v '
                       'AllowUpgradesWithUnsupportedTPMOrCPU /t REG_DWORD /d 1 /f',
                       "Consente l'aggiornamento su hardware non supportato"))
-    if st["skip_oobe"]:
-        righe.append(('cmd /c reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE" '
-                      '/v BypassNRO /t REG_DWORD /d 1 /f',
-                      "Consente di completare l'OOBE senza rete e senza account Microsoft"))
+    # BypassNRO non si scrive qui: questo passaggio gira dentro Windows PE, dove HKLM\SOFTWARE è
+    # l'alveare del disco RAM e sparisce al riavvio. La chiave la legge l'OOBE del sistema
+    # installato, quindi va scritta in specialize (_pass_specialize), come fa da sempre il modello
+    # a mano di services/answers.py. Le LabConfig qui sopra invece restano: quelle le legge il
+    # programma di installazione, che gira proprio dentro il WinPE.
     if righe:
         rs = _el(setup, "RunSynchronous")
         for i, (cmd, descr) in enumerate(righe, 1):
@@ -1627,9 +1713,17 @@ def _pass_windows_pe(root, st, arch, server_ip="", cfg=None):
     if st["disk"]["mode"] != "manuale":
         dc = _el(setup, "DiskConfiguration")
         _el(dc, "WillShowUI", "OnError")
+        dc.append(ET.Comment(" Il disco 0 viene azzerato prima di ricreare le partizioni: lo schema "
+                             "qui sotto (numeri di partizione compresi) vale solo su un disco "
+                             "vuoto. Per non toccare le partizioni esistenti serve il "
+                             "partizionamento manuale, che non genera questa sezione "))
         disco = _add(dc, "Disk")
         _el(disco, "DiskID", 0)
-        _el(disco, "WillWipeDisk", "true" if st["disk"]["wipe"] else "false")
+        # Sempre true nelle modalità automatiche: la validazione rifiuta la combinazione al
+        # salvataggio e la corregge per i profili già salvati, qui si scrive il valore giusto e
+        # basta. Senza azzeramento il setup lavora sulla tabella che trova ("disk 0 already has 1
+        # allocated partitions") e i PartitionID che seguono non sono più quelli creati qui.
+        _el(disco, "WillWipeDisk", "true")
         if st["disk"]["mode"] == "auto-uefi":
             part_windows = _partizioni_uefi(disco, st)
         else:
@@ -1723,6 +1817,14 @@ def _pass_specialize(root, st, arch, server_ip, cfg, em=None):
         if em.comando(cmd):
             tweaks.append((cmd, descr))
 
+    if st["skip_oobe"]:
+        # Va scritto qui e non nel passaggio windowsPE: in Windows PE HKLM\SOFTWARE è l'alveare del
+        # disco RAM, sparisce al riavvio e l'OOBE del sistema installato non vede niente. specialize
+        # gira invece dentro il Windows appena applicato, prima dell'OOBE.
+        oobe_key = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OOBE"
+        if em.valore("HKLM", oobe_key, "BypassNRO"):
+            agg(_reg_add("HKLM", oobe_key, "BypassNRO", "REG_DWORD", 1),
+                "Consente di completare l'OOBE senza rete e senza account Microsoft")
     if st["disable_hibernate"]:
         agg("cmd /c powercfg /hibernate off", "Disattiva l'ibernazione e libera hiberfil.sys")
     agg("cmd /c powercfg /setactive " + POWER_GUIDS[st["power_scheme"]],
@@ -1902,7 +2004,7 @@ def render_autounattend(profile, server_ip="", cfg=None, editions=None):
     if not server_ip:
         server_ip = ((cfg.get("network") or {}).get("server_ip") if isinstance(cfg, dict) else "") or ""
     if editions:
-        st["edition_index"] = edition_for_image(st["edition_index"], editions, nome)
+        st["edition_index"] = edition_for_image(st["edition_index"], editions, nome, st["target"])
     arch = st["architecture"]
 
     ET.register_namespace("", NS)
@@ -2024,6 +2126,7 @@ def update(profile_id, data):
         patch["note"] = _txt(data.get("note"))[:MAX_NOTE]
     if "settings" in data:
         patch["settings"] = validate(deep_merge(cur["settings"], data.get("settings") or {}))
+        check_edition_for_isos(pid, patch["settings"])
     if not patch:
         return cur
     patch["updated"] = _now()

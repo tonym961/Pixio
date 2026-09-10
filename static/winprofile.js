@@ -116,10 +116,14 @@
       const dk = s.disk || {};
       const dettagli = [s.computer_name || '—', dk.mode || 'auto-uefi', s.language || 'it-IT'].join(' · ');
       const tipo = s.target && s.target !== 'client' ? ` <span class="pill neutral">${esc(targetPill(s.target))}</span>` : '';
-      const edKo = edizioneNonValida(p) ? ' <span class="pill warn" title="L\'edizione scelta non è dentro l\'immagine abbinata">edizione non nell\'immagine</span>' : '';
+      const edKo = edizioneNonValida(p) ? ' <span class="pill warn" title="L\'edizione scelta non è dentro l\'immagine abbinata: al boot Pixio installa quella coerente col tipo di Windows, ma il profilo va corretto">edizione non nell\'immagine</span>' : '';
+      // profilo salvato con partizionamento automatico e cancellazione disattivata: il file di
+      // risposta viene corretto in automatico, ma la combinazione va tolta dal profilo
+      const dkKo = (dk.wipe === false && (dk.mode || 'auto-uefi') !== 'manuale')
+        ? ' <span class="pill warn" title="Partizionamento automatico con la cancellazione del disco disattivata: combinazione impossibile, Pixio azzera comunque il disco 0">disco: incoerenza corretta</span>' : '';
       return `<li data-id="${esc(p.id)}" class="${p.id === sel ? 'sel' : ''}" style="${p.id === sel ? 'border-color:var(--accent)' : ''}">
         <div style="min-width:0;flex:1">
-          <div class="drv-name">${esc(p.name)}${tipo}${edKo}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
+          <div class="drv-name">${esc(p.name)}${tipo}${edKo}${dkKo}${s.bypass_requirements ? ' <span class="pill warn">requisiti aggirati</span>' : ''}</div>
           <div class="hint">${esc(dettagli)}</div>
         </div>
         <button class="btn small" type="button" data-act="apri" data-id="${esc(p.id)}">Apri</button>
@@ -349,7 +353,18 @@
 
   function edizioneAvvisoHtml(voci, valore) {
     const val = String(valore || '').trim();
-    if (!val) return '';
+    if (!val) {
+      // "Chiedi durante l'installazione" su un'immagine con più edizioni: il setup apre la pagina
+      // "Selezione immagine" e aspetta un essere umano. Su un PC avviato dalla rete non c'è.
+      const multi = isosProfilo().filter((iso) => (iso.editions || []).length > 1);
+      if (!multi.length) return '';
+      return `<div class="alert warn" style="margin-top:8px">
+        ${esc(multi.map((i) => i.name).join(', '))} contiene più di un'edizione: con
+        "Chiedi durante l'installazione" il programma di installazione apre la pagina
+        <strong>Selezione immagine</strong> e aspetta che qualcuno scelga. In un'installazione
+        avviata dalla rete davanti allo schermo non c'è nessuno e il PC resta fermo lì: scegli
+        un'edizione dalla tendina.</div>`;
+    }
     if (!voci.length) {
       const msg = avvisoTipoEdizione(twTarget(), val);
       return msg ? `<div class="alert warn" style="margin-top:8px">${esc(msg)}
@@ -363,16 +378,18 @@
     if (mancanti.length < isos.length) {
       // il profilo è usato su più ISO: l'edizione c'è in alcune e in altre no
       return `<div class="alert warn" style="margin-top:8px">
-        L'edizione <strong>${esc(val)}</strong> non è dentro ${esc(nomi)}: su quelle immagini
-        l'edizione la chiederà il programma di installazione. Sulle altre l'installazione resta
-        automatica.</div>`;
+        L'edizione <strong>${esc(val)}</strong> non è dentro ${esc(nomi)}: su quelle immagini Pixio
+        installa l'edizione coerente con il tipo di Windows del profilo e lo scrive nei log. Sulle
+        altre viene installata quella che hai scelto.</div>`;
     }
     return `<div class="alert warn" style="margin-top:8px">
       L'edizione <strong>${esc(val)}</strong> non è dentro
-      ${esc(nomi || 'l\'immagine abbinata')}: con questo valore il programma di installazione si
-      ferma con "impossibile trovare l'immagine". Edizioni disponibili:
-      <span class="mono">${voci.map((x) => esc(`${x.index} ${x.value}`)).join(' · ')}</span>.
-      Scegline una dalla tendina, oppure lascia "Chiedi durante l'installazione".</div>`;
+      ${esc(nomi || 'l\'immagine abbinata')}, quindi <strong>il profilo non si può salvare così</strong>.
+      Nel file di risposta Pixio scrive al suo posto l'edizione coerente con il tipo di Windows del
+      profilo — serve a non lasciare il PC fermo sulla pagina "Selezione immagine" del programma di
+      installazione, che aspetterebbe per sempre qualcuno che prema Avanti — ma la scelta giusta la
+      devi fare tu. Edizioni disponibili:
+      <span class="mono">${voci.map((x) => esc(`${x.index} ${x.value}`)).join(' · ')}</span>.</div>`;
   }
 
   function campoEdizione(s) {
@@ -478,6 +495,40 @@
 
   function spunta(id, label, on, hint) {
     return `<div class="field check"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><label for="${id}">${esc(label)}</label></div>${hint ? `<div class="hint" style="margin:-4px 0 10px 26px">${hint}</div>` : ''}`;
+  }
+
+  /* Disco: "cancella il disco" e "partiziona da solo" non sono due scelte indipendenti.
+     Le modalità automatiche scrivono in autounattend.xml quattro CreatePartition che hanno senso
+     solo su un disco vuoto (i numeri di partizione partono da 1): senza azzeramento il programma
+     di installazione le aggiunge alla tabella che trova già sul disco e fallisce a metà, dopo
+     averlo modificato, oppure formatta le partizioni che c'erano prima. La spunta resta quindi
+     visibile ma bloccata su "sì"; si può scegliere solo con il partizionamento manuale, dove
+     Pixio non tocca nessuna partizione. */
+  function discoWipeHtml(dk) {
+    const auto = (dk.mode || 'auto-uefi') !== 'manuale';
+    if (!auto) {
+      return `<div class="hint" style="margin-bottom:10px">Con il partizionamento
+        <strong>manuale</strong> le partizioni le scegli tu dalle schermate del programma di
+        installazione: Pixio non ne crea e non ne cancella nessuna.</div>`;
+    }
+    return `<div class="field check"><input type="checkbox" id="wp-disk-wipe" checked disabled>
+        <label for="wp-disk-wipe">Cancella il disco 0 senza chiedere conferma</label></div>
+      <div class="hint" style="margin:-4px 0 10px 26px"><strong>Tutti i dati sul primo disco
+        vengono persi.</strong> Il setup non chiede nulla: controlla di aver scelto il PC giusto.
+        Con il partizionamento automatico non è una scelta: Pixio ricrea le partizioni da zero e
+        su un disco non azzerato il programma di installazione si ferma a metà (o formatta le
+        partizioni sbagliate). Per non toccare il disco scegli il partizionamento
+        <strong>manuale</strong>.</div>`;
+  }
+
+  /** Profilo salvato con la combinazione impossibile: va detto, e va detto che Pixio la corregge. */
+  function discoIncoerenteHtml(dk) {
+    if (dk.wipe !== false || (dk.mode || 'auto-uefi') === 'manuale') return '';
+    return `<div class="alert warn" style="margin-bottom:10px">Questo profilo era salvato con
+      <strong>partizionamento automatico</strong> e la cancellazione del disco disattivata: una
+      combinazione che il programma di installazione non può eseguire. Nel file di risposta Pixio
+      azzera comunque il disco 0, altrimenti l'installazione fallirebbe sul primo PC con un disco
+      già usato. Salva il profilo per togliere l'incoerenza.</div>`;
   }
 
   function area(id, label, value, hint, rows) {
@@ -1130,7 +1181,8 @@
 
       <div class="card"><h3>Disco</h3>
         ${tendina('wp-disk-mode', 'Partizionamento', dk.mode || 'auto-uefi', meta.disk_modes || [{ id: 'auto-uefi', name: 'Automatico UEFI (GPT)' }, { id: 'auto-bios', name: 'Automatico BIOS legacy (MBR)' }, { id: 'manuale', name: 'Manuale' }], 'Scegli in base a come il PC ha avviato la rete: UEFI per i PC moderni, BIOS legacy per i più vecchi. Con "Manuale" restano le schermate del disco del setup.')}
-        ${spunta('wp-disk-wipe', 'Cancella il disco 0 senza chiedere conferma', dk.wipe !== false, '<strong>Tutti i dati sul primo disco vengono persi.</strong> Il setup non chiede nulla: controlla di aver scelto il PC giusto.')}
+        ${discoIncoerenteHtml(dk)}
+        <div id="wp-wipe-box">${discoWipeHtml(dk)}</div>
         <div class="row3" id="wp-uefi-box" ${uefi ? '' : 'hidden'}>
           ${campo('wp-efi', 'Partizione EFI (MB)', dk.efi_mb, { type: 'number', min: 100, max: 2048, hint: 'Consigliati 300 MB (100 minimo).' })}
           ${campo('wp-msr', 'Riservata Microsoft (MB)', dk.msr_mb, { type: 'number', min: 0, max: 128, hint: 'Consigliati 16 MB. 0 = non creata.' })}
@@ -1181,6 +1233,8 @@
     $('#wp-disk-mode', box).addEventListener('change', (e) => {
       $('#wp-uefi-box', box).hidden = e.target.value !== 'auto-uefi';
       $('#wp-bios-hint', box).hidden = e.target.value !== 'auto-bios';
+      // la spunta "cancella il disco" segue la modalita': automatica = sempre sì, e non si tocca
+      $('#wp-wipe-box', box).innerHTML = discoWipeHtml({ mode: e.target.value, wipe: b('wp-disk-wipe') });
     });
     $('#wp-autologon', box).addEventListener('change', (e) => {
       $('#wp-autologon-box', box).hidden = !e.target.checked;
@@ -1255,7 +1309,9 @@
     };
     s.disk = {
       mode: v('wp-disk-mode'),
-      wipe: b('wp-disk-wipe'),
+      // con il partizionamento automatico il disco 0 viene azzerato sempre: la spunta è bloccata
+      // nella GUI e il server rifiuta comunque la combinazione contraria
+      wipe: v('wp-disk-mode') === 'manuale' ? b('wp-disk-wipe') : true,
       efi_mb: Number(v('wp-efi')) || 0,
       msr_mb: Number(v('wp-msr')) || 0,
       recovery_mb: Number(v('wp-recovery')) || 0,

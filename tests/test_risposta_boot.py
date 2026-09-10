@@ -237,6 +237,51 @@ class RicettaTest(Base):
         self.assertFalse([l for l in lines if "/answers/windows11ltsc/" in l])
 
 
+# ---------------------------------------------------------------- salvataggio del profilo
+
+class SalvataggioTest(Base):
+    """Pixio non deve lasciar salvare un profilo che genera un file di risposta che non funziona.
+
+    L'edizione si confronta con le ISO a cui è collegata la risposta generata dal profilo: è
+    l'unico momento, prima dell'avvio del PC, in cui si sa davvero cosa c'è dentro l'immagine."""
+
+    def test_edizione_inesistente_blocca_il_salvataggio(self):
+        prof, _, _ = self.prepara()
+        with self.assertRaises(ValueError) as ctx:
+            self.WP.update(prof["id"], {"settings": {"edition_index": "Windows 11 Pro"}})
+        msg = str(ctx.exception)
+        self.assertIn("Windows 11 Pro", msg)
+        self.assertIn("Windows 11 Enterprise LTSC 2024", msg)   # l'elenco di quelle buone
+        # il profilo salvato non è stato toccato
+        self.assertEqual(self.WP.get(prof["id"])["settings"]["edition_index"], "Windows 11 Pro")
+
+    def test_edizione_presente_si_salva(self):
+        prof, _, _ = self.prepara()
+        agg = self.WP.update(prof["id"],
+                             {"settings": {"edition_index": "Windows 11 Enterprise N LTSC 2024"}})
+        self.assertEqual(agg["settings"]["edition_index"], "Windows 11 Enterprise N LTSC 2024")
+        # anche l'indice va bene
+        self.assertEqual(self.WP.update(prof["id"], {"settings": {"edition_index": "2"}})
+                         ["settings"]["edition_index"], "2")
+
+    def test_profilo_senza_iso_abbinata_si_salva_come_prima(self):
+        """Senza sapere su quale immagine finirà non si può dire che un valore sia sbagliato."""
+        p = self.WP.create({"name": "Nuovo", "settings": base_settings(
+            target="11-ltsc", edition_index="Windows 11 Pro")})
+        self.assertEqual(self.WP.update(p["id"], {"note": "x"})["note"], "x")
+        self.assertEqual(self.WP.update(p["id"], {"settings": {"edition_index": "Windows 11 Pro"}})
+                         ["settings"]["edition_index"], "Windows 11 Pro")
+
+    def test_altre_modifiche_bloccate_finche_l_edizione_e_sbagliata(self):
+        """Il profilo dell'utente resta com'è finché l'edizione non viene corretta: è il punto,
+        non un effetto collaterale. Le modifiche che non toccano le impostazioni passano."""
+        prof, _, _ = self.prepara()
+        with self.assertRaises(ValueError):
+            self.WP.update(prof["id"], {"settings": {"timezone": "W. Europe Standard Time"}})
+        self.assertEqual(self.WP.update(prof["id"], {"note": "da correggere"})["note"],
+                         "da correggere")
+
+
 # ---------------------------------------------------------------- l'XML servito al boot
 
 class EndpointTest(Base):
@@ -253,12 +298,15 @@ class EndpointTest(Base):
         self.assertEqual(r.status_code, atteso, r.data[:200])
         return r.get_data(as_text=True)
 
-    def test_edizione_inesistente_non_finisce_nel_file(self):
-        """Due edizioni: InstallFrom non si genera e il setup chiede, invece di fermarsi."""
+    def test_edizione_inesistente_diventa_quella_giusta(self):
+        """Due edizioni: si scrive quella coerente col profilo, non si omette InstallFrom.
+
+        È il guasto del 10 settembre 2026: senza InstallFrom il setup apre "Selezione immagine" e
+        aspetta che qualcuno prema Avanti, e su un PC avviato dalla rete non c'è nessuno."""
         _, risposta, _ = self.prepara()
         xml = self._xml("ltsc", risposta["id"])
         self.assertNotIn("Windows 11 Pro", xml)
-        self.assertIsNone(install_from(xml))
+        self.assertEqual(install_from(xml), ("/IMAGE/NAME", "Windows 11 Enterprise LTSC 2024"))
         self.assertIn("<unattend", xml)
 
     def test_una_sola_edizione_si_installa_quella(self):

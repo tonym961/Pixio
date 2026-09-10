@@ -234,6 +234,29 @@ class ValidazioneTest(unittest.TestCase):
         v = WP.validate(base_settings(disk__mode="manuale", disk__efi_mb=1))
         self.assertEqual(v["disk"]["mode"], "manuale")
 
+    def test_disco_automatico_senza_cancellazione_rifiutato(self):
+        """Partizionamento automatico + "non cancellare" è una combinazione impossibile.
+
+        Pixio scrive quattro CreatePartition che valgono solo su un disco vuoto: senza azzeramento
+        il setup le aggiunge alla tabella già presente e fallisce (0x80042565) dopo aver comunque
+        toccato il disco, oppure formatta le partizioni preesistenti perché i PartitionID non
+        corrispondono più. Al salvataggio si rifiuta."""
+        for modo in ("auto-uefi", "auto-bios"):
+            self._ko("azzerato", disk__mode=modo, disk__wipe=False)
+        # in modalità manuale non si crea nessuna partizione: la spunta non ha effetto e passa
+        v = WP.validate(base_settings(disk__mode="manuale", disk__wipe=False))
+        self.assertEqual(v["disk"]["mode"], "manuale")
+
+    def test_profilo_gia_salvato_corretto_invece_che_rifiutato(self):
+        """I profili già in /var/lib/pixio devono continuare a produrre un file valido.
+
+        La generazione valida con rifiuta_incompatibili=False: lì la combinazione impossibile non
+        fa fallire niente, viene corretta e finisce un avviso nei log."""
+        with self.assertLogs("pixio.winprofile", level="WARNING"):
+            v = WP.validate(base_settings(disk__mode="auto-uefi", disk__wipe=False),
+                            rifiuta_incompatibili=False)
+        self.assertTrue(v["disk"]["wipe"])
+
     def test_lingua_e_tastiera(self):
         self._ko("lingua non valida", language="italiano")
         self._ko("tastiera non valida", input_locale="tastiera italiana")
@@ -336,6 +359,38 @@ class XmlTest(unittest.TestCase):
         setup = componente(dom, "windowsPE", "Microsoft-Windows-Setup")
         self.assertIsNone(uno(dom, "DiskConfiguration", setup))
         self.assertIsNone(uno(dom, "InstallTo", setup))
+
+    def test_disco_sempre_azzerato_nelle_modalita_automatiche(self):
+        """WillWipeDisk è true anche per un profilo salvato con la spunta tolta."""
+        for modo in ("auto-uefi", "auto-bios"):
+            xml, dom = rendi(disk__mode=modo, disk__wipe=False)
+            setup = componente(dom, "windowsPE", "Microsoft-Windows-Setup")
+            self.assertEqual(testo(uno(dom, "WillWipeDisk", setup)), "true", modo)
+            self.assertNotIn("<WillWipeDisk>false</WillWipeDisk>", xml)
+        # con la spunta messa non cambia niente
+        _, dom = rendi(disk__mode="auto-uefi", disk__wipe=True)
+        setup = componente(dom, "windowsPE", "Microsoft-Windows-Setup")
+        self.assertEqual(testo(uno(dom, "WillWipeDisk", setup)), "true")
+        # in modalità manuale non c'è nessuna sezione da azzerare
+        xml3, _ = rendi(disk__mode="manuale", disk__wipe=False)
+        self.assertNotIn("WillWipeDisk", xml3)
+
+    def test_bypassnro_in_specialize_non_in_windowspe(self):
+        """La chiave la legge l'OOBE del sistema installato: in windowsPE finirebbe nell'alveare
+        del disco RAM del WinPE, che al riavvio non esiste più."""
+        xml, dom = rendi(skip_oobe=True)
+        setup = componente(dom, "windowsPE", "Microsoft-Windows-Setup")
+        in_pe = [testo(uno(dom, "Path", c))
+                 for c in (setup.getElementsByTagName("RunSynchronousCommand") if setup else [])]
+        self.assertFalse([c for c in in_pe if "BypassNRO" in c], in_pe)
+        dep = componente(dom, "specialize", "Microsoft-Windows-Deployment")
+        self.assertIsNotNone(dep)
+        in_spec = [testo(uno(dom, "Path", c))
+                   for c in dep.getElementsByTagName("RunSynchronousCommand")]
+        self.assertTrue([c for c in in_spec if "BypassNRO" in c and "CurrentVersion" in c], in_spec)
+        # senza "salta l'OOBE" la chiave non si scrive da nessuna parte
+        xml2, _ = rendi(skip_oobe=False)
+        self.assertNotIn("BypassNRO", xml2)
 
     def test_bypass_requisiti(self):
         xml, dom = rendi(bypass_requirements=True)

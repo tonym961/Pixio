@@ -130,10 +130,13 @@ def boot_answer(slug, answer_id):
     edizioni = winprofile.editions_for_iso(slug)
     voluta = str((prof.get("settings") or {}).get("edition_index") or "")
     if edizioni and voluta and winprofile.match_edition(edizioni, voluta) is None:
+        ripiego = winprofile.edition_fallback(edizioni,
+                                              (prof.get("settings") or {}).get("target") or "")
         log.warning("risposta %s su %s: il profilo \"%s\" chiede l'edizione \"%s\", che in questa "
-                    "immagine non c'è (presenti: %s); nell'XML non viene scritta così com'è",
+                    "immagine non c'è (presenti: %s); nell'XML viene scritta \"%s\" al suo posto, "
+                    "altrimenti il setup si fermerebbe a chiedere quale immagine installare",
                     a["id"], _nome_iso(slug), prof["name"], voluta,
-                    winprofile.editions_labels(edizioni))
+                    winprofile.editions_labels(edizioni), ripiego)
     try:
         xml = winprofile.render_autounattend(prof, S.load()["network"]["server_ip"],
                                              editions=edizioni)

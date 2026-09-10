@@ -446,12 +446,30 @@ class GenerazioneTest(unittest.TestCase):
         self.assertEqual(self._install_from(dom), ("/IMAGE/INDEX", "2"))
 
     def test_edizione_sbagliata_con_piu_immagini(self):
-        """Più edizioni: InstallFrom non si genera e il setup chiede, invece di fallire."""
-        xml, dom = self._xml("Windows 11 Pro", EDIZIONI_LTSC)
-        self.assertIsNone(self._install_from(dom))
+        """Più edizioni: si ripiega sulla prima coerente col tipo di Windows, non si omette InstallFrom.
+
+        Un OSImage senza InstallFrom non vuol dire "scegli tu": il setup trova due immagini
+        candidate, apre la pagina "Selezione immagine" e aspetta un essere umano. In PXE non c'è."""
+        prof = {"name": "Prova", "settings": base_settings(edition_index="Windows 11 Pro",
+                                                           target="11-ltsc")}
+        xml = self.WP.render_autounattend(prof, "10.10.0.254", cfg=self.cfg, editions=EDIZIONI_LTSC)
+        dom = minidom.parseString(xml)
+        self.assertEqual(self._install_from(dom), ("/IMAGE/NAME", "Windows 11 Enterprise LTSC 2024"))
         self.assertNotIn("Windows 11 Pro", xml)
         # il resto del blocco resta: la partizione di destinazione va comunque scritta
         self.assertTrue(dom.getElementsByTagName("InstallTo"))
+
+    def test_ripiego_evita_la_n_e_segue_il_tipo(self):
+        """Fra LTSC e LTSC N si prende l'indice 1; su un profilo client, che non ha nessuna
+        edizione coerente in una ISO LTSC, si prende comunque la prima invece di lasciare il PC
+        fermo a chiedere."""
+        self.assertEqual(self.WP.edition_fallback(EDIZIONI_LTSC, "11-ltsc"),
+                         "Windows 11 Enterprise LTSC 2024")
+        self.assertEqual(self.WP.edition_fallback(list(reversed(EDIZIONI_LTSC)), "11-ltsc"),
+                         "Windows 11 Enterprise LTSC 2024")
+        self.assertEqual(self.WP.edition_fallback(EDIZIONI_LTSC, "client"),
+                         "Windows 11 Enterprise LTSC 2024")
+        self.assertEqual(self.WP.edition_fallback([], "client"), "")
 
     def test_edizione_sbagliata_con_una_sola_immagine(self):
         una = [{"index": 1, "name": "Windows 10 Pro", "display_name": "Windows 10 Pro"}]
@@ -466,6 +484,7 @@ class GenerazioneTest(unittest.TestCase):
         self.assertEqual(self._install_from(dom), ("/IMAGE/NAME", "Windows 11 Pro"))
 
     def test_edizione_vuota(self):
+        """"Chiedi durante l'installazione" è una scelta esplicita del tecnico: resta com'è."""
         _, dom = self._xml("", EDIZIONI_LTSC)
         self.assertIsNone(self._install_from(dom))
 
