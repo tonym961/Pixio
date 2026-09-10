@@ -46,8 +46,76 @@ C.LIBRARY_DIR = os.path.join(C.SRV_DIR, "library")
 C.CACHE_DIR = os.path.join(C.SRV_DIR, "cache")
 C.TFTP_DIR = os.path.join(C.SRV_DIR, "tftp")
 C.SOURCES_MOUNT_DIR = os.path.join(C.SRV_DIR, "sources")
-for _d in (C.ETC_DIR, C.VAR_DIR, C.JOBS_DIR, C.UPLOAD_TMP_DIR, C.LOG_DIR, C.LIBRARY_DIR, C.CACHE_DIR, C.TFTP_DIR):
+# Libreria driver: da quando il file di risposta elenca le cartelle percorribili dal programma di
+# installazione (docs/API.md, sezione 24) la generazione la legge davvero, quindi i test devono avere
+# la loro, vuota, e non quella del server su cui girano.
+MIO_DRIVERS_DIR = os.path.join(C.SRV_DIR, "http", "drivers")
+MIO_DRIVERS_FILE = os.path.join(MIO_VAR, "drivers.json")
+C.HTTP_DIR = os.path.join(C.SRV_DIR, "http")
+C.DRIVERS_DIR = MIO_DRIVERS_DIR
+C.DRIVERS_FILE = MIO_DRIVERS_FILE
+for _d in (C.ETC_DIR, C.VAR_DIR, C.JOBS_DIR, C.UPLOAD_TMP_DIR, C.LOG_DIR, C.LIBRARY_DIR, C.CACHE_DIR, C.TFTP_DIR,
+           C.DRIVERS_DIR):
     os.makedirs(_d, exist_ok=True)
+
+
+def miei_driver():
+    """Riapplica i percorsi della libreria driver: gli altri file di test riscrivono le stesse costanti."""
+    C.DRIVERS_DIR = MIO_DRIVERS_DIR
+    C.DRIVERS_FILE = MIO_DRIVERS_FILE
+    os.makedirs(C.DRIVERS_DIR, exist_ok=True)
+
+
+def cartella_driver(nome, file_dict, flags=None):
+    """Crea una cartella driver di prova ({percorso relativo: contenuto}) e i suoi flag. Ritorna il percorso."""
+    import json as _json
+    miei_driver()
+    base = os.path.join(C.DRIVERS_DIR, nome)
+    for rel, testo_file in file_dict.items():
+        full = os.path.join(base, *rel.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(testo_file)
+    if flags is not None:
+        d = {}
+        if os.path.exists(C.DRIVERS_FILE):
+            with open(C.DRIVERS_FILE, encoding="utf-8") as fh:
+                d = _json.load(fh)
+        d.setdefault("folders", {})[nome] = flags
+        with open(C.DRIVERS_FILE, "w", encoding="utf-8") as fh:
+            _json.dump(d, fh)
+    return base
+
+
+def svuota_driver():
+    """Toglie tutte le cartelle driver di prova e i loro flag."""
+    miei_driver()
+    shutil.rmtree(C.DRIVERS_DIR, ignore_errors=True)
+    os.makedirs(C.DRIVERS_DIR, exist_ok=True)
+    if os.path.exists(C.DRIVERS_FILE):
+        os.unlink(C.DRIVERS_FILE)
+
+
+# .inf finti: uno completo (ha accanto tutto quello che dichiara) e uno incompleto come il vero
+# RAID_drivers/iaStorVD.inf, che promette RstMwService.exe e non ce l'ha.
+INF_COMPLETO = """[Version]
+Signature = "$Windows NT$"
+CatalogFile = buono.cat
+[SourceDisksFiles]
+buono.sys = 1,,
+[Copia]
+buono.sys
+"""
+INF_INCOMPLETO = """[Version]
+Signature = "$Windows NT$"
+CatalogFile = rotto.cat
+[SourceDisksFiles]
+rotto.sys = 1,,
+RstMwService.exe = 1,,
+[Copia]
+rotto.sys
+RstMwService.exe
+"""
 
 
 def fake_call(*args, stdin_text=None, timeout=180):
@@ -84,10 +152,11 @@ def base_settings(**over):
     return s
 
 
-def rendi(**over):
+def rendi(iso=None, **over):
     """XML generato dalle impostazioni di prova, già letto con minidom."""
+    miei_driver()
     xml = WP.render_autounattend({"name": "Prova", "settings": base_settings(**over)},
-                                 "10.10.0.254", cfg=CFG_FINTA)
+                                 "10.10.0.254", cfg=CFG_FINTA, iso=iso)
     return xml, minidom.parseString(xml)
 
 
@@ -415,13 +484,12 @@ class XmlTest(unittest.TestCase):
         self.assertEqual(testo(uno(dom, "Username", cred)), "admjoin")
         self.assertEqual(testo(uno(dom, "Password", cred)), "Dom1234!")
 
-        pnp = componente(dom, "specialize", "Microsoft-Windows-PnpCustomizationsNonWinPE")
-        self.assertEqual(testo(uno(dom, "Path", pnp)), "\\\\10.10.0.254\\pxe\\drivers")
-        self.assertEqual(testo(uno(dom, "Username", uno(dom, "Credentials", pnp))), "pxe")
+        # i driver si chiedono in windowsPE, mai in specialize (sezione 24)
+        self.assertIsNone(componente(dom, "specialize", "Microsoft-Windows-PnpCustomizationsNonWinPE"))
 
-        # driver disattivati: il componente sparisce
+        # driver disattivati: il componente non c'è in nessun passaggio
         xml2, dom2 = rendi(drivers_from_pixio=False)
-        self.assertIsNone(componente(dom2, "specialize", "Microsoft-Windows-PnpCustomizationsNonWinPE"))
+        self.assertNotIn("PnpCustomizations", xml2)
 
     def test_dominio_con_utente_qualificato(self):
         xml, dom = rendi(join_domain__enabled=True, join_domain__domain="azienda.local",
@@ -2007,9 +2075,16 @@ class DriverNelPassaggioGiusto(unittest.TestCase):
     la rete del sistema appena installato puo' non essere pronta: i driver si chiedono in
     windowsPE, dove la condivisione e' gia' montata dallo script di Pixio."""
 
+    def setUp(self):
+        svuota_driver()
+
+    def tearDown(self):
+        svuota_driver()
+
     def test_driver_in_windowspe_e_non_in_specialize(self):
+        cartella_driver("Rete", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
         prof = {"name": "Prova driver", "settings": {"drivers_from_pixio": True}}
-        xml = WP.render_autounattend(prof, "10.10.0.254")
+        xml = WP.render_autounattend(prof, "10.10.0.254", cfg=CFG_FINTA)
         self.assertIn("Microsoft-Windows-PnpCustomizationsWinPE", xml)
         self.assertNotIn("Microsoft-Windows-PnpCustomizationsNonWinPE", xml)
         dom = minidom.parseString(xml)
@@ -2017,3 +2092,146 @@ class DriverNelPassaggioGiusto(unittest.TestCase):
             if s.getAttribute("pass") == "windowsPE":
                 nomi = [c.getAttribute("name") for c in s.getElementsByTagName("component")]
                 self.assertIn("Microsoft-Windows-PnpCustomizationsWinPE", nomi)
+
+
+class PercorsiDriverNelFileDiRisposta(unittest.TestCase):
+    """docs/API.md, sezione 24: nel file di risposta finiscono solo le cartelle che il programma di
+    installazione puo' percorrere per intero.
+
+    Il guasto vero: il file di risposta scriveva la sola radice \\<ip>\pxe\drivers, il setup scendeva
+    fino a RAID_drivers\iaStorVD.inf, non trovava RstMwService.exe e chiudeva tutto con 0x80070002 ->
+    0xC190011F, senza toccare il disco."""
+
+    def setUp(self):
+        svuota_driver()
+
+    def tearDown(self):
+        svuota_driver()
+
+    def percorsi(self, dom):
+        pnp = componente(dom, "windowsPE", "Microsoft-Windows-PnpCustomizationsWinPE")
+        if pnp is None:
+            return []
+        return [testo(x) for x in pnp.getElementsByTagName("Path")]
+
+    def test_la_radice_della_libreria_non_si_scrive_mai(self):
+        """Il percorso di prima (\\ip\pxe\drivers) non deve comparire nemmeno con la libreria sana."""
+        cartella_driver("Rete", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        xml, dom = rendi()
+        self.assertIn("\\\\10.10.0.254\\pxe\\drivers\\Rete", xml)
+        self.assertNotIn("<Path>\\\\10.10.0.254\\pxe\\drivers</Path>", xml)
+        self.assertEqual(self.percorsi(dom), ["\\\\10.10.0.254\\pxe\\drivers\\Rete"])
+
+    def test_pacchetto_incompleto_non_arriva_al_setup(self):
+        """Il caso vero: un .inf che dichiara un file che non c'e' tiene fuori la sua cartella."""
+        cartella_driver("RAID_drivers", {"iaStorVD.inf": INF_INCOMPLETO, "rotto.sys": "x",
+                                         "rotto.cat": "x"})
+        xml, dom = rendi()
+        self.assertEqual(self.percorsi(dom), [])
+        self.assertNotIn("RAID_drivers", "".join(self.percorsi(dom)))
+        # niente componente e niente DriverPaths vuoto, ma il motivo resta scritto nel file
+        self.assertNotIn("<DriverPaths", xml)
+        self.assertNotIn("PnpCustomizationsWinPE", xml)
+        self.assertIn("0x80070002", xml)
+        self.assertIn("RstMwService.exe", xml)
+
+    def test_la_sottocartella_sana_entra_anche_se_la_radice_e_rotta(self):
+        """Si spezza fin dove la struttura del pacchetto separa il buono dal rotto, e non oltre."""
+        cartella_driver("Misto", {
+            "iaStorVD.inf": INF_INCOMPLETO, "rotto.sys": "x", "rotto.cat": "x",
+            "Rete/buono.inf": INF_COMPLETO, "Rete/buono.sys": "x", "Rete/buono.cat": "x",
+            "Rete/x64/buono.inf": INF_COMPLETO, "Rete/x64/buono.sys": "x", "Rete/x64/buono.cat": "x",
+        })
+        xml, dom = rendi()
+        # una sola voce: Rete e' offribile per intero, non si scende in Rete\x64 (ci pensa il setup)
+        self.assertEqual(self.percorsi(dom), ["\\\\10.10.0.254\\pxe\\drivers\\Misto\\Rete"])
+
+    def test_una_cartella_mista_esce_intera_e_lo_dice(self):
+        """Un .inf sano che sta accanto a uno rotto si perde: <Path> accetta una cartella, non un file."""
+        cartella_driver("Misto", {
+            "Drivers/iaStorVD.inf": INF_INCOMPLETO, "Drivers/rotto.sys": "x", "Drivers/rotto.cat": "x",
+            "Drivers/buono.inf": INF_COMPLETO, "Drivers/buono.sys": "x", "Drivers/buono.cat": "x",
+        })
+        xml, dom = rendi()
+        self.assertEqual(self.percorsi(dom), [])
+        self.assertIn("iaStorVD.inf", xml)
+
+    def test_piu_percorsi_hanno_keyvalue_progressivo(self):
+        """Con piu' voci un wcm:keyValue fisso "1" produrrebbe un XML che il setup rifiuta."""
+        cartella_driver("Rete", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        cartella_driver("Storage", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        xml, dom = rendi()
+        pnp = componente(dom, "windowsPE", "Microsoft-Windows-PnpCustomizationsWinPE")
+        voci = pnp.getElementsByTagName("PathAndCredentials")
+        self.assertEqual(len(voci), 2)
+        self.assertEqual([v.getAttribute("wcm:keyValue") for v in voci], ["1", "2"])
+        # le credenziali si ripetono in ogni voce, come vuole lo schema
+        for v in voci:
+            self.assertEqual(testo(uno(dom, "Username", v)), "pxe")
+            self.assertEqual(testo(uno(dom, "Password", v)), "segreta")
+
+    def test_massimalita_non_si_spezza_quando_non_serve(self):
+        """Tre sottocartelle sane sotto la stessa cartella danno UNA voce, non tre."""
+        cartella_driver("HP", {"cp1/buono.inf": INF_COMPLETO, "cp1/buono.sys": "x", "cp1/buono.cat": "x",
+                               "cp2/buono.inf": INF_COMPLETO, "cp2/buono.sys": "x", "cp2/buono.cat": "x",
+                               "cp3/buono.inf": INF_COMPLETO, "cp3/buono.sys": "x", "cp3/buono.cat": "x"})
+        xml, dom = rendi()
+        self.assertEqual(self.percorsi(dom), ["\\\\10.10.0.254\\pxe\\drivers\\HP"])
+
+    def test_ordine_deterministico(self):
+        """Due generazioni con la stessa libreria devono dare byte identici."""
+        cartella_driver("Zeta", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        cartella_driver("Alfa", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        a, doma = rendi()
+        b, _ = rendi()
+        self.assertEqual([p.split("\\")[-1] for p in self.percorsi(doma)], ["Alfa", "Zeta"])
+        blocco = lambda x: x[x.index("<DriverPaths>"):x.index("</DriverPaths>")]  # noqa: E731
+        self.assertEqual(blocco(a), blocco(b))
+
+    def test_solo_le_cartelle_abbinate_all_immagine(self):
+        """apply_to vale anche per i percorsi driver del file di risposta (sezioni 15 e 24)."""
+        cartella_driver("SoloServer", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"},
+                        flags={"apply_to": {"mode": "groups", "groups": ["Windows Server"], "isos": []}})
+        cartella_driver("Tutte", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        xml, dom = rendi(iso={"slug": "win11", "group": "Windows"})
+        self.assertEqual([p.split("\\")[-1] for p in self.percorsi(dom)], ["Tutte"])
+        xml2, dom2 = rendi(iso={"slug": "srv", "group": "Windows Server"})
+        self.assertEqual([p.split("\\")[-1] for p in self.percorsi(dom2)], ["SoloServer", "Tutte"])
+
+    def test_setup_offer_mai_e_sempre(self):
+        """"mai" tiene la cartella fuori dal file di risposta, "sempre" la scrive anche se e' rotta."""
+        cartella_driver("Rotta", {"iaStorVD.inf": INF_INCOMPLETO, "rotto.sys": "x", "rotto.cat": "x"},
+                        flags={"setup_offer": "sempre"})
+        cartella_driver("Sana", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"},
+                        flags={"setup_offer": "mai"})
+        xml, dom = rendi()
+        self.assertEqual([p.split("\\")[-1] for p in self.percorsi(dom)], ["Rotta"])
+
+    def test_libreria_vuota_nessun_componente(self):
+        """Requisito: meglio un'installazione senza driver aggiunti che una che abortisce."""
+        xml, dom = rendi()
+        self.assertIsNone(componente(dom, "windowsPE", "Microsoft-Windows-PnpCustomizationsWinPE"))
+        self.assertNotIn("<DriverPaths", xml)
+        self.assertIn("Nessun percorso driver scritto", xml)
+
+    def test_driver_disattivati_nessun_commento(self):
+        cartella_driver("Rete", {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        xml, dom = rendi(drivers_from_pixio=False)
+        self.assertNotIn("PnpCustomizations", xml)
+        self.assertNotIn("Nessun percorso driver scritto", xml)
+
+    def test_due_trattini_nel_nome_non_rompono_il_commento(self):
+        """"--" dentro un commento XML e' vietato: il file verrebbe rifiutato alla rilettura."""
+        cartella_driver("Rete--vecchia", {"iaStorVD.inf": INF_INCOMPLETO, "rotto.sys": "x",
+                                          "rotto.cat": "x"})
+        xml, dom = rendi()          # rendi() rilegge l'XML con minidom: se il commento e' rotto solleva
+        self.assertIn("Nessun percorso driver scritto", xml)
+        self.assertNotIn("--vecchia", xml)
+
+    def test_nomi_con_spazi_e_parentesi(self):
+        """"Matrox G200eW (Nuvoton) WDDM 2.0" esiste davvero: il valore e' testo XML, niente virgolette."""
+        cartella_driver("Matrox G200eW (Nuvoton) WDDM 2.0",
+                        {"buono.inf": INF_COMPLETO, "buono.sys": "x", "buono.cat": "x"})
+        xml, dom = rendi()
+        self.assertEqual(self.percorsi(dom),
+                         ["\\\\10.10.0.254\\pxe\\drivers\\Matrox G200eW (Nuvoton) WDDM 2.0"])

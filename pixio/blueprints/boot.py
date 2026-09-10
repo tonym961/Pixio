@@ -97,6 +97,40 @@ def boot_entry(slug):
     return _text(text)
 
 
+def _avvisa_driver(answer_id, slug, prof, voce):
+    """Scrive nei log di Pixio che cosa riceverà il programma di installazione di questo PC.
+
+    Il guasto che ha portato alla sezione 24 di docs/API.md era invisibile dal server: il PC si fermava
+    con 0xC190011F e qui non c'era traccia di niente. Adesso ogni file di risposta generato dice quanti
+    percorsi driver contiene e quali pacchetti sono rimasti fuori, con i file che mancano.
+    """
+    if not (prof.get("settings") or {}).get("drivers_from_pixio", True):
+        return
+    try:
+        from ..services import drivers
+        d = drivers.setup_paths(S.load()["network"]["server_ip"], voce)
+    except Exception as e:  # noqa: BLE001 - un avviso non deve mai far fallire la risposta
+        log.debug("percorsi driver: %s", e)
+        return
+    fuori = "; ".join(
+        "%s\\%s manca %s" % (x.get("folder", ""), str(x.get("inf") or x.get("dir") or "").replace("/", "\\"),
+                              ", ".join(x.get("missing") or []) or x.get("reason", ""))
+        for x in d["skipped"][:12])
+    if not d["paths"]:
+        log.warning("risposta %s su %s: NESSUN percorso driver nel file di risposta (%d cartelle "
+                    "esaminate). L'installazione partirà con i soli driver di Windows: se il disco è "
+                    "dietro un controller RAID/VMD potrebbe non comparire. Cartelle scartate: %s",
+                    answer_id, _nome_iso(slug), d["folders"], fuori or "nessuna")
+        return
+    if d["skipped"]:
+        log.warning("risposta %s su %s: %d percorsi driver scritti, %d pacchetti lasciati fuori perché "
+                    "incompleti (il setup si fermerebbe con 0x80070002): %s",
+                    answer_id, _nome_iso(slug), len(d["paths"]), len(d["skipped"]), fuori)
+    else:
+        log.info("risposta %s su %s: %d percorsi driver scritti nel file di risposta",
+                 answer_id, _nome_iso(slug), len(d["paths"]))
+
+
 @bp.route("/boot/answer/<slug>/<answer_id>/autounattend.xml")
 def boot_answer(slug, answer_id):
     """autounattend.xml generato adesso, per la coppia (ISO che si sta avviando, risposta).
@@ -137,9 +171,11 @@ def boot_answer(slug, answer_id):
                     "altrimenti il setup si fermerebbe a chiedere quale immagine installare",
                     a["id"], _nome_iso(slug), prof["name"], voluta,
                     winprofile.editions_labels(edizioni), ripiego)
+    voce = winprofile.iso_entry(slug)
+    _avvisa_driver(a["id"], slug, prof, voce)
     try:
         xml = winprofile.render_autounattend(prof, S.load()["network"]["server_ip"],
-                                             editions=edizioni)
+                                             editions=edizioni, iso=voce)
     except Exception as e:  # noqa: BLE001 - un profilo illeggibile non deve lasciare il PC senza file
         log.error("risposta %s su %s: generazione fallita (%s)", a["id"], slug, e)
         return statico("generazione fallita")

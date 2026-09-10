@@ -95,6 +95,59 @@ ServiceBinary = %12%\\aiuto.sys
 DiskId1 = "Disco driver; di prova"
 """
 
+# Sezione 23: quello che il programma di installazione pretende e' diverso da quello che pretende drvload.
+# Il nome che compare SOLO come ServiceBinary lo fornisce Windows (il vero Matrox G200eW dichiara
+# "ServiceBinary = %12%\\pci.sys"): non deve far bocciare il pacchetto. Il .cat invece serve, perche' il
+# setup pretende la firma.
+INF_SERVIZIO = """; Finto pacchetto in stile Matrox: il file del servizio lo fornisce Windows
+[Version]
+Signature="$Windows NT$"
+Class=Display
+CatalogFile=servizio.cat
+
+[SourceDisksFiles]
+servizio.sys = 1,,,
+
+[Servizio_inst.NTamd64]
+CopyFiles=Servizio_copy
+
+[Servizio_copy]
+servizio.sys
+
+[servizio_service]
+ServiceBinary = %12%\\pci.sys
+"""
+
+# Stesso pacchetto, ma con l'eseguibile di disinstallazione in una sezione di copia: quello si', che il
+# setup lo va a cercare (e nella cartella non c'e'), esattamente come il Matrox vero.
+INF_SERVIZIO_ROTTO = INF_SERVIZIO.replace("CopyFiles=Servizio_copy",
+                                          "CopyFiles=Servizio_copy, Servizio_uninst") + """
+[Servizio_uninst]
+Matrox.WddmUninstaller.exe
+"""
+
+# .inf che dichiara i propri file in una sottocartella: accanto all'.inf non ci sono, nel pacchetto si'.
+INF_SOTTOCARTELLA = """; Finto pacchetto con i file in una sottocartella
+[Version]
+Signature="$Windows NT$"
+CatalogFile=sotto.cat
+
+[SourceDisksNames]
+1 = %DiskId1%,,,\\x64
+
+[SourceDisksFiles]
+sotto.sys = 1,,,
+
+[Sotto_inst.NTamd64]
+CopyFiles=Sotto_copy
+
+[Sotto_copy]
+sotto.sys
+
+[Strings]
+DiskId1 = "Disco driver"
+"""
+
 # .inf che non porta file propri (solo registro), come le estensioni dei pacchetti Intel
 # Finto pacchetto in stile Intel RST (sezione 21): oltre al .sys dichiara una .dll di messaggi che sta
 # nella cartella, un servizio .exe che non c'e' e una version.dll, che nel WinPE esiste gia' in System32.
@@ -1044,6 +1097,157 @@ class DriversApiTest(unittest.TestCase):
         self.assertEqual(f["winpe_missing"], [{"inf": "prova.inf", "missing": ["prova.dll", "prova.exe"]}])
         self.assertNotIn("prova.dll", [x[1] for x in drivers.winpe_inject_files()])
         self._reset_drivers()
+
+    # ---------------------------------------------------------------- sezione 24: consegna al setup
+    def _scrivi(self, folder, rel, testo):
+        """Scrive un file nella cartella driver (percorso relativo con "/"), creando le sottocartelle."""
+        full = os.path.join(C.DRIVERS_DIR, folder, *rel.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(testo)
+        return full
+
+    def _elimina(self, *nomi):
+        """Toglie le cartelle di prova, cosi' i test della sezione 24 non si disturbano fra loro."""
+        for x in nomi:
+            self.client.delete(f"/api/drivers/folders/{x}", headers=self.h)
+
+    def _percorsi(self, cartelle, ip="10.10.0.254", iso=None):
+        """Percorsi UNC che il file di risposta offrirebbe, limitati alle cartelle indicate."""
+        from pixio.services import drivers
+        d = drivers.setup_paths(ip, iso)
+        return [x["unc"] for x in d["paths"] if x["folder"] in cartelle]
+
+    def test_20_inf_completo_per_il_setup(self):
+        """Completezza vista dal programma di installazione: i file copiati piu' il .cat, ServiceBinary no."""
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "Setup completezza"
+        os.makedirs(os.path.join(C.DRIVERS_DIR, n), exist_ok=True)
+        inf = self._scrivi(n, "servizio.inf", INF_SERVIZIO)
+        self._scrivi(n, "servizio.sys", "sys")
+        # manca il .cat: per il setup il pacchetto non e' installabile (drvload invece non lo pretende)
+        self.assertEqual(drivers.inf_setup_missing(inf), ["servizio.cat"])
+        self._scrivi(n, "servizio.cat", "cat")
+        # pci.sys e' solo ServiceBinary: lo fornisce Windows, non deve risultare mancante
+        self.assertEqual(drivers.inf_setup_missing(inf), [])
+        self.assertNotIn("pci.sys", drivers.inf_setup_files(inf))
+        self.assertIn("pci.sys", drivers.inf_declared_files(inf))   # il WinPE lo guarda ancora (sezione 21)
+
+        # l'eseguibile dichiarato in una sezione di copia invece conta, e non c'e': pacchetto incompleto
+        rotto = self._scrivi(n, "rotto.inf", INF_SERVIZIO_ROTTO)
+        self._scrivi(n, "rotto.cat", "cat")
+        self.assertEqual(drivers.inf_setup_missing(rotto), ["Matrox.WddmUninstaller.exe"])
+
+        # file dichiarati in una sottocartella del pacchetto: si cerca nel sottoalbero, non solo accanto
+        sotto = self._scrivi(n, "sotto/sotto.inf", INF_SOTTOCARTELLA)
+        self._scrivi(n, "sotto/sotto.cat", "cat")
+        self.assertEqual(drivers.inf_setup_missing(sotto), ["sotto.sys"])
+        self._scrivi(n, "sotto/x64/sotto.sys", "sys")
+        self.assertEqual(drivers.inf_setup_missing(sotto), [])
+        self._elimina(n)
+
+    def test_21_cartella_con_inf_incompleto_non_finisce_nel_file_di_risposta(self):
+        """Il guasto vero: RAID_drivers/iaStorVD.inf dichiara file che non ci sono, il setup si ferma
+        con 0x80070002 e abortisce tutto. Quella cartella non deve arrivare al file di risposta."""
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "RAID_drivers"
+        # radice rotta (come iaStorVD.inf), una sottocartella sana e una mista
+        self._scrivi(n, "iaStorVD.inf", INF_RST)          # dichiara RstServizio.exe, che non c'e'
+        self._scrivi(n, "rst.sys", "sys")
+        self._scrivi(n, "rst.cat", "cat")
+        self._scrivi(n, "RstMsg.dll", "dll")
+        self._scrivi(n, "version.dll", "dll")
+        self._scrivi(n, "Rete/servizio.inf", INF_SERVIZIO)
+        self._scrivi(n, "Rete/servizio.sys", "sys")
+        self._scrivi(n, "Rete/servizio.cat", "cat")
+        self._scrivi(n, "Misto/servizio.inf", INF_SERVIZIO)
+        self._scrivi(n, "Misto/servizio.sys", "sys")
+        self._scrivi(n, "Misto/servizio.cat", "cat")
+        self._scrivi(n, "Misto/rotto.inf", INF_SERVIZIO_ROTTO)
+        self._scrivi(n, "Misto/rotto.cat", "cat")
+
+        f = self._folders()[n]
+        self.assertEqual(f["setup_offer"], "auto")
+        # la radice non e' offribile (iaStorVD.inf), Misto nemmeno (rotto.inf): resta solo Rete
+        self.assertEqual(f["setup_paths"], ["Rete"])
+        per_inf = {x["inf"]: x for x in f["setup_skipped"]}
+        self.assertEqual(sorted(per_inf), ["Misto/rotto.inf", "iaStorVD.inf"])
+        self.assertEqual(per_inf["iaStorVD.inf"]["missing"], ["RstServizio.exe"])
+        # il .inf sano che sta accanto a quello rotto si perde insieme a lui: la GUI lo deve dire
+        self.assertEqual(per_inf["Misto/rotto.inf"]["lost"], ["servizio.inf"])
+        # sulla riga dell'.inf la GUI ha i nomi dei file che mancano al setup
+        per_file = {x["name"]: x for x in f["files"] if x["name"].endswith(".inf")}
+        self.assertEqual(per_file["iaStorVD.inf"]["setup_missing"], ["RstServizio.exe"])
+        self.assertEqual(per_file["Rete/servizio.inf"]["setup_missing"], [])
+
+        # percorsi UNC veri: c'e' Rete, non c'e' la radice della libreria ne' la cartella rotta
+        unc = self._percorsi(["RAID_drivers"])
+        self.assertEqual(unc, ["\\\\10.10.0.254\\pxe\\drivers\\RAID_drivers\\Rete"])
+        self.assertNotIn("\\\\10.10.0.254\\pxe\\drivers", [x["unc"] for x in drivers.setup_paths("10.10.0.254")["paths"]])
+        self._elimina(n)
+
+    def test_22_setup_offer_flag(self):
+        """Il flag per cartella: "mai" non la offre mai, "sempre" la scrive anche se e' incompleta."""
+        from pixio.services import drivers
+        self._reset_drivers()
+        n = "Offerta"
+        self._scrivi(n, "servizio.inf", INF_SERVIZIO)
+        self._scrivi(n, "servizio.sys", "sys")
+        self._scrivi(n, "servizio.cat", "cat")
+        self.assertEqual(self._percorsi([n], ip="1.2.3.4"), ["\\\\1.2.3.4\\pxe\\drivers\\Offerta"])
+
+        r = self.client.patch(f"/api/drivers/folders/{n}", json={"setup_offer": "mai"}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["folder"]["setup_offer"], "mai")
+        self.assertEqual(self._percorsi([n], ip="1.2.3.4"), [])
+
+        # "sempre": si scrive la radice cosi' com'e', anche con dentro un pacchetto incompleto
+        self._scrivi(n, "rotto.inf", INF_SERVIZIO_ROTTO)
+        self._scrivi(n, "rotto.cat", "cat")
+        self.assertEqual(self.client.patch(f"/api/drivers/folders/{n}", json={"setup_offer": "auto"},
+                                           headers=self.h).status_code, 200)
+        self.assertEqual(self._percorsi([n], ip="1.2.3.4"), [])
+        self.assertEqual(self.client.patch(f"/api/drivers/folders/{n}", json={"setup_offer": "sempre"},
+                                           headers=self.h).status_code, 200)
+        self.assertEqual(self._percorsi([n], ip="1.2.3.4"), ["\\\\1.2.3.4\\pxe\\drivers\\Offerta"])
+
+        # valore non ammesso: rifiutato con messaggio in italiano, il flag non cambia
+        r = self.client.patch(f"/api/drivers/folders/{n}", json={"setup_offer": "forse"}, headers=self.h)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("setup_offer", r.get_json()["error"])
+        self.assertEqual(self._folders()[n]["setup_offer"], "sempre")
+        # e si applica anche a piu' cartelle insieme
+        r = self.client.patch("/api/drivers/folders", json={"names": [n], "setup_offer": "auto"},
+                              headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(self._folders()[n]["setup_offer"], "auto")
+        self._elimina(n)
+
+    def test_23_endpoint_setup_paths(self):
+        """GET /api/drivers/setup-paths: la pagina Driver e il Personalizzatore non ricalcolano niente."""
+        self._reset_drivers()
+        self._scrivi("Buona", "servizio.inf", INF_SERVIZIO)
+        self._scrivi("Buona", "servizio.sys", "sys")
+        self._scrivi("Buona", "servizio.cat", "cat")
+        self._scrivi("Rotta", "rotto.inf", INF_SERVIZIO_ROTTO)
+        self._scrivi("Rotta", "servizio.cat", "cat")
+        self._scrivi("Rotta", "servizio.sys", "sys")
+        r = self.client.get("/api/drivers/setup-paths")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        d = r.get_json()
+        mie = [x for x in d["paths"] if x["folder"] in ("Buona", "Rotta")]
+        self.assertEqual([x["folder"] for x in mie], ["Buona"])
+        self.assertTrue(mie[0]["unc"].endswith("\\drivers\\Buona"))
+        self.assertEqual([(x["folder"], x["missing"]) for x in d["skipped"] if x["folder"] == "Rotta"],
+                         [("Rotta", ["Matrox.WddmUninstaller.exe"])])
+        self.assertFalse(d["truncated"])
+        self.assertGreaterEqual(d["folders"], 2)
+        # slug non valido / immagine inesistente: errore chiaro, non una lista sbagliata
+        self.assertEqual(self.client.get("/api/drivers/setup-paths?iso=NON%20valido!").status_code, 400)
+        self.assertEqual(self.client.get("/api/drivers/setup-paths?iso=mai-vista").status_code, 404)
+        self._elimina("Buona", "Rotta")
 
     # ---------------------------------------------------------------- nessuna regressione su ISO e risposte
     def test_11_iso_and_answers_unchanged(self):

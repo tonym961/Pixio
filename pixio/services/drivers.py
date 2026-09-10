@@ -48,6 +48,14 @@ WINPE_EXT = (".inf", ".sys", ".cat")
 USEFUL_EXT = (".inf", ".sys", ".cat", ".dll", ".bin", ".dat", ".cab", ".sepolicy")
 MAX_INJECT_BYTES = 256 * 1024 * 1024
 
+# setup_offer: se la cartella puo' finire fra i percorsi driver del file di risposta (docs/API.md, sezione 24)
+SETUP_OFFER_MODES = ("auto", "mai", "sempre")
+MAX_SETUP_PATHS = 64          # quante voci PathAndCredentials si scrivono al massimo nell'autounattend
+MAX_SETUP_DEPTH = 8           # livelli di sottocartelle esaminati in una cartella driver
+MAX_SETUP_DIRS = 500          # directory esaminate in una cartella driver
+MAX_SETUP_FILES = 5000        # file esaminati in una cartella driver
+MAX_SETUP_UNC = 255           # <Path> e' un percorso UNC: oltre MAX_PATH il setup non lo apre
+
 # apply_to: a quali immagini si applica la cartella (docs/API.md, sezione 15)
 APPLY_MODES = ("all", "groups", "isos")
 MAX_APPLY_GROUPS = 50        # i gruppi sono quelli del menu di boot: pochi e con nomi brevi
@@ -199,6 +207,12 @@ def list_folders():
         f = flags.get(name, {})
         esclusi = set(str(x) for x in (f.get("excluded") or []))
         inject = _mark_inject(p, files, esclusi)
+        # cosa di questa cartella puo' finire fra i percorsi driver del file di risposta (sezione 24)
+        offerta = _read_setup_offer(f)
+        albero = setup_tree_of(p, offerta)
+        for x in files:
+            if x["name"].lower().endswith(".inf"):
+                x["setup_missing"] = albero["infs"].get(x["name"], [])
         useful = sum(1 for x in files if x["useful"])
         cand = sum(1 for x in files if x["winpe_cand"])
         out.append({
@@ -209,6 +223,10 @@ def list_folders():
             "winpe_candidates": cand, "excluded_files": sum(1 for x in files if x["excluded"]),
             "winpe_inject": bool(f.get("winpe_inject")), "setup_load": bool(f.get("setup_load")),
             "excluded": sorted(esclusi), "apply_to": _read_apply_to(f),
+            # percorsi che il file di risposta offre al programma di installazione, e sottocartelle
+            # lasciate fuori perche' contengono un .inf incompleto (docs/API.md, sezione 24)
+            "setup_offer": offerta, "setup_paths": albero["paths"],
+            "setup_skipped": albero["skipped"], "setup_truncated": albero["truncated"],
             # cosa l'.inf iniettato dichiara e non trovera' nel WinPE: quello che sta in un'altra copia
             # (inf_missing) e quello che non c'e' in nessuna copia della cartella (inf_absent, .exe compresi)
             "winpe_missing": [{"inf": x["name"], "missing": _nomi_uniti(x["inf_missing"], x["inf_absent"])}
@@ -382,6 +400,7 @@ def set_excluded(name, rel, escluso):
 def set_flags(name, patch):
     folder_path(name)
     apply_to = check_apply_to(patch["apply_to"]) if "apply_to" in patch else None
+    setup_offer = check_setup_offer(patch["setup_offer"]) if "setup_offer" in patch else None
 
     def upd(d):
         f = d.setdefault("folders", {}).setdefault(name, {})
@@ -392,6 +411,8 @@ def set_flags(name, patch):
             f["note"] = str(patch["note"])[:200]
         if apply_to is not None:
             f["apply_to"] = apply_to
+        if setup_offer is not None:
+            f["setup_offer"] = setup_offer
         return d
     update_json(C.DRIVERS_FILE, upd, default={})
     for f in list_folders():
@@ -404,6 +425,7 @@ def set_flags_many(names, patch):
     """Applica lo stesso patch a piu' cartelle. Ritorna {"updated": [nomi], "errors": {nome: messaggio}}."""
     updated, errors, ok_names = [], {}, []
     apply_to = check_apply_to(patch["apply_to"]) if "apply_to" in patch else None
+    setup_offer = check_setup_offer(patch["setup_offer"]) if "setup_offer" in patch else None
     for raw in names:
         name = str(raw or "").strip()
         try:
@@ -428,6 +450,8 @@ def set_flags_many(names, patch):
                     f["note"] = str(patch["note"])[:200]
                 if apply_to is not None:
                     f["apply_to"] = apply_to
+                if setup_offer is not None:
+                    f["setup_offer"] = setup_offer
             return d
         update_json(C.DRIVERS_FILE, upd, default={})
         updated = ok_names
@@ -576,15 +600,24 @@ def _inf_file_name(tok):
     return t if _INF_NAME_RE.match(t) else ""
 
 
-def _inf_declared_map(path):
-    """{nome minuscolo: grafia usata nell'.inf} dei file che l'.inf dichiara come propri.
+def _inf_parse(path):
+    """Nomi dei file citati da un .inf, divisi per ruolo (docs/API.md, sezioni 21 e 24).
 
-    Guarda le sezioni [SourceDisksFiles*], le righe CopyFiles (nomi diretti con "@" e sezioni di copia
-    referenziate) e le righe ServiceBinary. Un .inf illeggibile o troppo grande non dichiara nulla."""
+    {"copiati": {...}, "servizi": {...}, "catalogo": {...}, "dichiarati": {...}}, ogni voce
+    {nome minuscolo: grafia usata nell'.inf}:
+    - copiati: i file che il pacchetto promette di **copiare** — sezioni [SourceDisksFiles*], righe
+      CopyFiles (nomi diretti con "@" e sezioni di copia referenziate). Sono quelli che il programma
+      di installazione cerca davvero sul disco quando mette il driver in staging.
+    - servizi: i nomi che compaiono **solo** come ServiceBinary. Spesso il file lo fornisce Windows
+      ("ServiceBinary = %12%\\pci.sys" nel Matrox): pretenderlo accanto all'.inf sarebbe un falso allarme.
+    - catalogo: CatalogFile= della sezione [Version], cioe' il .cat con la firma del pacchetto. Il setup,
+      a differenza di drvload, pretende la firma: un .inf senza il suo .cat accanto viene rifiutato.
+    - dichiarati: copiati + servizi, quello che serve all'iniezione nel WinPE (sezione 21).
+    Un .inf illeggibile o troppo grande non dichiara nulla."""
     try:
         text = _inf_text(path)
     except OSError:
-        return {}
+        return {"copiati": {}, "servizi": {}, "catalogo": {}, "dichiarati": {}}
     sezioni, cur = {}, ""
     for riga in _inf_lines(text):
         m = _INF_SECTION_RE.match(riga)
@@ -595,9 +628,10 @@ def _inf_declared_map(path):
         if cur:
             sezioni[cur].append(riga)
 
-    nomi, copia = {}, set()
+    nomi, servizi, catalogo, copia = {}, {}, {}, set()
     for sez, righe in sezioni.items():
         sorgenti = sez.split(".")[0] == "sourcedisksfiles"
+        versione = sez.split(".")[0] == "version"
         for riga in righe:
             k, _sep, v = riga.partition("=")
             if sorgenti:                      # "iaStorVD.sys = 1,,," -> il nome sta nella chiave
@@ -620,7 +654,11 @@ def _inf_declared_map(path):
             elif chiave == "servicebinary":   # "ServiceBinary = %12%\iaStorAfs.sys"
                 n = _inf_file_name(v)
                 if n:
-                    nomi.setdefault(n.lower(), n)
+                    servizi.setdefault(n.lower(), n)
+            elif versione and chiave.split(".")[0] == "catalogfile":
+                n = _inf_file_name(v)         # "CatalogFile.NTamd64 = iaStorVD.cat"
+                if n:
+                    catalogo.setdefault(n.lower(), n)
     # sezioni di copia: "file-destinazione, file-sorgente, ...": conta il file sorgente, se c'e'
     for sez in copia:
         for riga in sezioni.get(sez, []):
@@ -628,7 +666,18 @@ def _inf_declared_map(path):
             n = _inf_file_name(campi[1]) if len(campi) > 1 and campi[1] else _inf_file_name(campi[0])
             if n:
                 nomi.setdefault(n.lower(), n)
-    return nomi
+    dichiarati = dict(nomi)
+    for low, orig in servizi.items():
+        dichiarati.setdefault(low, orig)
+    return {"copiati": nomi, "servizi": servizi, "catalogo": catalogo, "dichiarati": dichiarati}
+
+
+def _inf_declared_map(path):
+    """{nome minuscolo: grafia usata nell'.inf} dei file che l'.inf dichiara come propri.
+
+    Guarda le sezioni [SourceDisksFiles*], le righe CopyFiles (nomi diretti con "@" e sezioni di copia
+    referenziate) e le righe ServiceBinary. Un .inf illeggibile o troppo grande non dichiara nulla."""
+    return _inf_parse(path)["dichiarati"]
 
 
 def inf_declared_files(path):
@@ -636,20 +685,25 @@ def inf_declared_files(path):
     return set(_inf_declared_cached(path))
 
 
-def _inf_declared_cached(path):
-    """_inf_declared_map con memoria per (percorso, mtime, dimensione): list_folders gira a ogni polling."""
+def _inf_parse_cached(path):
+    """_inf_parse con memoria per (percorso, mtime, dimensione): list_folders gira a ogni polling."""
     try:
         st = os.stat(path)
     except OSError:
-        return {}
+        return {"copiati": {}, "servizi": {}, "catalogo": {}, "dichiarati": {}}
     key = (path, int(st.st_mtime), st.st_size)
     v = _INF_CACHE.get(key)
     if v is None:
         if len(_INF_CACHE) >= _INF_CACHE_MAX:
             _INF_CACHE.clear()
-        v = _inf_declared_map(path)
+        v = _inf_parse(path)
         _INF_CACHE[key] = v
     return v
+
+
+def _inf_declared_cached(path):
+    """Mappa dei file dichiarati (copiati + ServiceBinary), dalla memoria di _inf_parse_cached."""
+    return _inf_parse_cached(path)["dichiarati"]
 
 
 def inf_needed_files(path):
@@ -674,6 +728,260 @@ def inf_extra_files(path):
 def inf_all_files(path):
     """Tutti i file dichiarati dall'.inf che possono seguirlo nel WinPE: prima i .inf/.sys/.cat, poi gli altri."""
     return inf_needed_files(path) + inf_extra_files(path)
+
+
+# ---------------------------------------------------------------------------
+# Percorsi driver offerti al programma di installazione (docs/API.md, sezione 24)
+#
+# Il file di risposta scriveva un solo DriverPaths verso la radice della libreria: il setup percorre il
+# percorso che riceve con tutte le sue sottocartelle, mette in staging OGNI .inf che trova e al primo file
+# dichiarato che non trova si ferma con 0x80070002, abortendo l'installazione intera (0xC190011F dopo due
+# minuti e mezzo, senza toccare il disco - log reali del 10 settembre 2026 con RAID_drivers\iaStorVD.inf).
+# Un solo pacchetto incompleto in libreria bastava a non far installare piu' nessun PC.
+# Da qui in avanti nell'XML si scrivono soltanto le cartelle che il setup puo' percorrere per intero.
+
+
+def default_setup_offer():
+    """Valore predefinito: Pixio decide da solo quali sottocartelle offrire (regola della sezione 24)."""
+    return "auto"
+
+
+def check_setup_offer(v):
+    """Normalizza e valida setup_offer. Solleva ValueError con messaggio in italiano."""
+    if v is None:
+        return default_setup_offer()
+    if not isinstance(v, str):
+        raise ValueError('setup_offer: valori ammessi "auto", "mai", "sempre"')
+    x = v.strip().lower()
+    if x not in SETUP_OFFER_MODES:
+        raise ValueError('setup_offer: valori ammessi "auto", "mai", "sempre"')
+    return x
+
+
+def _read_setup_offer(f):
+    """setup_offer salvato nei flag della cartella, ripulito: i valori vecchi o rotti tornano "auto"."""
+    try:
+        return check_setup_offer((f or {}).get("setup_offer"))
+    except ValueError:
+        return default_setup_offer()
+
+
+def setup_offer_of(name):
+    """setup_offer della cartella (predefinito se non impostato)."""
+    return _read_setup_offer(_flags()["folders"].get(name))
+
+
+def inf_setup_files(path):
+    """{nome minuscolo: grafia nell'.inf} dei file che il pacchetto promette di copiare, piu' il suo .cat.
+
+    Differenza voluta rispetto a inf_all_files(): un nome che compare **solo** come ServiceBinary non
+    conta, perche' di norma lo fornisce Windows ("ServiceBinary = %12%\\pci.sys" del Matrox G200eW:
+    pretenderlo accanto all'.inf sarebbe un falso allarme). Il .cat invece si aggiunge, perche' il setup
+    pretende la firma mentre drvload no."""
+    m = _inf_parse_cached(path)
+    out = dict(m["copiati"])
+    for low, orig in m["catalogo"].items():
+        out.setdefault(low, orig)
+    return out
+
+
+def inf_setup_missing(path, presenti=None):
+    """Nomi (grafia dell'.inf) che il pacchetto promette di copiare e che non si trovano nel suo pacchetto.
+
+    `presenti` e' l'insieme dei nomi minuscoli disponibili nel sottoalbero della cartella dell'.inf; se non
+    viene passato si legge la cartella dell'.inf con le sue sottocartelle. Si guarda il sottoalbero e non
+    solo i file accanto perche' un .inf puo' dichiarare i propri file in una sottocartella
+    ([SourceDisksNames] con il campo percorso): la regola stretta lo boccerebbe a torto.
+    Elenco vuoto = pacchetto completo, il setup lo puo' installare."""
+    voluti = inf_setup_files(path)
+    if not voluti:
+        return []
+    if presenti is None:
+        presenti = set()
+        base = os.path.dirname(path)
+        for _rel in _setup_names(base)[0]:
+            presenti.add(_rel.split("/")[-1].lower())
+    return sorted((orig for low, orig in voluti.items() if low not in presenti), key=str.lower)
+
+
+def _setup_names(base):
+    """(percorsi relativi dei file della cartella, troncato) con i limiti della sezione 24.
+
+    La generazione del file di risposta gira a ogni avvio di un PC: oltre i limiti la cartella viene
+    trattata come non percorribile invece di far aspettare il PC (e la GUI lo dice)."""
+    rels, dirs, troncato = [], 0, False
+    for dirpath, dirnames, filenames in os.walk(base):
+        rel = os.path.relpath(dirpath, base).replace(os.sep, "/")
+        rel = "" if rel == "." else rel
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        profondita = (rel.count("/") + 1) if rel else 0
+        if profondita >= MAX_SETUP_DEPTH and dirnames:
+            troncato = True
+            dirnames[:] = []
+        dirs += 1
+        if dirs > MAX_SETUP_DIRS:
+            return rels, True
+        for fn in sorted(filenames):
+            if fn.startswith("."):
+                continue
+            rels.append((rel + "/" + fn) if rel else fn)
+            if len(rels) >= MAX_SETUP_FILES:
+                return rels, True
+    return rels, troncato
+
+
+def _setup_tree(base, rels, troncato=False):
+    """Cartelle di `base` che il setup puo' percorrere senza incontrare un pacchetto incompleto.
+
+    Tre definizioni in cascata:
+    1) un .inf e' completo se ogni file che promette di copiare (piu' il suo .cat) sta nel suo pacchetto;
+    2) una directory e' offribile se **tutti** gli .inf del suo sottoalbero sono completi e ce n'e' almeno
+       uno: il setup percorre ricorsivamente il percorso che riceve, quindi non basta guardare la directory;
+    3) si scende in ampiezza dalla radice: la prima directory offribile si scrive e li' ci si ferma (dentro
+       ci pensa il setup), una non offribile si scavalca e si esaminano le sue figlie. Ne esce un'anticatena
+       di cartelle massimali: nessun percorso contiene un .inf incompleto e nessuno e' annidato in un altro.
+
+    Ritorna {"paths": [percorso relativo, "" = radice della cartella], "skipped": [{dir, inf, missing,
+    lost}], "infs": {percorso .inf: [nomi mancanti]}, "truncated": bool}."""
+    files_dir, figli, dirs = {}, {}, {""}
+    for rel in rels:
+        d = _dir_of(rel)
+        cur = ""
+        for parte in (d.split("/") if d else []):
+            giu = (cur + "/" + parte) if cur else parte
+            figli.setdefault(cur, set()).add(giu)
+            dirs.add(giu)
+            cur = giu
+        files_dir.setdefault(d, []).append(rel.split("/")[-1])
+
+    # nomi disponibili nel sottoalbero di ogni directory: si parte dalle piu' profonde
+    ordinate = sorted(dirs, key=lambda d: (-(d.count("/") + 1) if d else 0, d.lower()))
+    sotto = {}
+    for d in ordinate:
+        n = set(x.lower() for x in files_dir.get(d, ()))
+        for c in figli.get(d, ()):
+            n |= sotto.get(c, set())
+        sotto[d] = n
+
+    # verdetto su ogni .inf della cartella
+    manca, infs_dir = {}, {}
+    for rel in rels:
+        if not rel.lower().endswith(".inf"):
+            continue
+        d = _dir_of(rel)
+        infs_dir.setdefault(d, []).append(rel)
+        manca[rel] = inf_setup_missing(os.path.join(base, *rel.split("/")), sotto.get(d, set()))
+
+    ok, ha_inf = {}, {}
+    for d in ordinate:                      # profondita' decrescente: le figlie sono gia' decise
+        ok[d] = (all(not manca[r] for r in infs_dir.get(d, ()))
+                 and all(ok.get(c, True) for c in figli.get(d, ())))
+        ha_inf[d] = bool(infs_dir.get(d)) or any(ha_inf.get(c) for c in figli.get(d, ()))
+
+    paths, coda = [], [""]
+    while coda and not troncato:
+        d = coda.pop(0)
+        if not ha_inf.get(d):
+            continue                        # niente .inf qui sotto: sarebbe una scansione SMB a vuoto
+        if ok.get(d):
+            paths.append(d)
+            continue
+        coda.extend(sorted(figli.get(d, ()), key=str.lower))
+    paths.sort(key=str.lower)
+
+    scartate = []
+    if troncato:
+        scartate.append({"dir": "", "inf": "", "missing": [], "lost": [], "reason": "troppo grande"})
+    for rel in sorted(manca, key=str.lower):
+        if not manca[rel]:
+            continue
+        d = _dir_of(rel)
+        # gli .inf sani che stanno nella stessa directory si perdono insieme a quello rotto: <Path> accetta
+        # una cartella, non c'e' modo di dire al setup "in questa cartella salta quell'.inf"
+        buoni = [r.split("/")[-1] for r in sorted(infs_dir.get(d, ()), key=str.lower) if not manca[r]]
+        scartate.append({"dir": d, "inf": rel, "missing": list(manca[rel]), "lost": buoni,
+                         "reason": "incompleto"})
+    return {"paths": paths, "skipped": scartate, "infs": manca, "truncated": troncato}
+
+
+def setup_tree_of(base, offer="auto"):
+    """_setup_tree per una cartella driver, tenendo conto del flag setup_offer.
+
+    "mai": nessun percorso (la cartella serve solo al WinPE via drvload). "sempre": si scrive la radice
+    cosi' com'e', saltando il controllo — e' la scappatoia per un falso allarme del parser, e gli avvisi
+    restano perche' la GUI li deve mostrare lo stesso."""
+    rels, troncato = _setup_names(base)
+    t = _setup_tree(base, rels, troncato)
+    if offer == "mai":
+        t["paths"] = []
+    elif offer == "sempre":
+        t["paths"] = [""] if rels else []
+    return t
+
+
+def setup_unc(server_ip, folder, rel=""):
+    """Percorso UNC di una cartella della libreria driver, come lo scrive il file di risposta."""
+    p = "\\\\%s\\pxe\\drivers\\%s" % (str(server_ip or "").strip() or "127.0.0.1", folder)
+    if rel:
+        p += "\\" + rel.replace("/", "\\")
+    return p
+
+
+def _setup_priority(f):
+    """Chi entra per primo quando si supera MAX_SETUP_PATHS: prima le cartelle abbinate apposta a questa
+    immagine (isos), poi i gruppi, poi quelle valide per tutte."""
+    a = f.get("apply_to") if isinstance(f.get("apply_to"), dict) else {}
+    return {"isos": 0, "groups": 1}.get(a.get("mode"), 2)
+
+
+def setup_paths(server_ip="", iso=None):
+    """Percorsi driver da scrivere nel file di risposta per la voce di catalogo che si sta avviando.
+
+    iso: dict con "slug" e "group" (None = nessun filtro, anteprima generica). Entrano solo le cartelle
+    abbinate all'immagine (apply_to, sezione 15), con nome valido, non messe su setup_offer="mai" e
+    percorribili senza incontrare un pacchetto incompleto.
+    Ritorna {"paths": [{folder, rel, unc}], "skipped": [{folder, dir, inf, missing, lost, reason}],
+    "dropped": [{folder, rel, unc}] (oltre il tetto o percorso troppo lungo), "folders": quante cartelle
+    sono state esaminate, "offered": quante ne hanno prodotto almeno un percorso}."""
+    ip = str(server_ip or "").strip() or "127.0.0.1"
+    voci, scartate, esaminate, offerte = [], [], 0, 0
+    lunghi = []
+    for f in list_folders():
+        if not apply_matches(f.get("apply_to"), iso):
+            continue
+        esaminate += 1
+        if not f["valid_name"]:
+            scartate.append({"folder": f["name"], "dir": "", "inf": "", "missing": [], "lost": [],
+                             "reason": "nome non valido"})
+            continue
+        if f.get("setup_offer") == "mai":
+            scartate.append({"folder": f["name"], "dir": "", "inf": "", "missing": [], "lost": [],
+                             "reason": "mai"})
+            continue
+        for s in (f.get("setup_skipped") or []):
+            scartate.append(dict(s, folder=f["name"]))
+        mie = []
+        for rel in (f.get("setup_paths") or []):
+            unc = setup_unc(ip, f["name"], rel)
+            if len(unc) > MAX_SETUP_UNC:
+                lunghi.append({"folder": f["name"], "rel": rel, "unc": unc})
+                scartate.append({"folder": f["name"], "dir": rel, "inf": "", "missing": [], "lost": [],
+                                 "reason": "percorso troppo lungo"})
+                continue
+            mie.append({"folder": f["name"], "rel": rel, "unc": unc, "prio": _setup_priority(f)})
+        if mie:
+            offerte += 1
+        voci.extend(mie)
+    # oltre il tetto entrano le cartelle che il tecnico ha abbinato apposta a questa immagine
+    voci.sort(key=lambda v: (v["prio"], v["folder"].lower(), v["rel"].lower()))
+    fuori = voci[MAX_SETUP_PATHS:]
+    voci = voci[:MAX_SETUP_PATHS]
+    # la priorita' decide chi entra, l'ordine alfabetico come si scrive l'elenco che entra
+    voci.sort(key=lambda v: (v["folder"].lower(), v["rel"].lower()))
+    for v in voci + fuori:
+        v.pop("prio", None)
+    return {"paths": voci, "skipped": scartate, "dropped": fuori + lunghi,
+            "folders": esaminate, "offered": offerte}
 
 
 # ---------------------------------------------------------------------------

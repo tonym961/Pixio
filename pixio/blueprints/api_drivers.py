@@ -35,6 +35,14 @@ def _missing_err(e):
     return jsonify({"error": str(e) or "Non trovato"}), 404
 
 
+def _server_ip():
+    """IP del server per i percorsi UNC. Se le impostazioni non si leggono, il nome della macchina."""
+    try:
+        return (S.load().get("network", {}) or {}).get("server_ip", "") or socket.gethostname()
+    except Exception:  # noqa: BLE001 - la pagina deve aprirsi anche senza configurazione
+        return socket.gethostname()
+
+
 def _share_info():
     cfg = S.load()
     lib = cfg.get("library", {}) or {}
@@ -74,6 +82,30 @@ def list_drivers():
     return jsonify(out)
 
 
+@bp.route("/api/drivers/setup-paths")
+def setup_paths():
+    """Percorsi driver che il file di risposta consegna al programma di installazione (sezione 24).
+
+    `?iso=<slug>` sceglie l'immagine che si sta avviando: senza slug non si filtra per immagine e si
+    vede quello che riceverebbe una ISO abbinata a tutte le cartelle. Lo usano la pagina Driver e il
+    Personalizzatore Windows, così non ricalcolano lato browser quello che il server sa già.
+    """
+    slug = str(request.args.get("iso", "") or "").strip()
+    iso = None
+    if slug:
+        if not C.SLUG_RE.match(slug):
+            raise ValueError("Slug non valido")
+        from ..services import winprofile
+        iso = winprofile.iso_entry(slug)
+        if iso is None:
+            raise FileNotFoundError("Immagine non trovata nel catalogo")
+    d = drivers.setup_paths(_server_ip(), iso)
+    return jsonify({"iso": slug, "paths": d["paths"], "skipped": d["skipped"],
+                    "dropped": d["dropped"], "truncated": bool(d["dropped"]),
+                    "folders": d["folders"], "offered": d["offered"],
+                    "max_paths": drivers.MAX_SETUP_PATHS})
+
+
 @bp.route("/api/drivers/folders", methods=["POST"])
 def create_folder():
     d = request.get_json(silent=True) or {}
@@ -83,7 +115,7 @@ def create_folder():
 
 
 def _flag_patch(d, fields=("winpe_inject", "setup_load")):
-    """Estrae dal corpo JSON i flag booleani e apply_to (solleva ValueError se il tipo e' sbagliato)."""
+    """Estrae dal corpo JSON i flag booleani, apply_to e setup_offer (ValueError se il tipo e' sbagliato)."""
     patch = {}
     for k in fields:
         if k in d:
@@ -92,6 +124,8 @@ def _flag_patch(d, fields=("winpe_inject", "setup_load")):
             patch[k] = d[k]
     if "apply_to" in d:
         patch["apply_to"] = drivers.check_apply_to(d["apply_to"])
+    if "setup_offer" in d:
+        patch["setup_offer"] = drivers.check_setup_offer(d["setup_offer"])
     return patch
 
 
@@ -110,7 +144,7 @@ def patch_folders():
         raise ValueError("names: i nomi delle cartelle devono essere testo")
     patch = _flag_patch(d)
     if not patch:
-        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, apply_to)")
+        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, apply_to, setup_offer)")
     res = drivers.set_flags_many(names, patch)
     return jsonify({"ok": not res["errors"], "updated": res["updated"], "errors": res["errors"]})
 
@@ -130,7 +164,8 @@ def patch_folder(name):
             raise ValueError("Nota troppo lunga (max 200 caratteri)")
         patch["note"] = note
     if not patch:
-        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, apply_to, note)")
+        raise ValueError("Nessun campo da modificare (winpe_inject, setup_load, apply_to, "
+                         "setup_offer, note)")
     folder = drivers.set_flags(name, patch)
     if folder is None:
         raise FileNotFoundError("Cartella driver non trovata")

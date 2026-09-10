@@ -1216,8 +1216,9 @@
       </div>
 
       <div class="card"><h3>Driver</h3>
-        ${spunta('wp-drivers', 'Usa i driver caricati in Pixio', s.drivers_from_pixio !== false, `Aggiunge <span class="mono">\\\\${esc(serverIp())}\\pxe\\drivers</span> ai percorsi che il setup analizza: i driver delle cartelle della pagina Driver vengono installati durante la personalizzazione.`)}
-        <div class="hint">Il percorso è una share di sola lettura: perché funzioni serve l'opzione <strong>Installazione Windows via rete</strong> attiva in Impostazioni, la stessa che serve per avviare il setup dalla rete. Le credenziali della share finiscono anch'esse nel file.</div>
+        ${spunta('wp-drivers', 'Usa i driver caricati in Pixio', s.drivers_from_pixio !== false, 'Elenca nel file di risposta le cartelle della pagina Driver che il programma di installazione può percorrere senza incontrare un pacchetto incompleto. Non viene più scritta la radice della libreria: un solo pacchetto incompleto fermerebbe l\'installazione con <span class="mono">0x80070002</span> prima ancora di toccare il disco.')}
+        <div id="wp-drv-paths" class="hint" style="margin-top:8px">Caricamento dei percorsi driver…</div>
+        <div class="hint">I percorsi sono su una share di sola lettura: perché funzionino serve l'opzione <strong>Installazione Windows via rete</strong> attiva in Impostazioni, la stessa che serve per avviare il setup dalla rete. Le credenziali della share finiscono anch'esse nel file. Le cartelle si scelgono e si riparano nella <a href="#/driver">pagina Driver</a>.</div>
       </div>
 
       <div class="panel" style="margin-top:16px">
@@ -1262,7 +1263,37 @@
     twBind(box);
     bindEdizione(box);
     appsAggiorna();
+    percorsiDriver();
     anteprima(true);
+  }
+
+  /* Percorsi driver che finiranno davvero nel file di risposta (docs/API.md, sezione 24).
+     Li calcola il server: qui si mostrano quelli dell'immagine abbinata al profilo, se è una sola. */
+  async function percorsiDriver() {
+    const box = $('#wp-drv-paths', W.root);
+    if (!box) return;
+    const isos = isosProfilo();
+    const iso = isos.length === 1 ? isos[0].slug : '';
+    try {
+      const d = await P.get('/api/drivers/setup-paths' + (iso ? '?iso=' + encodeURIComponent(iso) : ''));
+      if (!$('#wp-drv-paths', W.root)) return;
+      const paths = Array.isArray(d.paths) ? d.paths : [];
+      const sk = (Array.isArray(d.skipped) ? d.skipped : []).filter((x) => x && x.reason === 'incompleto');
+      const dove = iso ? ` per <b>${esc(isos[0].name || iso)}</b>` : ' (nessuna immagine abbinata al profilo: elenco senza filtro)';
+      if (!paths.length) {
+        box.innerHTML = `<div class="alert bad">Nessuna cartella driver verrà scritta nel file di risposta${dove}: `
+          + (d.folders ? `delle ${d.folders} cartelle esaminate nessuna è percorribile senza incontrare un pacchetto incompleto.` : 'la libreria driver è vuota.')
+          + ' L\'installazione partirà con i soli driver che Windows ha dentro; se il disco è dietro un controller RAID/VMD potrebbe non comparire. Sistema le cartelle nella <a href="#/driver">pagina Driver</a>.</div>';
+        return;
+      }
+      box.innerHTML = `<details><summary>${paths.length === 1 ? '1 cartella scritta' : paths.length + ' cartelle scritte'} nel file di risposta${dove}`
+        + `${sk.length ? ` · ${sk.length === 1 ? '1 pacchetto incompleto lasciato fuori' : sk.length + ' pacchetti incompleti lasciati fuori'}` : ''}</summary>`
+        + paths.map((x) => `<div class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.unc)}</div>`).join('')
+        + (sk.length ? `<div style="margin-top:6px">Lasciati fuori: ${esc(sk.map((x) => x.folder + '\\' + String(x.inf).replace(/\//g, '\\') + ' (manca ' + (x.missing || []).join(', ') + ')').join('; '))}</div>` : '')
+        + '</details>';
+    } catch (e) {
+      if ($('#wp-drv-paths', W.root)) box.textContent = 'Percorsi driver non disponibili: ' + e.message;
+    }
   }
 
   // ---------------------------------------------------------------- lettura del form

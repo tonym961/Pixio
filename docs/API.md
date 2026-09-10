@@ -90,15 +90,19 @@ Oggetto ISO:
 ## Driver (libreria driver: `/srv/pixio/http/drivers`, share `\\<ip>\drivers` in scrittura, HTTP `/pxe/drivers/`)
 Servizio: `pixio/services/drivers.py` (list_folders, create_folder, delete_folder, set_flags, delete_file, winpe_inject_files, setup_load_folders).
 - `GET /api/drivers` → `{root, samba_path:"\\\\10.10.0.254\\drivers", samba_enabled, folders:[{name, files:[{name (relativo, può contenere /), size, mtime}], count, size, inf_count, winpe_files, winpe_size, winpe_inject:bool, setup_load:bool, note, valid_name:bool}]}`
-  (per ogni cartella anche `winpe_missing`, sezione 21; per ogni file `useful`, `winpe_cand`, `excluded`, `winpe` e, sui `.inf`, `inf_missing`)
+  (per ogni cartella anche `winpe_missing`, sezione 21, e `setup_offer` / `setup_paths` / `setup_skipped` /
+  `setup_truncated`, sezione 24; per ogni file `useful`, `winpe_cand`, `excluded`, `winpe` e, sui `.inf`,
+  `inf_missing` e `setup_missing`)
+- `GET /api/drivers/setup-paths[?iso=<slug>]` → `{iso, paths:[{folder, rel, unc}], skipped:[{folder, dir, inf, missing, lost, reason}], dropped:[...], truncated:bool, folders:int, offered:int, max_paths:int}` — quello che il file di risposta consegna al programma di installazione per quell'immagine (sezione 24)
 - `POST /api/drivers/folders {name}` → `{ok, folder}` (nome: lettere/numeri/spazi/. _ - ( ) +, max 64; 409 se esiste)
-- `PATCH /api/drivers/folders/<name> {winpe_inject?, setup_load?, note?}` → `{ok, folder}`
+- `PATCH /api/drivers/folders/<name> {winpe_inject?, setup_load?, apply_to?, setup_offer?, note?}` → `{ok, folder}`
 - `DELETE /api/drivers/folders/<name>` → `{ok}` (cancella cartella e file; conferma nella UI)
 - `DELETE /api/drivers/folders/<name>/files/<path:file>` → `{ok}`
 - Upload: `POST /api/upload/init {filename, size, kind:"driver", folder:"<name>"}` poi chunk/finish come per le ISO. Per `kind:"driver"` le estensioni ammesse sono: inf sys cat dll exe cab zip msi txt bin dat ini cfg xml json 7z sepolicy; il file finisce in `/srv/pixio/http/drivers/<folder>/<filename>`; se è `.zip`, `finish` lo estrae nella cartella (sotto-cartelle incluse, path traversal rifiutato, max 2 GB estratti) e cancella lo zip; risposta `{ok, extracted:int, files:[str]}`. Senza `kind` (o `kind:"iso"`) comportamento invariato (libreria ISO).
 Significato dei flag (spiegazione da mostrare nella UI):
 - **winpe_inject** "Carica in WinPE all'avvio": i file .inf/.sys/.cat/.dll al primo livello della cartella vengono iniettati nel WinPE via wimboot e caricati con drvload prima della rete. Serve per schede di rete o controller storage che WinPE non riconosce (max 256 MB totali).
 - **setup_load** "Carica prima del setup di Windows": dopo aver mappato la share, drvload ricorsivo di tutti i .inf della cartella prima di setup.exe (richiede "Installazione Windows via rete" attiva).
+- **setup_offer** "Offerta al programma di installazione" (`"auto"` predefinito | `"mai"` | `"sempre"`): se le cartelle di questa cartella driver possono finire fra i percorsi driver dell'`autounattend.xml` (sezione 24). `"mai"` la tiene fuori sempre, `"sempre"` scrive la radice senza controllare i pacchetti.
 
 ---
 
@@ -390,9 +394,14 @@ Ogni cartella driver ha il campo `apply_to`:
 ```
 `all` è il valore predefinito e mantiene il comportamento di oggi. Con `groups` la cartella vale solo per le voci
 di quei gruppi (per esempio "Windows Server"); con `isos` solo per le immagini indicate.
-- `drivers.winpe_inject_files(iso=None)` e `drivers.setup_load_folders(iso=None)` accettano la voce di catalogo che si sta
-  avviando (dict con `slug` e `group`) e restituiscono solo le cartelle abbinate; senza argomento si comportano come prima
-  (utile per l'anteprima generica).
+- `drivers.winpe_inject_files(iso=None)`, `drivers.setup_load_folders(iso=None)` e `drivers.setup_paths(server_ip, iso=None)`
+  accettano la voce di catalogo che si sta avviando (dict con `slug` e `group`) e restituiscono solo le cartelle abbinate;
+  senza argomento si comportano come prima (utile per l'anteprima generica).
+- **Cambio di comportamento (settembre 2026):** `apply_to` vale adesso anche per i percorsi driver scritti
+  nell'`autounattend.xml` (sezione 24). Prima il file di risposta offriva al programma di installazione l'intera
+  libreria, `apply_to` compreso; adesso una cartella abbinata a un solo gruppo non compare più nel file di risposta
+  delle altre immagini. È la lettura corretta del campo ed è coerente con `winpe_inject_files()` e
+  `setup_load_folders()`, ma chi aveva usato `apply_to` solo per il WinPE deve rivederlo.
 - `services/winpe.flags(cfg, iso=None)` e la generazione dello script iPXE passano la ISO corrente, così ogni voce del menu
   riceve i propri driver. L'anteprima nella pagina ISO mostra i driver che quella voce riceverà davvero.
 - `GET /api/drivers` espone `apply_to` per ogni cartella e l'elenco delle scelte possibili in
@@ -629,6 +638,11 @@ solo per un file di `CopyFiles` che non riesce a mettere a posto, quindi da qui 
 iniettato si porta dietro tutti i file che dichiara**, qualunque sia l'estensione.
 
 ### Lettura dei .inf
+Attenzione: questa sezione parla di **`drvload` nel WinPE**. Il programma di installazione ha regole diverse
+(pretende il `.cat`, non pretende i file che compaiono solo come `ServiceBinary`, cerca nel sottoalbero del
+pacchetto e non solo accanto all'`.inf`): quelle stanno nella sezione 24 e usano funzioni diverse
+(`inf_setup_files`, `inf_setup_missing`). Le funzioni qui sotto non cambiano.
+
 `drivers.inf_declared_files(path)` restituisce i nomi (minuscoli, senza percorso) dei file che l'`.inf` dichiara
 come propri; `drivers.inf_needed_files(path)` è il sottoinsieme con estensione da WinPE (`.inf .sys .cat`),
 `drivers.inf_extra_files(path)` quello con le altre estensioni (`.dll .exe .bin .dat`...) e
@@ -812,3 +826,119 @@ sparisce al riavvio e l'OOBE del sistema installato non ha mai visto quel valore
 restano invece in `windowsPE`, perché lì le legge il programma di installazione). `specialize` gira nel
 Windows appena applicato, prima dell'OOBE: è dove il modello scritto a mano di `services/answers.py` la
 metteva da sempre.
+
+## 24. Nel file di risposta solo le cartelle driver che il setup può percorrere
+Motivo (guasto vero del 10 settembre 2026, log del PC in `/srv/pixio/setuplogs/`):
+
+```
+11:01:01, Info  MOUPG  Driver: Received driver inf path [\\10.10.0.254\pxe\drivers\RAID_drivers\iaStorVD.inf].
+11:01:02, Error MOUPG  CDlpActionDriverInstallation::ExecuteDriverInstall(1055): Result = 0x80070002
+11:01:02, Error MOUPG  CDlpActionDriverInstallation::ExecuteUnattendDriverInstall(1393): Result = 0x80070002
+11:01:02, Error MOUPG  CSetupManager::ExecuteDownlevelMode(609): Result = 0x80070002
+```
+
+Il file di risposta scriveva **un solo** `DriverPaths` verso la radice della libreria
+(`\\<ip>\pxe\drivers`). Il programma di installazione percorre il percorso che riceve **con tutte le sue
+sottocartelle**, mette in staging ogni `.inf` che trova — anche quelli per hardware che il PC non ha — e al
+primo file dichiarato che non trova si ferma con `0x80070002` (file non trovato) **abortendo l'installazione
+intera** (`0xC190011F` dopo due minuti e mezzo, senza toccare il disco). `RAID_drivers/iaStorVD.inf` dichiara
+`iaStorAfsService.exe`, `iaStorAfsNative.exe` e `RstMwService.exe`, che nella sua cartella non ci sono: un solo
+pacchetto incompleto e **nessun PC riusciva più a installarsi**. Nella libreria dell'utente 9 `.inf` su 24 sono
+in quello stato.
+
+Da qui in avanti Pixio non offre più la libreria: elenca nell'XML soltanto le cartelle che ha verificato.
+
+### La regola, in tre definizioni
+1. **`.inf` completo** — ogni file che il pacchetto **promette di copiare** si trova nel pacchetto.
+   I nomi li legge `drivers.inf_setup_files(path)`: chiavi delle sezioni `[SourceDisksFiles*]`, `CopyFiles=@nome`,
+   le sezioni di copia referenziate da `CopyFiles`, più il `CatalogFile=` di `[Version]` (il setup, a differenza
+   di `drvload`, pretende la firma). **Non** conta un nome che compare solo come `ServiceBinary`: di norma il file
+   lo fornisce Windows — il vero `SERVER_drivers/Matrox G200eW (Nuvoton) WDDM 2.0/oem0.inf` dichiara
+   `ServiceBinary = %12%\pci.sys`, e pretenderlo accanto all'`.inf` sarebbe un falso allarme (quella cartella
+   resta fuori lo stesso, ma per `Matrox.WddmUninstaller.exe`, che sta in una sezione di copia).
+   "Si trova nel pacchetto" vuol dire **nel sottoalbero della cartella dell'`.inf`**, non solo accanto: un `.inf`
+   può dichiarare i propri file in una sottocartella (`[SourceDisksNames]` con il campo percorso) e la regola
+   stretta lo boccerebbe a torto. `drivers.inf_setup_missing(path)` dà i nomi che mancano (vuoto = completo).
+2. **Cartella offribile** — tutti gli `.inf` del suo **sottoalbero** sono completi e ce n'è almeno uno. Il
+   sottoalbero, non la sola directory, perché il setup scende da solo: nel guasto vero il percorso scritto era la
+   radice e il setup è andato a pescare `RAID_drivers\iaStorVD.inf` due livelli più sotto.
+3. **Scelta delle voci** — da ogni cartella driver si scende in ampiezza: la prima directory offribile si scrive
+   e lì ci si ferma (dentro ci pensa il setup), una non offribile si scavalca e si esaminano le sue figlie. Ne
+   esce un'anticatena di cartelle massimali: nessun percorso contiene un `.inf` incompleto e nessuno è annidato
+   in un altro (`SERVER_drivers\HP` con tre pacchetti sani è **una** voce, non tre).
+
+Filtri applicati prima: **abbinamento all'immagine** (`apply_matches(apply_to, iso)`, sezione 15 — è un cambio
+di comportamento, prima il file di risposta ignorava `apply_to`), **nome cartella valido** (`FOLDER_RE`) e il
+flag di cartella **`setup_offer`** (`auto` predefinito | `mai`: non finisce mai nel file di risposta, per i
+driver che servono solo al WinPE | `sempre`: scrive la radice senza controllare, scappatoia per un falso allarme
+del parser, con avviso rosso in GUI).
+
+Cosa **non** entra nella regola, di proposito:
+- le esclusioni a mano (`excluded`, sezione 15) tolgono il file dall'iniezione nel WinPE ma **non** dal disco: il
+  setup che percorre la cartella lo trova lo stesso. Per rendere offribile una cartella bisogna completare il
+  pacchetto o cancellare l'`.inf` incompleto (`DELETE .../files/<percorso>`);
+- `inf_shadowed` / `is_winpe_system_file` non contano: riguardano l'appiattimento in `X:\Windows\System32` del
+  WinPE, non la copia offline che fa il setup;
+- non si guarda l'architettura della sottocartella (`SKIP_DIRS` serve al WinPE): un `.inf` di architettura
+  sbagliata il setup lo ignora in silenzio, mentre uno scarto sbagliato toglierebbe un driver che serve;
+- non si guarda se il driver serve all'hardware del PC: con `PnpCustomizationsWinPE` il setup mette in staging
+  **tutti** gli `.inf` che trova, quindi un pacchetto rotto rompe l'installazione anche se è per hardware assente.
+
+Limiti di scansione (la generazione gira a ogni avvio di un PC): profondità 8 livelli, 500 directory e 5000 file
+per cartella driver; oltre il limite la cartella è trattata come non offribile e la GUI lo dice. La lettura degli
+`.inf` è coperta dalla memoria `_INF_CACHE` (percorso + mtime + dimensione) già usata da `list_folders()`.
+
+### L'XML generato
+Cambia solo il blocco dentro `Microsoft-Windows-PnpCustomizationsWinPE` nel passaggio `windowsPE`.
+`_driver_path(server_ip, cfg)` è diventata `_driver_paths(server_ip, cfg, iso)` e si scrive una
+`PathAndCredentials` per voce, con `wcm:keyValue` **progressivo** (con più voci un valore fisso `"1"` sarebbe un
+XML rifiutato) e le stesse `Credentials` ripetute in ogni voce, come vuole lo schema. Un commento XML dice
+quante cartelle sono state scelte e quali sono rimaste fuori, con i file che mancano.
+
+Ordine deterministico: cartella driver in ordine alfabetico (senza distinzione di maiuscole, come
+`list_folders()`), poi percorso relativo in ordine alfabetico — due generazioni con la stessa libreria danno
+byte identici. Tetto `MAX_SETUP_PATHS = 64`: ogni voce è una connessione SMB autenticata più una scansione
+ricorsiva, in serie, prima che il disco venga toccato. Oltre il tetto entrano per prime le cartelle che il
+tecnico ha abbinato apposta a questa immagine (`isos`, poi `groups`, poi `all`) e le altre finiscono in un
+commento XML e in un avviso nei log: niente troncamenti silenziosi. Un percorso UNC più lungo di
+`MAX_SETUP_UNC = 255` caratteri viene scartato con avviso, non scritto e basta.
+
+### Nessuna cartella utilizzabile
+Se l'elenco è vuoto **non si scrive il componente** `Microsoft-Windows-PnpCustomizationsWinPE`, e al suo posto
+va un commento XML che spiega perché, con i pacchetti scartati e i file che mancano. Un `<DriverPaths/>` vuoto
+è una sezione che alcune versioni del setup segnalano come errore di schema, e il ripiego "allora rimetto la
+radice" è esattamente il guasto: mai, per nessun motivo. Senza il componente l'installazione prosegue con i
+driver che Windows ha dentro — un'installazione senza driver aggiunti è un problema piccolo e visibile,
+un'installazione che si ferma a `0xC190011F` dopo due minuti e mezzo è un problema grosso e opaco.
+Il caso viene **gridato, non subito**: `log.warning` in `pixio.winprofile` alla generazione e in `pixio.boot`
+quando il file viene servito a un PC (con id della risposta, immagine, cartelle scartate e file mancanti),
+riquadro rosso nella pagina Driver e riga rossa nel Personalizzatore Windows.
+
+Attenzione al **caso a metà**, che è il più insidioso: elenco non vuoto ma senza la cartella RAID/VMD.
+L'installazione parte e magari riesce, ma il disco NVMe dietro un controller Intel VMD può non comparire.
+L'avviso ha lo stesso peso visivo del caso vuoto, e ricorda che il flag `setup_load` (drvload nel WinPE, meno
+esigente) può far vedere il disco anche quando la cartella non è offerta al file di risposta.
+
+Restano invariati: il commento sulla share SMB non attiva (`smb_export_enabled` spento), il comportamento con
+`drivers_from_pixio` spento (nessun blocco) e le **risposte statiche** caricate a mano, che Pixio non riscrive —
+se contengono un `DriverPaths` verso la radice della libreria il guasto resta, e il percorso
+`\\<ip>\pxe\drivers` continua a esistere.
+
+### API e GUI
+- `GET /api/drivers` espone per ogni cartella `setup_offer`, `setup_paths` (percorsi relativi, `""` = radice
+  della cartella), `setup_skipped` (`[{dir, inf, missing, lost, reason}]`, dove `lost` sono gli `.inf` sani che
+  si perdono insieme a quello incompleto perché stanno nella stessa directory) e `setup_truncated`; ogni `.inf`
+  espone `setup_missing`.
+- `GET /api/drivers/setup-paths[?iso=<slug>]` dà l'elenco già calcolato per un'immagine, con gli UNC veri.
+  `PATCH /api/drivers/folders[/<name>]` accetta `setup_offer`.
+- `render_autounattend(profile, server_ip, cfg, editions, iso)` e `save_as_answer(..., iso_slug)` ricevono la
+  voce di catalogo da `winprofile.iso_entry(slug)`; l'anteprima del profilo passa la stessa ISO, altrimenti
+  mostrerebbe un file diverso da quello che finisce sul PC.
+- Pagina Driver: riquadro **"Cosa riceve il programma di installazione"** in cima (si sceglie l'immagine e si
+  vedono i percorsi veri e i pacchetti scartati), pillola "al setup: N percorsi" su ogni scheda, elenco dei
+  percorsi in chiaro, un avviso per ogni pacchetto scartato con i file che mancano e i due rimedi ("Elimina
+  l'.inf incompleto", "Carica i file mancanti" puntato su quella sottocartella), selettore `auto` / `mai` /
+  `sempre` e, nel pannello dei file, la pillola rossa "non offerto al setup: manca <nome>" sulla riga dell'`.inf`
+  (cosa diversa da "manca <nome>", che parla del WinPE).
+- Pagina Personalizzatore Windows: la casella "Usa i driver caricati in Pixio" non promette più di aggiungere
+  `\\<ip>\pxe\drivers`, ma elenca le cartelle percorribili, con il dettaglio richiudibile dei percorsi.

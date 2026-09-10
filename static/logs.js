@@ -194,6 +194,19 @@
   const RIEP = [['pc', 'PC'], ['client', 'Indirizzo IP'], ['mac', 'MAC'], ['image', 'Immagine'],
     ['started', 'Avvio da rete'], ['esito', 'Esito di setup.exe']];
 
+  /* Diagnosi immediata del guasto della sezione 24: un pacchetto driver incompleto fa fallire
+     l'installazione con 0x80070002 e il setup non lo salta, aborta tutto. Se il log lo contiene lo
+     diciamo qui, con il collegamento alla pagina Driver: senza questa riga il guasto è un mistero. */
+  function driverInfHtml(d) {
+    const t = [(d.errors || []).join('\n'), d.content || ''].join('\n');
+    if (!/0x80070002/.test(t) || !/driver inf path|DriverInstall/i.test(t)) return '';
+    const m = t.match(/Received driver inf path \[([^\]]+)\]/i);
+    return `<div class="alert warn"><b>Un pacchetto driver incompleto ha fermato questa installazione.</b>
+      ${m ? `L'ultimo pacchetto che il programma di installazione ha provato a mettere in staging è <span class="mono">${esc(m[1])}</span>. ` : ''}
+      L'errore <span class="mono">0x80070002</span> è "file non trovato": l'.inf dichiara un file che nella sua cartella non c'è, e il setup non lo salta — chiude l'installazione (di solito con <span class="mono">0xC190011F</span>) senza toccare il disco.
+      Apri la <a href="#/driver">pagina Driver</a>: il riquadro in cima dice quali pacchetti Pixio non consegna al setup e quali file mancano a ognuno.</div>`;
+  }
+
   function detailHtml(d) {
     const righe = RIEP.filter(([k]) => d[k]).map(([k, lab]) => `<tr><th style="text-transform:none;letter-spacing:0">${esc(lab)}</th><td class="mono">${esc(d[k])}</td></tr>`).join('');
     const files = (d.file_list || []).map((f) => `<option value="${esc(f.name)}" ${f.name === d.file ? 'selected' : ''}>${esc(f.name)} (${esc(P.fmtBytes(f.size))})</option>`).join('');
@@ -202,6 +215,7 @@
         <tr><th style="text-transform:none;letter-spacing:0">File</th><td>${d.files} · ${esc(P.fmtBytes(d.size))}</td></tr></tbody></table></div>
       ${d.errors && d.errors.length ? `<div class="alert bad"><b>Righe di errore${d.error_file ? ' in ' + esc(d.error_file) : ''}</b>
         <pre class="code mono" style="margin-top:6px;white-space:pre-wrap">${esc(d.errors.join('\n'))}</pre></div>` : ''}
+      ${driverInfHtml(d)}
       <div class="actions" style="margin:10px 0 8px">
         <select class="inline-select" id="slog-file" aria-label="File da mostrare" style="flex:1 1 auto;min-width:0">${files}</select>
         <button class="btn small" type="button" id="slog-save">Scarica</button>

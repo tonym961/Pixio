@@ -538,6 +538,25 @@ def edition_target_warning(target, valore):
     return ""
 
 
+def iso_entry(slug):
+    """Voce di catalogo di una ISO ({slug, group, name, type}), oppure None se non c'è.
+
+    Serve alla generazione del file di risposta per sapere quali cartelle driver sono abbinate
+    all'immagine che sta partendo (apply_to). Senza catalogo si torna None e non si filtra nulla."""
+    slug = _txt(slug)
+    if not slug:
+        return None
+    try:
+        from . import catalog
+        e = (catalog.load() or {}).get("isos", {}).get(slug)
+    except Exception:  # noqa: BLE001 - senza catalogo si genera come se la ISO non si conoscesse
+        return None
+    if not isinstance(e, dict):
+        return None
+    return {"slug": slug, "group": e.get("group") or "", "name": e.get("name") or slug,
+            "type": e.get("type") or ""}
+
+
 def editions_for_iso(slug):
     """Edizioni note di una ISO del catalogo, dalla cache. [] se la ISO non c'è o non si sa nulla."""
     slug = _txt(slug)
@@ -1652,8 +1671,11 @@ def risolvi_nome_computer(nome):
     return (prefisso + casuale)[:MAX_COMPUTER]
 
 
-def _pass_windows_pe(root, st, arch, server_ip="", cfg=None):
-    """windowsPE: lingua del setup, LabConfig, disco, immagine, chiave di prodotto."""
+def _pass_windows_pe(root, st, arch, server_ip="", cfg=None, iso=None):
+    """windowsPE: lingua del setup, percorsi driver, LabConfig, disco, immagine, chiave di prodotto.
+
+    `iso` è la voce di catalogo che si sta avviando: serve a scegliere i percorsi driver abbinati a
+    quell'immagine (apply_to, docs/API.md, sezioni 15 e 24)."""
     sp = _pass(root, "windowsPE")
 
     intl = _component(sp, "Microsoft-Windows-International-Core-WinPE", arch)
@@ -1668,20 +1690,54 @@ def _pass_windows_pe(root, st, arch, server_ip="", cfg=None):
     # auditSystem e offlineServicing, e soprattutto in specialize la rete del sistema appena installato
     # puo' non essere ancora pronta, mentre in Windows PE la condivisione l'abbiamo appena montata noi.
     if st["drivers_from_pixio"]:
-        d = _driver_path(server_ip, cfg)
-        pnp = _component(sp, "Microsoft-Windows-PnpCustomizationsWinPE", arch)
-        if not d["attivo"]:
-            pnp.append(ET.Comment(" Per usare questa cartella serve l'opzione \"Installazione Windows "
-                                  "via rete\" attiva nelle impostazioni di Pixio (share SMB di sola "
-                                  "lettura), altrimenti il setup ignora il percorso "))
-        dp = _el(pnp, "DriverPaths")
-        pc = _add(dp, "PathAndCredentials")
-        pc.set("{%s}keyValue" % WCM, "1")
-        _el(pc, "Path", d["path"])
-        cred = _el(pc, "Credentials")
-        _el(cred, "Domain", d["domain"])
-        _el(cred, "Username", d["user"])
-        _el(cred, "Password", d["password"])
+        d = _driver_paths(server_ip, cfg, iso)
+        if not d["voci"]:
+            # Nessun componente e nessun DriverPaths vuoto: un percorso con dentro un pacchetto incompleto
+            # fermerebbe l'installazione con 0x80070002 prima ancora di toccare il disco, e un componente
+            # senza figli alcune versioni del setup lo segnalano come errore di schema. Senza il componente
+            # l'installazione va avanti con i driver che Windows ha dentro.
+            sp.append(_commento(
+                "Nessun percorso driver scritto: delle %d cartelle esaminate nella libreria di Pixio "
+                "nessuna e' percorribile senza incontrare un pacchetto incompleto. %s "
+                "Il programma di installazione mette in staging ogni .inf che trova nel percorso che "
+                "riceve e si ferma con 0x80070002 (file non trovato) al primo pacchetto incompleto, "
+                "quindi Pixio preferisce non passargli niente: l'installazione prosegue con i driver "
+                "che Windows ha dentro. Sistema le cartelle nella pagina Driver di Pixio."
+                % (d["cartelle"], _elenco_scartate(d["scartate"]))))
+            log.warning("driver: nessun percorso scritto nel file di risposta (%d cartelle esaminate)%s",
+                        d["cartelle"], (": " + _elenco_scartate(d["scartate"], 12)) if d["scartate"] else "")
+        else:
+            pnp = _component(sp, "Microsoft-Windows-PnpCustomizationsWinPE", arch)
+            if not d["attivo"]:
+                pnp.append(ET.Comment(" Per usare queste cartelle serve l'opzione \"Installazione Windows "
+                                      "via rete\" attiva nelle impostazioni di Pixio (share SMB di sola "
+                                      "lettura), altrimenti il setup ignora i percorsi "))
+            pnp.append(_commento(
+                "Percorsi driver scelti da Pixio per questa immagine: %d %s da %d %s della libreria. "
+                "Vengono elencate solo le cartelle in cui ogni .inf ha nel suo pacchetto i file che "
+                "dichiara: il setup percorre ogni percorso con le sue sottocartelle e si ferma con "
+                "0x80070002 (file non trovato) al primo pacchetto incompleto che incontra."
+                % (len(d["voci"]), "percorso" if len(d["voci"]) == 1 else "percorsi",
+                   d["offerte"], "cartella" if d["offerte"] == 1 else "cartelle")))
+            if d["scartate"]:
+                pnp.append(_commento("Non offerte al programma di installazione: "
+                                     + _elenco_scartate(d["scartate"])))
+            if d["fuori"]:
+                pnp.append(_commento(
+                    "Altri %d percorsi non sono stati scritti (tetto di %d voci o percorso piu' lungo di "
+                    "%d caratteri): vedi la pagina Driver di Pixio"
+                    % (len(d["fuori"]), d["tetto"], d["max_unc"])))
+            dp = _el(pnp, "DriverPaths")
+            # wcm:keyValue deve essere diverso per ogni voce: con piu' percorsi un valore fisso "1"
+            # produrrebbe un XML che il setup rifiuta
+            for i, percorso in enumerate(d["voci"], 1):
+                pc = _add(dp, "PathAndCredentials")
+                pc.set("{%s}keyValue" % WCM, str(i))
+                _el(pc, "Path", percorso)
+                cred = _el(pc, "Credentials")
+                _el(cred, "Domain", d["domain"])
+                _el(cred, "Username", d["user"])
+                _el(cred, "Password", d["password"])
 
     setup = _component(sp, "Microsoft-Windows-Setup", arch)
 
@@ -1762,20 +1818,68 @@ def _pass_windows_pe(root, st, arch, server_ip="", cfg=None):
     return sp
 
 
-def _driver_path(server_ip, cfg):
-    """Percorso UNC della libreria driver di Pixio e credenziali da usare per raggiungerla.
+def _driver_paths(server_ip, cfg, iso=None):
+    """Percorsi UNC da scrivere in DriverPaths e credenziali per raggiungerli (docs/API.md, sezione 24).
 
     La share di sola lettura \\\\<ip>\\pxe (cartella drivers) è quella che WinPE monta già per il setup:
     è protetta da utente e password, quindi servono le credenziali dentro l'XML. Se l'esportazione SMB
-    per Windows non è attiva il percorso viene scritto lo stesso, con un commento che spiega cosa fare.
+    per Windows non è attiva i percorsi vengono scritti lo stesso, con un commento che spiega cosa fare.
+
+    Non si scrive più la radice della libreria: il setup percorre il percorso che riceve con tutte le sue
+    sottocartelle e al primo pacchetto incompleto si ferma con 0x80070002, abortendo l'installazione
+    intera. Si elencano quindi soltanto le cartelle percorribili per intero, filtrate per l'immagine che
+    si sta avviando (`iso`: voce di catalogo con "slug" e "group"; None = nessun filtro).
+    Ritorna {"voci": [percorsi UNC], "scartate": [...], "fuori": [...], "cartelle": n, "offerte": n,
+    "user", "password", "domain", "attivo"}.
     """
     ip = _txt(server_ip) or "127.0.0.1"
     win = (cfg or {}).get("windows", {}) if isinstance(cfg, dict) else {}
     utente = _txt(win.get("smb_user")) or "pxe"
     password = _pw(win.get("smb_password"))
     attivo = bool(win.get("smb_export_enabled"))
-    return {"path": f"\\\\{ip}\\pxe\\drivers", "user": utente, "password": password,
-            "domain": ip, "attivo": attivo}
+    scelta = {"paths": [], "skipped": [], "dropped": [], "folders": 0, "offered": 0}
+    tetto, max_unc = 64, 255
+    try:
+        from . import drivers
+        tetto, max_unc = drivers.MAX_SETUP_PATHS, drivers.MAX_SETUP_UNC
+        scelta = drivers.setup_paths(ip, iso)
+    except Exception as e:  # noqa: BLE001 - una libreria illeggibile non deve lasciare il PC senza file
+        log.error("percorsi driver non calcolabili (%s): nessun DriverPaths nel file di risposta", e)
+    return {"voci": [v["unc"] for v in scelta["paths"]], "scartate": scelta["skipped"],
+            "fuori": scelta["dropped"], "cartelle": scelta["folders"], "offerte": scelta["offered"],
+            "tetto": tetto, "max_unc": max_unc,
+            "user": utente, "password": password, "domain": ip, "attivo": attivo}
+
+
+def _commento(testo):
+    """Commento XML sicuro: "--" dentro un commento è vietato dallo standard e farebbe fallire la rilettura."""
+    t = " ".join(str(testo or "").split()).replace("--", "-")
+    return ET.Comment(" " + t.strip(" -") + " ")
+
+
+def _elenco_scartate(scartate, quante=6):
+    """Riga leggibile delle cartelle lasciate fuori, per il commento nell'XML e per i log."""
+    voci = []
+    for x in scartate:
+        if x.get("reason") == "incompleto" and x.get("inf"):
+            voci.append("%s\\%s (manca %s)" % (x.get("folder", ""), x["inf"].replace("/", "\\"),
+                                                ", ".join(x.get("missing") or []) or "un file dichiarato"))
+        elif x.get("reason") == "mai":
+            voci.append("%s (esclusa a mano dal setup)" % x.get("folder", ""))
+        elif x.get("reason") == "nome non valido":
+            voci.append("%s (nome cartella non valido)" % x.get("folder", ""))
+        elif x.get("reason") == "percorso troppo lungo":
+            voci.append("%s\\%s (percorso troppo lungo)" % (x.get("folder", ""),
+                                                             str(x.get("dir") or "").replace("/", "\\")))
+        elif x.get("reason") == "troppo grande":
+            voci.append("%s (cartella troppo grande da esaminare)" % x.get("folder", ""))
+    resto = len(voci) - quante
+    voci = voci[:quante]
+    if resto == 1:
+        voci.append("e un'altra")
+    elif resto > 1:
+        voci.append("e altre %d" % resto)
+    return "; ".join(voci)
 
 
 def _pass_specialize(root, st, arch, server_ip, cfg, em=None):
@@ -1978,7 +2082,7 @@ def _pass_oobe(root, st, arch, em=None):
     return sp
 
 
-def render_autounattend(profile, server_ip="", cfg=None, editions=None):
+def render_autounattend(profile, server_ip="", cfg=None, editions=None, iso=None):
     """Genera l'autounattend.xml del profilo. Ritorna una stringa indentata e verificata.
 
     `profile` è il profilo completo ({name, settings}) oppure le sole impostazioni.
@@ -1986,6 +2090,9 @@ def render_autounattend(profile, server_ip="", cfg=None, editions=None):
     `editions` sono le edizioni dell'immagine per cui si sta generando ([{index, name}], di norma
     da catalog.editions_of): quando si sa su quale ISO andrà il file, un'edizione che lì non esiste
     non viene scritta (docs/API.md, sezione 19). Senza `editions` non cambia niente rispetto a prima.
+    `iso` è la voce di catalogo che si sta avviando ({slug, group}, di norma da iso_entry(slug)): con
+    quella si scrivono soltanto i percorsi driver abbinati a quell'immagine e percorribili dal
+    programma di installazione (docs/API.md, sezione 24). Senza `iso` non si filtra per immagine.
     """
     # la generazione non fa fallire niente per colpa delle ottimizzazioni non compatibili con il
     # tipo di Windows del profilo: le salta e basta (docs/API.md, sezione 11)
@@ -2015,7 +2122,7 @@ def render_autounattend(profile, server_ip="", cfg=None, editions=None):
     # una sola memoria dei comandi generati per tutti i passaggi: così i campi booleani storici
     # e le ottimizzazioni equivalenti non producono due volte la stessa riga
     em = _Emessi()
-    _pass_windows_pe(root, st, arch, server_ip, cfg)
+    _pass_windows_pe(root, st, arch, server_ip, cfg, iso)
     _pass_specialize(root, st, arch, server_ip, cfg, em)
     _pass_oobe(root, st, arch, em)
 
@@ -2176,14 +2283,17 @@ def save_as_answer(profile_id, answer_id=None, server_ip="", iso_slug=""):
 
     Con `answer_id` aggiorna una risposta esistente, altrimenti ne crea una nuova.
     Con `iso_slug` il file viene generato per quella ISO: l'edizione da installare viene
-    confrontata con quelle che l'immagine contiene davvero (docs/API.md, sezione 19).
+    confrontata con quelle che l'immagine contiene davvero (docs/API.md, sezione 19) e i percorsi
+    driver sono quelli abbinati a quell'immagine (sezione 24). Il file salvato resta comunque una
+    fotografia: quello che il PC riceve davvero lo rigenera /boot/answer/<slug>/<id>/autounattend.xml.
     Ritorna `{ok, answer_id, answer_name}`.
     """
     answers = _answers()
     prof = get(check_id(profile_id))
     if not prof:
         raise FileNotFoundError("Profilo non trovato")
-    xml = render_autounattend(prof, server_ip, editions=editions_for_iso(iso_slug))
+    xml = render_autounattend(prof, server_ip, editions=editions_for_iso(iso_slug),
+                              iso=iso_entry(iso_slug))
     # `profile` lega la risposta al profilo che l'ha generata: serve agli avvisi sull'edizione e
     # alla tendina della GUI, che così sa da quale ISO leggere le edizioni
     if answer_id:

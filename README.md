@@ -28,6 +28,10 @@ I PC recenti hanno bisogno di driver Ethernet e storage (Intel VMD/RST, NVMe RAI
 Pagina **Driver** della GUI (o share `\\<ip>\drivers`): una cartella per pacchetto con i file estratti (.inf .sys .cat).
 - "Carica in WinPE all'avvio": i file vengono iniettati via wimboot e caricati con `drvload` prima della rete.
 - "Carica prima del setup di Windows": `drvload` dalla share prima di `setup.exe` (richiede "Installazione Windows via rete").
+- "Offerta al programma di installazione": il file di risposta elenca al setup solo le cartelle in cui ogni
+  `.inf` ha nel suo pacchetto i file che dichiara. Un pacchetto incompleto il setup non lo salta: lo fa
+  fallire con `0x80070002` e l'installazione si ferma dopo pochi minuti senza toccare il disco, quindi
+  Pixio non glielo passa e lo segnala nella pagina Driver (docs/API.md, sezione 24).
 
 ## Tipi di ISO riconosciuti
 Windows (installazione via wimboot), WinPE (Hiren's ecc.), Ubuntu e derivate (casper), Debian live / Clonezilla / GParted,

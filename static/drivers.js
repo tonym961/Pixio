@@ -20,13 +20,23 @@
    winpe_shadowed (file dichiarati che portano il nome di un file di sistema del WinPE e quindi non si
    iniettano) e winpe_better (un'altra copia dello stesso .inf è un set coerente: si dice in quale cartella).
    Senza quei file drvload fallisce e il disco non si vede, errore che altrimenti si scopre solo davanti a un
-   PC in installazione. */
+   PC in installazione.
+
+   Cosa riceve il programma di installazione (docs/API.md, sezione 24): il file di risposta non punta piu’
+   alla radice della libreria, ma elenca le cartelle che il setup puo’ percorrere per intero. Un pacchetto
+   che dichiara un file che non c’e’ non viene saltato dal setup: lo fa fallire con 0x80070002 e
+   l’installazione si ferma dopo pochi minuti senza toccare il disco. Il server manda per ogni cartella
+   setup_paths (i percorsi che finiranno nell’XML), setup_skipped (i pacchetti lasciati fuori, con i file che
+   mancano e gli .inf sani che si perdono con loro) e setup_offer (auto / mai / sempre); il riquadro in cima
+   alla pagina mostra, immagine per immagine, esattamente quello che il PC riceverebbe adesso. */
 'use strict';
 (function () {
   const P = window.Pixio;
   const esc = P.esc; const $ = P.$; const $$ = P.$$;
 
-  const D = { data: null, root: null, timer: null, busy: new Set(), openFolder: null, sel: new Set() };
+  const D = { data: null, root: null, timer: null, busy: new Set(), openFolder: null, sel: new Set(),
+              // riquadro "Cosa riceve il programma di installazione": immagine scelta e risposta del server
+              setup: { iso: '', data: null, loading: false, error: '', sig: null } };
   const CHUNK_DEFAULT = 8 * 1024 * 1024;
   const MAX_INJECT = 256 * 1024 * 1024;
   // estensioni accettate dal server per i file driver
@@ -56,6 +66,13 @@
     isos: { label: 'Solo alcune immagini', help: 'Solo le ISO scelte, una per una.' },
   };
   const APPLY_MODES = ['all', 'groups', 'isos'];
+  // Se la cartella puo’ finire fra i percorsi driver del file di risposta (campo setup_offer, sezione 24)
+  const OFFER = {
+    auto: { label: 'Automatico', help: 'Pixio offre al setup le sottocartelle in cui ogni .inf ha nel suo pacchetto i file che dichiara, e lascia fuori le altre. È la scelta giusta quasi sempre.' },
+    mai: { label: 'Mai', help: 'Questa cartella non finisce mai nel file di risposta. Serve per i driver che servono solo al WinPE (drvload) o per mettere da parte un pacchetto senza cancellarlo.' },
+    sempre: { label: 'Sempre', help: 'Scrive la radice della cartella così com’è, senza controllare i pacchetti. Serve solo se il controllo di Pixio sbaglia su un pacchetto che invece funziona.' },
+  };
+  const OFFER_MODES = ['auto', 'mai', 'sempre'];
 
   const folderUrl = (name) => '/api/drivers/folders/' + encodeURIComponent(name);
   const fileUrl = (name, rel) => folderUrl(name) + '/files/' + String(rel).split('/').map(encodeURIComponent).join('/');
@@ -103,6 +120,14 @@
     return a.mode !== 'all' && !(a.mode === 'groups' ? a.groups : a.isos).length;
   };
   const active = (f) => !!(f.winpe_inject || f.setup_load);
+  /* --- percorsi offerti al programma di installazione (sezione 24) ----------------------------- */
+  /* Radice della share di sola lettura da cui il setup legge i driver: la stessa che scrive l’XML. */
+  const pxePath = () => '\\\\' + ((P.state.status && P.state.status.server_ip) || 'pixio') + '\\pxe\\drivers';
+  const offerOf = (f) => (OFFER_MODES.indexOf(f && f.setup_offer) >= 0 ? f.setup_offer : 'auto');
+  const setupPaths = (f) => (Array.isArray(f && f.setup_paths) ? f.setup_paths : []);
+  const setupSkipped = (f) => (Array.isArray(f && f.setup_skipped) ? f.setup_skipped : []).filter((x) => x && x.reason === 'incompleto' && x.inf);
+  const setupUnc = (f, rel) => pxePath() + '\\' + f.name + (rel ? '\\' + String(rel).replace(/\//g, '\\') : '');
+  const setupMissing = (x) => (Array.isArray(x && x.setup_missing) ? x.setup_missing : []);
   /* Sottocartelle di altre architetture (SKIP_DIRS del server): i loro file non vengono mai iniettati. */
   const ARCH_RE = /(^|\/)(x86|i386|ia64|arm|arm64|win32|32bit|wow64)\//i;
   /* Unione di più elenchi di nomi file, senza doppioni e in ordine. */
@@ -252,13 +277,13 @@
       if (added) this.pump();
       return added;
     },
-    add(folder, files) {
+    add(folder, files, subdir) {
       const list = Array.from(files || []);
       const bad = list.filter((f) => !isAllowed(f.name));
       const empty = list.filter((f) => isAllowed(f.name) && !f.size);
       if (bad.length) P.toast(`${bad.length === 1 ? bad[0].name + ': tipo di file non ammesso' : plural(bad.length, 'file saltato', 'file saltati') + ': tipo non ammesso'} (${EXT.join(', ')})`, 'warn', 6000);
       if (empty.length) P.toast(`${plural(empty.length, 'file vuoto saltato', 'file vuoti saltati')}`, 'warn');
-      const n = this.addMany(list.filter((f) => isAllowed(f.name) && f.size).map((f) => ({ folder, file: f, subdir: '' })), { silent: false, folders: [folder] });
+      const n = this.addMany(list.filter((f) => isAllowed(f.name) && f.size).map((f) => ({ folder, file: f, subdir: subdir || '' })), { silent: false, folders: [folder] });
       if (!n && !bad.length && !empty.length) P.toast('Nessun file nuovo da caricare (sono già in coda)', 'warn');
     },
     retry(u) { if (u.status === 'error') { u.status = 'queued'; this.batch.errors = Math.max(0, this.batch.errors - 1); this.notify(); this.pump(); } },
@@ -273,12 +298,14 @@
         }
       } finally { this.running = false; this.notify(); load(); }
     },
-    pick(folder) {
+    /* `subdir` (facoltativa) manda i file in una sottocartella: la usa "Carica i file mancanti"
+       degli avvisi, che punta esattamente alla cartella dell'.inf incompleto. */
+    pick(folder, subdir) {
       if (webUploadOff()) { P.toast('Upload dal browser disattivato: attivalo in Impostazioni → Libreria locale', 'warn'); return; }
       const inp = document.createElement('input');
       inp.type = 'file'; inp.multiple = true; inp.hidden = true; inp.accept = EXT.map((e) => '.' + e).join(',');
       document.body.appendChild(inp);
-      inp.addEventListener('change', () => { this.add(folder, inp.files); inp.remove(); });
+      inp.addEventListener('change', () => { this.add(folder, inp.files, subdir); inp.remove(); });
       inp.click();
     },
   };
@@ -539,6 +566,12 @@
       const names = new Set(D.data.folders.map((f) => f.name));
       Array.from(D.sel).forEach((n) => { if (!names.has(n)) D.sel.delete(n); });
       render();
+      // il riquadro in cima si ricalcola solo quando la libreria e' davvero cambiata: la pagina si
+      // aggiorna da sola ogni 8 secondi e ogni chiamata rilegge tutte le cartelle
+      const sig = D.data.folders.map((f) => [f.name, f.count, f.size, f.setup_offer,
+        JSON.stringify(f.apply_to || null), (f.setup_paths || []).join('|'),
+        (f.setup_skipped || []).length].join(':')).join(';');
+      if (sig !== D.setup.sig) { D.setup.sig = sig; loadSetup(); }
     } catch (e) {
       if (e.status === 401) return;
       const box = $('#drv-list', D.root);
@@ -548,7 +581,8 @@
   }
   function editing() {
     const a = document.activeElement;
-    return !!(a && D.root && D.root.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName));
+    // anche la tendina delle immagini del riquadro in cima: un aggiornamento la richiuderebbe in mano
+    return !!(a && D.root && D.root.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
   }
 
   // ---------------------------------------------------------------- rendering
@@ -572,6 +606,58 @@
   const infWhere = (rel) => (String(rel || '').includes('/') ? ` (in ${rel.slice(0, rel.lastIndexOf('/'))})` : '');
   /* Nome della cartella di una copia, per gli avvisi: "" = radice della cartella driver. */
   const copyWhere = (dir) => (dir ? `nella sottocartella ${dir}` : 'nella radice della cartella');
+
+  /* Pillola di stato sulla scheda: quanti percorsi di questa cartella finiranno nel file di risposta. */
+  function setupPill(f) {
+    if (offerOf(f) === 'mai') return '<span class="pill neutral" title="Questa cartella non viene mai offerta al programma di installazione (setup_offer: mai)">al setup: mai</span>';
+    const n = setupPaths(f).length; const sk = setupSkipped(f).length;
+    const cls = !n ? 'bad' : (sk ? 'warn' : 'ok');
+    const t = !n ? 'al setup: nessun percorso'
+      : `al setup: ${plural(n, 'percorso', 'percorsi')}${sk ? ` · ${plural(sk, 'pacchetto scartato', 'pacchetti scartati')}` : ''}`;
+    return `<span class="pill ${cls}" title="Cartelle di qui dentro che il file di risposta elenca al programma di installazione. Una cartella con dentro un pacchetto incompleto non viene offerta: il setup si fermerebbe con 0x80070002.">${esc(t)}</span>`;
+  }
+
+  /* Riquadro "Offerta al programma di installazione": i percorsi veri, i pacchetti scartati con il
+     perché e i due modi per rimediare, più il selettore auto / mai / sempre. */
+  function setupHtml(f) {
+    const off = D.busy.has(f.name) || !f.valid_name ? 'disabled' : '';
+    const modo = offerOf(f);
+    const paths = setupPaths(f);
+    const sk = setupSkipped(f);
+    const modi = OFFER_MODES.map((m) => `<button class="btn small${modo === m ? ' primary' : ''}" type="button" data-offer="${m}" aria-pressed="${modo === m ? 'true' : 'false'}" title="${esc(OFFER[m].help)}" ${off}>${esc(OFFER[m].label)}</button>`).join('');
+    let elenco = '';
+    if (modo === 'mai') {
+      elenco = '<div class="hint">Nessun percorso: questa cartella è esclusa a mano dal file di risposta. I driver di qui dentro possono comunque arrivare al WinPE con gli interruttori qui sopra.</div>';
+    } else if (paths.length) {
+      elenco = `<div class="hint">${plural(paths.length, 'percorso scritto', 'percorsi scritti')} nel file di risposta:</div>`
+        + paths.map((rel) => `<div class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(setupUnc(f, rel))}</div>`).join('');
+    } else if (f.inf_count) {
+      elenco = '<div class="hint">Nessun percorso: in ogni sottocartella di questa cartella c’è almeno un pacchetto incompleto. Nessun driver di qui dentro verrà installato.</div>';
+    } else {
+      elenco = '<div class="hint">Nessun percorso: qui dentro non c’è nessun file .inf da installare.</div>';
+    }
+    const avvisi = sk.map((m) => {
+      const uno = (m.missing || []).length === 1;
+      const dove = m.dir ? ` (in ${m.dir})` : '';
+      const perso = (m.lost || []).length
+        ? ` E così si perde anche ${m.lost.join(', ')}, che invece ${m.lost.length === 1 ? 'è completo' : 'sono completi'}: conviene davvero eliminare l’.inf incompleto.` : '';
+      const testo = `${infName(m.inf)}${dove} non viene consegnato al programma di installazione: dichiara ${uno ? 'un file che nella sua cartella non c’è' : 'file che nella sua cartella non ci sono'} — ${uno ? 'manca' : 'mancano'} ${(m.missing || []).join(', ')}. `
+        + 'Un pacchetto incompleto il setup non lo salta: si ferma con l’errore 0x80070002 e l’installazione fallisce dopo pochi minuti senza toccare il disco, quindi Pixio non gli passa questa cartella e nessun driver che sta qui dentro verrà installato.'
+        + perso + ' Rimetti nella cartella i file che mancano (di solito stanno nel pacchetto completo del produttore), oppure elimina l’.inf incompleto.';
+      return `<div class="alert warn"><div>${esc(testo)}</div>
+        <div class="actions" style="margin-top:8px"><button class="btn small danger" type="button" data-skip-del="${esc(m.inf)}">Elimina l’.inf incompleto</button><button class="btn small" type="button" data-skip-up="${esc(m.dir || '')}" ${webUploadOff() ? 'disabled' : ''}>Carica i file mancanti</button></div></div>`;
+    }).join('');
+    return `<div class="drv-apply">
+      <div class="drv-apply-head">
+        <div><div class="tt">Offerta al programma di installazione</div><div class="td">Quali cartelle di qui dentro il file di risposta elenca al setup di Windows. Il setup percorre ogni percorso con le sue sottocartelle e si ferma al primo pacchetto incompleto che trova.</div></div>
+        <div class="actions" role="group" aria-label="Offerta al setup: ${esc(f.name)}">${modi}</div>
+      </div>
+      <div class="drv-apply-list">${elenco}</div>
+      ${modo === 'sempre' ? '<div class="alert bad">Pixio scriverà questa cartella così com’è, senza controllare i pacchetti. Se dentro c’è un pacchetto incompleto, tutte le installazioni che usano questa immagine falliranno.</div>' : ''}
+      ${avvisi}
+      ${f.setup_truncated ? '<div class="alert warn">Questa cartella ha troppi file o troppe sottocartelle per essere esaminata a ogni avvio: Pixio non la offre al programma di installazione. Dividila in cartelle più piccole.</div>' : ''}
+    </div>`;
+  }
 
   function warningsHtml(f) {
     const w = [];
@@ -632,7 +718,7 @@
           <label class="drv-pick" title="Seleziona la cartella per le azioni su più cartelle"><input type="checkbox" data-pick ${D.sel.has(f.name) ? 'checked' : ''} aria-label="Seleziona la cartella ${esc(f.name)}"></label>
           <div>
             <div class="drv-name"><span>${esc(f.name)}</span>${f.valid_name ? '' : P.pill('nome non valido', 'bad')}${f.winpe_inject ? P.pill('WinPE', 'acc') : ''}${f.setup_load ? P.pill('setup', 'acc') : ''}${P.pill(applySummary(f), applyEmpty(f) ? 'warn' : (applyOf(f).mode === 'all' ? 'neutral' : 'acc'))}</div>
-            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File che finiscono davvero nel WinPE (.inf/.sys/.cat e i file che gli .inf dichiarano), esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
+            <div class="drv-meta"><span>${f.count} file · ${P.fmtBytes(f.size)}</span>${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? `<span class="pill warn" title="File presenti nella cartella che non servono all'installazione del driver (.exe, .txt, .ini, …)">${ign} non usati</span>` : ''}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}${setupPill(f)}<span class="pill ${f.excluded_files ? 'warn' : 'neutral'}" title="File che finiscono davvero nel WinPE (.inf/.sys/.cat e i file che gli .inf dichiarano), esclusioni comprese${cand ? ` (su ${cand} possibili)` : ''}">WinPE: ${f.winpe_files}${cand && cand !== f.winpe_files ? ' su ' + cand : ''} file · ${P.fmtBytes(f.winpe_size)}${f.excluded_files ? ` · ${f.excluded_files} esclusi` : ''}</span></div>
           </div>
         </div>
         <div class="actions">
@@ -646,6 +732,7 @@
       <div class="toggle-row"><div><div class="tt">${esc(FLAGS.winpe_inject.label)}</div><div class="td">${esc(FLAGS.winpe_inject.help)}</div></div>${sw('winpe_inject')}</div>
       <div class="toggle-row"><div><div class="tt">${esc(FLAGS.setup_load.label)}</div><div class="td">${esc(FLAGS.setup_load.help)}</div></div>${sw('setup_load')}</div>
       ${applyHtml(f)}
+      ${setupHtml(f)}
       <div class="drv-note"><label for="note-${f.name.replace(/\W/g, '_')}">Nota</label><input class="inline-input" id="note-${f.name.replace(/\W/g, '_')}" data-note value="${esc(f.note || '')}" maxlength="200" placeholder="es. Intel I225-V 2.5G, PC dell'aula 2 (salvata quando esci dal campo)" ${f.valid_name ? '' : 'disabled'}></div>
       <div class="uploads drv-uploads" data-uploads="${esc(f.name)}" hidden></div>
       <div class="drv-drop">Trascina qui i file o le sottocartelle del driver (anche uno .zip: viene estratto sul server) per caricarli in questa cartella</div>
@@ -679,6 +766,59 @@
       <div class="drv-bulk-names hint">${esc(names.join(', '))}</div></div>`;
   }
 
+  /* Riquadro "Cosa riceve il programma di installazione" (docs/API.md, sezione 24).
+     È il pezzo che rende il guasto verificabile senza avviare un PC: prima non c'era modo di sapere
+     cosa il setup avrebbe trovato. */
+  function renderSetup() {
+    if (!D.root) return;
+    const box = $('#drv-setup', D.root); if (!box) return;
+    const isos = choices().isos;
+    const d = D.setup.data;
+    const sel = `<select id="drv-setup-iso" aria-label="Immagine per cui vedere i driver consegnati">
+      <option value=""${D.setup.iso ? '' : ' selected'}>Tutte le cartelle (senza filtro immagine)</option>
+      ${isos.map((i) => `<option value="${esc(i.slug)}"${D.setup.iso === i.slug ? ' selected' : ''}>${esc(i.name)}${i.group ? ' — ' + esc(i.group) : ''}</option>`).join('')}
+    </select>`;
+    let corpo = '<div class="hint">Caricamento…</div>';
+    if (D.setup.error) corpo = `<div class="alert warn">${esc(D.setup.error)}</div>`;
+    else if (d) {
+      const paths = Array.isArray(d.paths) ? d.paths : [];
+      const sk = (Array.isArray(d.skipped) ? d.skipped : []).filter((x) => x && x.reason === 'incompleto');
+      const raid = sk.some((x) => /raid|vmd|iastor|nvme|ahci/i.test(String(x.folder) + '/' + String(x.inf)));
+      corpo = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          ${P.pill(paths.length ? plural(paths.length, 'percorso consegnato', 'percorsi consegnati') : 'nessun percorso consegnato', paths.length ? 'ok' : 'bad')}
+          ${sk.length ? P.pill(plural(sk.length, 'pacchetto scartato', 'pacchetti scartati'), 'warn') : ''}
+          ${P.pill(plural(Number(d.folders) || 0, 'cartella esaminata', 'cartelle esaminate'), 'neutral')}
+          ${d.truncated ? P.pill('elenco troncato', 'warn') : ''}</div>
+        ${paths.length ? paths.map((x) => `<div class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.unc)}</div>`).join('')
+          : `<div class="alert bad">Con questa scelta il file di risposta non conterrà nessun percorso driver: l’installazione partirà con i soli driver che Windows ha dentro. È comunque meglio di prima (l’installazione non si ferma più con 0xC190011F), ma se il disco è dietro un controller RAID/VMD potrebbe non comparire nella schermata di scelta del disco.</div>`}
+        ${sk.length ? `<div class="hint" style="margin-top:8px">Pacchetti lasciati fuori, con i file che mancano:</div>${sk.map((x) => `<div class="hint mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.folder + '\\' + String(x.inf).replace(/\//g, '\\'))} — ${esc((x.missing || []).join(', '))}</div>`).join('')}` : ''}
+        ${raid ? '<div class="alert bad" style="margin-top:8px">Fra i pacchetti scartati ce n’è almeno uno di archiviazione (RAID/VMD/NVMe): completa quel pacchetto con i file che mancano, altrimenti su un PC con controller Intel VMD il disco potrebbe non comparire. In alternativa attiva "Carica prima del setup di Windows" per quella cartella.</div>' : ''}`;
+    }
+    box.innerHTML = `<div class="ph" style="margin:0 0 8px"><div><h3 style="margin:0">Cosa riceve il programma di installazione</h3>
+        <div class="sub">Le cartelle che il file di risposta elenca al setup di Windows. Ci finiscono solo quelle in cui ogni <span class="mono">.inf</span> ha nel suo pacchetto i file che dichiara: un pacchetto incompleto non viene saltato dal setup, lo fa fallire con <span class="mono">0x80070002</span>.</div></div>
+        <div class="actions">${sel}</div></div>${corpo}`;
+    const s2 = $('#drv-setup-iso', D.root);
+    if (s2) s2.onchange = () => { D.setup.iso = s2.value; loadSetup(); };
+  }
+
+  async function loadSetup() {
+    if (!D.root) return;
+    D.setup.loading = true; D.setup.error = '';
+    try {
+      D.setup.data = await P.get('/api/drivers/setup-paths' + (D.setup.iso ? '?iso=' + encodeURIComponent(D.setup.iso) : ''));
+    } catch (e) {
+      if (e.status === 401) return;
+      if (e.status === 404 && D.setup.iso) {   // l'immagine scelta non c'è più nel catalogo
+        D.setup.iso = ''; D.setup.loading = false;
+        return loadSetup();
+      }
+      D.setup.data = null;
+      D.setup.error = 'Non riesco a sapere cosa riceverà il programma di installazione: ' + e.message;
+    }
+    D.setup.loading = false;
+    renderSetup();
+  }
+
   function render() {
     if (!D.root) return;
     const d = D.data || {}; const folders = d.folders || [];
@@ -700,6 +840,7 @@
       box.innerHTML = `<div class="drv-list">${folders.map(folderHtml).join('')}</div>`;
     }
     renderBulk();
+    renderSetup();
     renderQueue();
     renderUploads();
     if (D.openFolder && P.drawer.isOpen()) {
@@ -766,6 +907,26 @@
     D.busy.delete(name);
     render();
   }
+  /* --- offerta al programma di installazione: salvataggio del flag ----------------------------- */
+  async function setOffer(name, mode) {
+    const f = findFolder(name); if (!f || OFFER_MODES.indexOf(mode) < 0 || offerOf(f) === mode) return;
+    if (mode === 'sempre') {
+      const ok = await P.confirm('Pixio scriverà questa cartella nel file di risposta senza controllare i pacchetti. Se dentro c’è un .inf incompleto, tutte le installazioni che usano questa cartella falliranno con 0x80070002. Continuare?',
+                                 { title: 'Offri sempre al setup', ok: 'Offri sempre', danger: true });
+      if (!ok) return;
+    }
+    D.busy.add(name); render();
+    try {
+      const r = await P.api('PATCH', folderUrl(name), { setup_offer: mode });
+      if (r && r.folder) Object.assign(f, r.folder); else f.setup_offer = mode;
+      P.toast(`"${name}": offerta al setup ${OFFER[mode].label.toLowerCase()}`);
+    } catch (e) { P.fail(e); }
+    D.busy.delete(name);
+    render();
+    D.setup.sig = null;
+    loadSetup();
+  }
+
   function setApplyMode(name, mode) {
     const f = findFolder(name); if (!f || APPLY_MODES.indexOf(mode) < 0) return;
     const a = applyOf(f);
@@ -975,11 +1136,14 @@
         ? ` <span class="pill warn" title="File dichiarati da questo .inf che non finiranno nel WinPE (non stanno nella sua cartella, o non ci sono proprio): senza di loro drvload non carica il driver">manca ${esc(mancanti.join(', '))}</span>` : '';
       const ombra = Array.isArray(x.inf_shadowed) && x.inf_shadowed.length
         ? ` <span class="pill warn" title="File dichiarati da questo .inf che hanno il nome di un file di sistema del WinPE: iniettarli lo sostituirebbe, quindi restano fuori">già nel WinPE: ${esc(x.inf_shadowed.join(', '))}</span>` : '';
+      // sezione 24: quello che manca al programma di installazione, che e' piu' esigente del WinPE
+      const nonOfferto = setupMissing(x).length
+        ? ` <span class="pill bad" title="File che questo pacchetto promette di copiare e che nella sua cartella non ci sono: il programma di installazione si fermerebbe con 0x80070002, quindi Pixio non offre al setup la cartella che contiene questo .inf">non offerto al setup: ${esc(setupMissing(x).join(', '))}</span>` : '';
       const tag = !isCand ? (ARCH_RE.test(x.name) && WINPE_RE.test(x.name) ? ' <span class="pill neutral" title="Sta in una sottocartella di un\'altra architettura (x86, arm…): nel WinPE a 64 bit non serve">altra architettura</span>' : '')
         : (x.excluded ? ' <span class="pill warn" title="Escluso a mano: non viene iniettato nel WinPE">escluso</span>'
           : (inWinpe ? ' ' + P.pill('WinPE', 'acc')
             : ' <span class="pill neutral" title="Un altro file con lo stesso nome ha la precedenza: nel WinPE i nomi sono tutti nella stessa cartella">doppione</span>'));
-      return `<tr class="${use ? '' : 'drv-unused'}${x.excluded ? ' drv-excluded' : ''}"><td class="num">${box}</td><td><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.name)}</span>${tag}${manca}${ombra}${use ? '' : ' <span class="pill neutral" title="Estensione che non serve a installare il driver: resta nella cartella ma non viene usata">non usato</span>'}</td><td class="num">${P.fmtBytes(x.size)}</td><td class="num hint">${esc(P.fmtDate(x.mtime))}</td><td class="actions-cell"><button class="btn small danger" type="button" data-file="${esc(x.name)}" aria-label="Elimina ${esc(x.name)}">Elimina</button></td></tr>`;
+      return `<tr class="${use ? '' : 'drv-unused'}${x.excluded ? ' drv-excluded' : ''}"><td class="num">${box}</td><td><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${esc(x.name)}</span>${tag}${manca}${ombra}${nonOfferto}${use ? '' : ' <span class="pill neutral" title="Estensione che non serve a installare il driver: resta nella cartella ma non viene usata">non usato</span>'}</td><td class="num">${P.fmtBytes(x.size)}</td><td class="num hint">${esc(P.fmtDate(x.mtime))}</td><td class="actions-cell"><button class="btn small danger" type="button" data-file="${esc(x.name)}" aria-label="Elimina ${esc(x.name)}">Elimina</button></td></tr>`;
     }).join('');
     const ign = Number(f.ignored_files || 0);
     const use = f.useful_files === undefined ? null : Number(f.useful_files);
@@ -989,6 +1153,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${P.pill(f.count + ' file', 'neutral')}${use === null ? '' : P.pill(use + ' utili', use ? 'acc' : 'neutral')}${ign ? P.pill(ign + ' non usati', 'warn') : ''}${P.pill(P.fmtBytes(f.size), 'neutral')}${P.pill('.inf: ' + f.inf_count, f.inf_count ? 'acc' : 'neutral')}${f.winpe_inject ? P.pill(FLAGS.winpe_inject.label, 'ok') : ''}${f.setup_load ? P.pill(FLAGS.setup_load.label, 'ok') : ''}</div>
         <div class="hint" style="margin-top:8px">Percorso da Windows: <span class="mono">${esc(sharePath())}\\${esc(f.name)}</span>. I file con l'etichetta <b>WinPE</b> sono quelli iniettati all'avvio quando "${esc(FLAGS.winpe_inject.label)}" è attivo: i .inf/.sys/.cat e i file (anche .dll o .exe) che un .inf della stessa cartella dichiara come propri. Quelli marcati <b>non usato</b> restano sul disco ma non servono a installare il driver.</div>
         <div class="hint" style="margin-top:6px">Si applica a: <b>${esc(applySummary(f))}</b>${applyEmpty(f) ? ' — nessuna immagine riceverà questi driver' : ''}. Si cambia dalla scheda della cartella.</div>
+        <div class="hint" style="margin-top:6px">Offerta al programma di installazione: <b>${esc(offerOf(f) === 'mai' ? 'mai' : (setupPaths(f).length ? plural(setupPaths(f).length, 'percorso', 'percorsi') : 'nessun percorso'))}</b>${setupSkipped(f).length ? ` — ${plural(setupSkipped(f).length, 'pacchetto incompleto lasciato fuori', 'pacchetti incompleti lasciati fuori')}` : ''}. I file con la pillola rossa <b>non offerto al setup</b> sono quelli che tengono fuori la loro cartella.</div>
         ${f.note ? `<div class="hint" style="margin-top:6px">Nota: ${esc(f.note)}</div>` : ''}
       </div>
       <div class="drawer-sec">
@@ -1028,6 +1193,7 @@
             <div class="copy-row"><span class="v" id="drv-path">${esc(sharePath())}</span><button class="btn small" type="button" id="drv-copy">Copia</button></div>
             <div class="d" id="drv-share-status"></div></div>
         </div>
+        <div class="card" id="drv-setup"><div class="loading">Caricamento…</div></div>
         <div id="drv-queue" hidden></div>
         <div id="drv-bulk" hidden></div>
         <div id="drv-list"><div class="loading">Caricamento…</div></div>`;
@@ -1035,7 +1201,7 @@
       $('#drv-folders', root).addEventListener('click', pickFolders);
       $('#drv-copy', root).addEventListener('click', copyPath);
       root.addEventListener('click', (e) => {
-        const b = e.target.closest('[data-act],[data-flag],[data-up],[data-bulk],[data-q],[data-apply]'); if (!b) return;
+        const b = e.target.closest('[data-act],[data-flag],[data-up],[data-bulk],[data-q],[data-apply],[data-offer],[data-skip-del],[data-skip-up]'); if (!b) return;
         if (b.dataset.q === 'close') { queue.batch.closed = true; renderQueue(); return; }
         if (b.dataset.bulk) { onBulk(b.dataset.bulk); return; }
         if (b.dataset.up) {
@@ -1045,6 +1211,9 @@
         }
         const card = b.closest('.drv-card'); const name = card && card.dataset.folder;
         if (b.dataset.apply) { if (name && !b.disabled) setApplyMode(name, b.dataset.apply); return; }
+        if (b.dataset.offer) { if (name && !b.disabled) setOffer(name, b.dataset.offer); return; }
+        if (b.dataset.skipDel != null) { if (name) deleteFile(name, b.dataset.skipDel, b); return; }
+        if (b.dataset.skipUp != null) { if (name && !b.disabled) queue.pick(name, b.dataset.skipUp); return; }
         if (b.dataset.flag) { if (name && !b.disabled) setFlag(name, b.dataset.flag, b); return; }
         const act = b.dataset.act;
         if (act === 'new') newFolderDialog();

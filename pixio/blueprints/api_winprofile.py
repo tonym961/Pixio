@@ -16,7 +16,9 @@ Rotte:
 
 Anteprima e salvataggio accettano "iso": lo slug della ISO per cui si genera il file. Con quello
 l'edizione da installare viene confrontata con quelle che l'immagine contiene davvero, invece di
-scrivere un valore che farà fallire il programma di installazione (docs/API.md, sezione 19).
+scrivere un valore che farà fallire il programma di installazione (docs/API.md, sezione 19), e i
+percorsi driver scritti nell'XML sono quelli abbinati a quell'immagine (sezione 24): senza "iso"
+l'anteprima mostrerebbe percorsi diversi da quelli che il PC riceverà davvero.
 """
 from flask import Blueprint, jsonify, request
 
@@ -179,9 +181,10 @@ def preview_new():
     from ..storage import deep_merge
     try:
         st = winprofile.validate(deep_merge(base, data.get("settings") or {}))
+        slug = _iso_slug(data)
         xml = winprofile.render_autounattend(
             {"name": data.get("name") or "anteprima", "settings": st}, _server_ip(),
-            editions=winprofile.editions_for_iso(_iso_slug(data)))
+            editions=winprofile.editions_for_iso(slug), iso=winprofile.iso_entry(slug))
     except ValueError as ex:
         return _err(str(ex))
     return jsonify({"xml": xml})
@@ -203,8 +206,10 @@ def preview_profile(pid):
         p = dict(p)
         p["settings"] = deep_merge(p["settings"], data["settings"])
     try:
+        slug = _iso_slug(data)
         xml = winprofile.render_autounattend(p, _server_ip(),
-                                             editions=winprofile.editions_for_iso(_iso_slug(data)))
+                                             editions=winprofile.editions_for_iso(slug),
+                                             iso=winprofile.iso_entry(slug))
     except ValueError as ex:
         return _err(str(ex))
     return jsonify({"xml": xml})

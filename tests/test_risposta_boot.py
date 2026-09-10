@@ -24,7 +24,7 @@ from pixio import privileged  # noqa: E402
 OVERRIDE_KEYS = ("ETC_DIR", "CONFIG_FILE", "SECRET_FILE", "VAR_DIR", "JOBS_DIR", "UPLOAD_TMP_DIR",
                  "CLIENTS_FILE", "CATALOG_FILE", "ANSWERS_DIR", "ANSWERS_FILE", "WINPROFILES_FILE",
                  "LOG_DIR", "SRV_DIR", "LIBRARY_DIR", "CACHE_DIR", "TFTP_DIR", "HTTP_DIR",
-                 "HTTP_ISO_DIR", "SOURCES_MOUNT_DIR")
+                 "HTTP_ISO_DIR", "SOURCES_MOUNT_DIR", "DRIVERS_DIR", "DRIVERS_FILE")
 
 IP = "10.10.0.254"
 
@@ -64,10 +64,54 @@ def percorsi(t):
     C.TFTP_DIR = os.path.join(C.SRV_DIR, "tftp")
     C.HTTP_DIR = os.path.join(C.SRV_DIR, "http")
     C.HTTP_ISO_DIR = os.path.join(C.HTTP_DIR, "iso")
+    C.DRIVERS_DIR = os.path.join(C.HTTP_DIR, "drivers")
+    C.DRIVERS_FILE = os.path.join(C.VAR_DIR, "drivers.json")
     C.SOURCES_MOUNT_DIR = os.path.join(C.SRV_DIR, "sources")
     for d in (C.ETC_DIR, C.VAR_DIR, C.JOBS_DIR, C.UPLOAD_TMP_DIR, C.LOG_DIR, C.LIBRARY_DIR,
-              C.CACHE_DIR, C.TFTP_DIR, C.HTTP_ISO_DIR, C.ANSWERS_DIR):
+              C.CACHE_DIR, C.TFTP_DIR, C.HTTP_ISO_DIR, C.ANSWERS_DIR, C.DRIVERS_DIR):
         os.makedirs(d, exist_ok=True)
+
+
+# Un pacchetto driver incompleto come quello vero: iaStorVD.inf promette RstMwService.exe, che nella
+# sua cartella non c'e'. Il programma di installazione non lo salta: si ferma con 0x80070002 e chiude
+# l'installazione con 0xC190011F, senza toccare il disco (docs/API.md, sezione 24).
+INF_INCOMPLETO = """[Version]
+Signature = "$Windows NT$"
+CatalogFile = iaStorVD.cat
+
+[SourceDisksFiles]
+iaStorVD.sys = 1,,,
+RstMwService.exe = 1,,,
+
+[iaStorVD_inst.NTamd64]
+CopyFiles = Copia
+
+[Copia]
+iaStorVD.sys
+RstMwService.exe
+"""
+INF_COMPLETO = """[Version]
+Signature = "$Windows NT$"
+CatalogFile = rete.cat
+
+[SourceDisksFiles]
+rete.sys = 1,,,
+
+[rete_inst.NTamd64]
+CopyFiles = Copia
+
+[Copia]
+rete.sys
+"""
+
+
+def cartella_driver(nome, file_dict):
+    """Cartella driver di prova nella libreria temporanea ({percorso relativo: contenuto})."""
+    for rel, testo_file in file_dict.items():
+        full = os.path.join(C.DRIVERS_DIR, nome, *rel.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(testo_file)
 
 
 def iso_finta(slug="ltsc", nome="Windows 11 Enterprise LTSC 2024", edizioni=None, answers=None):
@@ -106,6 +150,18 @@ def base_settings(**over):
 def leggi(percorso):
     with open(percorso, encoding="utf-8") as f:
         return f.read()
+
+
+def percorsi_driver(xml):
+    """I <Path> dentro DriverPaths, cioe' le cartelle driver offerte al programma di installazione.
+
+    Non basta cercare "<Path>" nel testo: anche i RunSynchronousCommand ne hanno uno."""
+    dom = minidom.parseString(xml)
+    out = []
+    for dp in dom.getElementsByTagName("DriverPaths"):
+        for pc in dp.getElementsByTagName("Path"):
+            out.append("".join(n.data for n in pc.childNodes if n.nodeType == n.TEXT_NODE).strip())
+    return out
 
 
 def install_from(xml):
@@ -147,6 +203,10 @@ class Base(unittest.TestCase):
                 os.unlink(f)
         shutil.rmtree(C.ANSWERS_DIR, ignore_errors=True)
         os.makedirs(C.ANSWERS_DIR, exist_ok=True)
+        shutil.rmtree(C.DRIVERS_DIR, ignore_errors=True)
+        os.makedirs(C.DRIVERS_DIR, exist_ok=True)
+        if os.path.exists(C.DRIVERS_FILE):
+            os.unlink(C.DRIVERS_FILE)
         from pixio.services import answers, winprofile
         self.answers = answers
         self.WP = winprofile
@@ -331,6 +391,52 @@ class EndpointTest(Base):
         self.assertIn("Windows11LTSC", msg)                       # il profilo
         self.assertIn("Windows 11 Enterprise LTSC 2024", msg)     # la ISO e le sue edizioni
         self.assertIn("Windows 11 Pro", msg)                      # l'edizione che non c'è
+
+    def test_pacchetto_driver_incompleto_non_arriva_al_setup(self):
+        """docs/API.md, sezione 24 — il guasto vero, dall'indirizzo che il PC scarica davvero.
+
+        Prima di questa modifica l'XML conteneva \\<ip>\\pxe\\drivers e basta: il setup scendeva fino a
+        RAID_drivers\\iaStorVD.inf, non trovava RstMwService.exe e falliva con 0x80070002."""
+        _, risposta, _ = self.prepara()
+        cartella_driver("RAID_drivers", {"iaStorVD.inf": INF_INCOMPLETO, "iaStorVD.sys": "sys",
+                                         "iaStorVD.cat": "cat"})
+        cartella_driver("Rete", {"rete.inf": INF_COMPLETO, "rete.sys": "sys", "rete.cat": "cat"})
+        xml = self._xml("ltsc", risposta["id"])
+        percorsi = percorsi_driver(xml)
+        self.assertEqual(percorsi, [f"\\\\{IP}\\pxe\\drivers\\Rete"])
+        self.assertNotIn(f"<Path>\\\\{IP}\\pxe\\drivers</Path>", xml)
+        self.assertNotIn("RAID_drivers", "".join(percorsi))
+        # il motivo resta scritto nel file, con il nome del file che manca
+        self.assertIn("RstMwService.exe", xml)
+        self.assertIn("0x80070002", xml)
+
+    def test_nessun_driver_utilizzabile_nessun_driverpaths(self):
+        """Meglio un'installazione senza driver aggiunti che una che abortisce dopo due minuti."""
+        _, risposta, _ = self.prepara()
+        cartella_driver("RAID_drivers", {"iaStorVD.inf": INF_INCOMPLETO, "iaStorVD.sys": "sys",
+                                         "iaStorVD.cat": "cat"})
+        with self.assertLogs("pixio.boot", level="WARNING") as reg:
+            xml = self._xml("ltsc", risposta["id"])
+        self.assertNotIn("<DriverPaths", xml)
+        self.assertNotIn("PnpCustomizationsWinPE", xml)
+        self.assertIn("Nessun percorso driver scritto", xml)
+        msg = "\n".join(r.getMessage() for r in reg.records)
+        self.assertIn("NESSUN percorso driver", msg)
+        self.assertIn("RstMwService.exe", msg)
+
+    def test_percorsi_driver_solo_per_le_cartelle_abbinate(self):
+        """apply_to vale anche qui: l'immagine che parte e' nota, il filtro e' quello della sezione 15."""
+        from pixio.services import drivers
+        _, risposta, _ = self.prepara()
+        cartella_driver("SoloServer", {"rete.inf": INF_COMPLETO, "rete.sys": "sys", "rete.cat": "cat"})
+        drivers.set_flags("SoloServer", {"apply_to": {"mode": "groups", "groups": ["Windows Server"],
+                                                      "isos": []}})
+        xml = self._xml("ltsc", risposta["id"])        # la ISO finta sta nel gruppo "Windows"
+        self.assertNotIn("SoloServer", xml)
+        drivers.set_flags("SoloServer", {"apply_to": {"mode": "groups", "groups": ["Windows"],
+                                                      "isos": []}})
+        xml = self._xml("ltsc", risposta["id"])
+        self.assertIn(f"<Path>\\\\{IP}\\pxe\\drivers\\SoloServer</Path>", xml)
 
     def test_il_file_statico_non_si_tocca(self):
         """Resta scaricabile e modificabile dalla GUI: nessuno lo riscrive alle spalle del tecnico."""
