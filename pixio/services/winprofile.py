@@ -45,6 +45,7 @@ import copy
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 import xml.dom.minidom as minidom
@@ -1547,7 +1548,26 @@ def _partizioni_bios(disco):
     return 2
 
 
-def _pass_windows_pe(root, st, arch):
+def risolvi_nome_computer(nome):
+    """Nome computer pronto per l'unattend.
+
+    Windows accetta l'asterisco solo da solo ("*" = nome casuale di 15 caratteri): un prefisso
+    come "PC-*" e' un nome illegale, e il setup si ferma con "installazione non riuscita" al primo
+    avvio del sistema installato, cioe' dopo che l'immagine e' gia' stata copiata. Pixio ha sempre
+    suggerito quella forma, quindi il prefisso lo risolviamo noi qui: l'asterisco diventa una parte
+    casuale vera e il nome finale sta nei 15 caratteri di NetBIOS."""
+    nome = (nome or "").strip()
+    if "*" not in nome:
+        return nome
+    if nome == "*":
+        return nome                      # nome interamente casuale: lo fa Windows
+    prefisso = nome.replace("*", "")
+    casuale = secrets.token_hex(3).upper()          # sei caratteri: collisioni improbabili
+    prefisso = prefisso[:MAX_COMPUTER - len(casuale)]
+    return (prefisso + casuale)[:MAX_COMPUTER]
+
+
+def _pass_windows_pe(root, st, arch, server_ip="", cfg=None):
     """windowsPE: lingua del setup, LabConfig, disco, immagine, chiave di prodotto."""
     sp = _pass(root, "windowsPE")
 
@@ -1558,6 +1578,25 @@ def _pass_windows_pe(root, st, arch):
     _el(intl, "SystemLocale", st["language"])
     _el(intl, "UILanguage", st["language"])
     _el(intl, "UserLocale", st["language"])
+
+    # I driver vanno chiesti qui, non in specialize: PnpCustomizationsNonWinPE vale solo nei passaggi
+    # auditSystem e offlineServicing, e soprattutto in specialize la rete del sistema appena installato
+    # puo' non essere ancora pronta, mentre in Windows PE la condivisione l'abbiamo appena montata noi.
+    if st["drivers_from_pixio"]:
+        d = _driver_path(server_ip, cfg)
+        pnp = _component(sp, "Microsoft-Windows-PnpCustomizationsWinPE", arch)
+        if not d["attivo"]:
+            pnp.append(ET.Comment(" Per usare questa cartella serve l'opzione \"Installazione Windows "
+                                  "via rete\" attiva nelle impostazioni di Pixio (share SMB di sola "
+                                  "lettura), altrimenti il setup ignora il percorso "))
+        dp = _el(pnp, "DriverPaths")
+        pc = _add(dp, "PathAndCredentials")
+        pc.set("{%s}keyValue" % WCM, "1")
+        _el(pc, "Path", d["path"])
+        cred = _el(pc, "Credentials")
+        _el(cred, "Domain", d["domain"])
+        _el(cred, "Username", d["user"])
+        _el(cred, "Password", d["password"])
 
     setup = _component(sp, "Microsoft-Windows-Setup", arch)
 
@@ -1651,7 +1690,7 @@ def _pass_specialize(root, st, arch, server_ip, cfg, em=None):
     sp = _pass(root, "specialize")
 
     shell = _component(sp, "Microsoft-Windows-Shell-Setup", arch)
-    _el(shell, "ComputerName", st["computer_name"])
+    _el(shell, "ComputerName", risolvi_nome_computer(st["computer_name"]))
     _el(shell, "TimeZone", st["timezone"])
     if st["owner"]:
         _el(shell, "RegisteredOwner", st["owner"])
@@ -1674,22 +1713,6 @@ def _pass_specialize(root, st, arch, server_ip, cfg, em=None):
         _el(ident, "JoinDomain", jd["domain"])
         if jd["ou"]:
             _el(ident, "MachineObjectOU", jd["ou"])
-
-    if st["drivers_from_pixio"]:
-        d = _driver_path(server_ip, cfg)
-        pnp = _component(sp, "Microsoft-Windows-PnpCustomizationsNonWinPE", arch)
-        if not d["attivo"]:
-            pnp.append(ET.Comment(" Per usare questa cartella serve l'opzione \"Installazione Windows "
-                                  "via rete\" attiva nelle impostazioni di Pixio (share SMB di sola "
-                                  "lettura), altrimenti il setup ignora il percorso "))
-        dp = _el(pnp, "DriverPaths")
-        pc = _add(dp, "PathAndCredentials")
-        pc.set("{%s}keyValue" % WCM, "1")
-        _el(pc, "Path", d["path"])
-        cred = _el(pc, "Credentials")
-        _el(cred, "Domain", d["domain"])
-        _el(cred, "Username", d["user"])
-        _el(cred, "Password", d["password"])
 
     # Tweak di sistema: comandi eseguiti una volta sola, con i diritti di sistema.
     # Prima i campi storici del profilo, poi le ottimizzazioni del catalogo: se una ottimizzazione
@@ -1890,7 +1913,7 @@ def render_autounattend(profile, server_ip="", cfg=None, editions=None):
     # una sola memoria dei comandi generati per tutti i passaggi: così i campi booleani storici
     # e le ottimizzazioni equivalenti non producono due volte la stessa riga
     em = _Emessi()
-    _pass_windows_pe(root, st, arch)
+    _pass_windows_pe(root, st, arch, server_ip, cfg)
     _pass_specialize(root, st, arch, server_ip, cfg, em)
     _pass_oobe(root, st, arch, em)
 

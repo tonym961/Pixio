@@ -297,9 +297,14 @@ class XmlTest(unittest.TestCase):
                          "VK7JG-NPHTM-C97JM-9MPGT-3V66T")
         self.assertEqual(testo(uno(dom, "AcceptEula", ud)), "true")
 
-        # specialize: nome computer e fuso orario
+        # specialize: nome computer e fuso orario. "PC-*" non arriva mai cosi' com'e' al PC:
+        # Windows accetta l'asterisco solo da solo, e un nome illegale fa fallire l'installazione
+        # dopo che l'immagine e' gia' stata copiata.
         shell = componente(dom, "specialize", "Microsoft-Windows-Shell-Setup")
-        self.assertEqual(testo(uno(dom, "ComputerName", shell)), "PC-*")
+        nome = testo(uno(dom, "ComputerName", shell))
+        self.assertTrue(nome.startswith("PC-"), nome)
+        self.assertNotIn("*", nome)
+        self.assertLessEqual(len(nome), 15)
         self.assertEqual(testo(uno(dom, "TimeZone", shell)), "W. Europe Standard Time")
 
         # oobeSystem: OOBE saltato e utente locale amministratore
@@ -1909,3 +1914,51 @@ def tearDownModule():
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NomeComputer(unittest.TestCase):
+    """Windows accetta l'asterisco solo da solo: "PC-*" e' un nome illegale e ferma
+    l'installazione nel passaggio specialize, cioe' dopo la copia dell'immagine.
+    Pixio ha sempre suggerito quella forma, quindi il prefisso lo risolve lui."""
+
+    def test_asterisco_da_solo_resta(self):
+        self.assertEqual(WP.risolvi_nome_computer("*"), "*")
+
+    def test_prefisso_diventa_un_nome_vero(self):
+        n = WP.risolvi_nome_computer("PC-*")
+        self.assertTrue(n.startswith("PC-"))
+        self.assertNotIn("*", n)
+        self.assertLessEqual(len(n), 15)
+
+    def test_nomi_diversi_a_ogni_generazione(self):
+        nomi = {WP.risolvi_nome_computer("PC-*") for _ in range(20)}
+        self.assertGreater(len(nomi), 15, "la parte casuale deve essere davvero casuale")
+
+    def test_nome_fisso_non_viene_toccato(self):
+        self.assertEqual(WP.risolvi_nome_computer("UFFICIO01"), "UFFICIO01")
+
+    def test_prefisso_lungo_viene_troncato_a_quindici(self):
+        n = WP.risolvi_nome_computer("AZIENDA-FILIALE-*")
+        self.assertLessEqual(len(n), 15)
+        self.assertNotIn("*", n)
+
+    def test_vuoto_o_none(self):
+        self.assertEqual(WP.risolvi_nome_computer(""), "")
+        self.assertEqual(WP.risolvi_nome_computer(None), "")
+
+
+class DriverNelPassaggioGiusto(unittest.TestCase):
+    """PnpCustomizationsNonWinPE vale solo in auditSystem e offlineServicing, e in specialize
+    la rete del sistema appena installato puo' non essere pronta: i driver si chiedono in
+    windowsPE, dove la condivisione e' gia' montata dallo script di Pixio."""
+
+    def test_driver_in_windowspe_e_non_in_specialize(self):
+        prof = {"name": "Prova driver", "settings": {"drivers_from_pixio": True}}
+        xml = WP.render_autounattend(prof, "10.10.0.254")
+        self.assertIn("Microsoft-Windows-PnpCustomizationsWinPE", xml)
+        self.assertNotIn("Microsoft-Windows-PnpCustomizationsNonWinPE", xml)
+        dom = minidom.parseString(xml)
+        for s in dom.getElementsByTagName("settings"):
+            if s.getAttribute("pass") == "windowsPE":
+                nomi = [c.getAttribute("name") for c in s.getElementsByTagName("component")]
+                self.assertIn("Microsoft-Windows-PnpCustomizationsWinPE", nomi)

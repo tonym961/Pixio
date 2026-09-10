@@ -1096,7 +1096,7 @@
       <div class="card"><h3>Account</h3>
         <div class="alert warn">Tutte le password di questa pagina finiscono <strong>in chiaro</strong> dentro <span class="mono">autounattend.xml</span>, che i PC scaricano via HTTP senza autenticazione. È il funzionamento previsto dal setup di Windows: usa password dedicate all'installazione e cambiale subito dopo.</div>
         <div class="row3">
-          ${campo('wp-computer', 'Nome del computer', s.computer_name, { maxlength: 15, mono: true, placeholder: '*', hint: 'Max 15 caratteri. <span class="mono">*</span> = nome casuale; anche <span class="mono">PC-*</span> va bene (prefisso + parte casuale).' })}
+          ${campo('wp-computer', 'Nome del computer', s.computer_name, { maxlength: 15, mono: true, placeholder: '*', hint: 'Max 15 caratteri. <span class="mono">*</span> = lo sceglie Windows; con <span class="mono">PC-*</span> il nome lo compone Pixio quando il PC parte (Windows da solo non accetta un prefisso con asterisco).' })}
           ${campo('wp-org', 'Organizzazione', s.organization, { maxlength: 64, placeholder: 'facoltativa' })}
           ${campo('wp-owner', 'Intestatario', s.owner, { maxlength: 64, placeholder: 'facoltativo' })}
         </div>
