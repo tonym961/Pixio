@@ -1181,7 +1181,7 @@
 
       <div class="card"><h3>Disco</h3>
         ${tendina('wp-disk-mode', 'Partizionamento', dk.mode || 'auto-uefi', meta.disk_modes || [{ id: 'auto-uefi', name: 'Automatico UEFI (GPT)' }, { id: 'auto-bios', name: 'Automatico BIOS legacy (MBR)' }, { id: 'manuale', name: 'Manuale' }], 'Scegli in base a come il PC ha avviato la rete: UEFI per i PC moderni, BIOS legacy per i più vecchi. Con "Manuale" restano le schermate del disco del setup.')}
-        ${discoIncoerenteHtml(dk)}
+        <div id="wp-disk-incoerenza">${discoIncoerenteHtml(dk)}</div>
         <div id="wp-wipe-box">${discoWipeHtml(dk)}</div>
         <div class="row3" id="wp-uefi-box" ${uefi ? '' : 'hidden'}>
           ${campo('wp-efi', 'Partizione EFI (MB)', dk.efi_mb, { type: 'number', min: 100, max: 2048, hint: 'Consigliati 300 MB (100 minimo).' })}
@@ -1234,7 +1234,10 @@
       $('#wp-uefi-box', box).hidden = e.target.value !== 'auto-uefi';
       $('#wp-bios-hint', box).hidden = e.target.value !== 'auto-bios';
       // la spunta "cancella il disco" segue la modalita': automatica = sempre sì, e non si tocca
-      $('#wp-wipe-box', box).innerHTML = discoWipeHtml({ mode: e.target.value, wipe: b('wp-disk-wipe') });
+      $('#wp-wipe-box', box).innerHTML = discoWipeHtml({ mode: e.target.value });
+      // passando a "manuale" l'incoerenza del profilo salvato non c'è più: l'avviso sparisce
+      $('#wp-disk-incoerenza', box).innerHTML =
+        discoIncoerenteHtml({ mode: e.target.value, wipe: (W.cur.settings.disk || {}).wipe });
     });
     $('#wp-autologon', box).addEventListener('change', (e) => {
       $('#wp-autologon-box', box).hidden = !e.target.checked;
@@ -1310,8 +1313,9 @@
     s.disk = {
       mode: v('wp-disk-mode'),
       // con il partizionamento automatico il disco 0 viene azzerato sempre: la spunta è bloccata
-      // nella GUI e il server rifiuta comunque la combinazione contraria
-      wipe: v('wp-disk-mode') === 'manuale' ? b('wp-disk-wipe') : true,
+      // nella GUI (e il server rifiuta comunque la combinazione contraria). In modalità manuale il
+      // valore non genera niente nell'XML: si lascia com'era invece di inventarne uno.
+      wipe: v('wp-disk-mode') !== 'manuale' || (W.cur.settings.disk || {}).wipe !== false,
       efi_mb: Number(v('wp-efi')) || 0,
       msr_mb: Number(v('wp-msr')) || 0,
       recovery_mb: Number(v('wp-recovery')) || 0,
