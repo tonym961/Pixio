@@ -30,6 +30,7 @@ HTTP_ISOFILE = f"{SRV}/http/isofile"
 HTTP_ROOT = f"{SRV}/http"
 DRIVERS = f"{SRV}/http/drivers"
 DETECT = f"{SRV}/detect"
+SETUPLOGS = f"{SRV}/setuplogs"        # log del setup depositati dai PC: share in scrittura, fuori da HTTP_ROOT
 TFTP = f"{SRV}/tftp"
 CODE = "/opt/pixio"
 SERVICE_USER = "pixio"
@@ -646,6 +647,30 @@ def render_smb(cfg):
             "   acl allow execute always = yes",
             "",
         ]
+        if win.get("setup_logs_enabled", True):
+            lshare = win.get("setup_logs_share_name") or "pxelog"
+            if not SMBNAME_RE.match(lshare):
+                raise HelperError("nome share dei log non valido")
+            # L'unica cartella in cui i PC in installazione possono SCRIVERE, e sta fuori da
+            # /srv/pixio/http apposta: quell'albero e' servito in sola lettura (nginx e share [pxe])
+            # e un client non deve poter mettere file dove gli altri client li scaricano.
+            # force user = pixio: i file arrivano gia' dell'utente del servizio, cosi' la GUI puo'
+            # leggerli ed eliminarli senza passare dall'helper.
+            lines += [
+                f"[{lshare}]",
+                "   comment = Log del programma di installazione (i PC li depositano qui da soli)",
+                f"   path = {SETUPLOGS}",
+                "   browseable = no",
+                "   read only = no",
+                "   guest ok = no",
+                f"   valid users = {wuser}",
+                f"   force user = {SERVICE_USER}",
+                f"   force group = {SERVICE_GROUP}",
+                "   create mask = 0640",
+                "   directory mask = 0750",
+                "   veto files = /.*/Thumbs.db/desktop.ini/",
+                "",
+            ]
     return "\n".join(lines) + "\n"
 
 
@@ -655,6 +680,18 @@ def write_file(path, content, mode=0o644):
         f.write(content)
     os.chmod(tmp, mode)
     os.replace(tmp, path)
+
+
+def ensure_setuplogs_dir():
+    """Crea /srv/pixio/setuplogs con i permessi giusti (pixio:pixio 0750).
+
+    Deve farlo l'helper: /srv/pixio appartiene a root e l'utente del servizio non ci puo' scrivere.
+    Chiamata a ogni "apply samba", cosi' la cartella c'e' sempre quando la share viene esportata."""
+    os.makedirs(SETUPLOGS, exist_ok=True)
+    uid, gid = uid_gid()
+    os.chown(SETUPLOGS, uid, gid)
+    os.chmod(SETUPLOGS, 0o750)
+    return SETUPLOGS
 
 
 def cmd_apply(a):
@@ -704,6 +741,7 @@ def cmd_apply(a):
         run(["systemctl", "reload-or-restart", "nginx.service"])
         out({"ok": True, "file": target, "restarted": "nginx", "https": https, "cert_created": cert_created})
     elif what == "samba":
+        ensure_setuplogs_dir()
         content = render_smb(cfg)
         target = "/etc/samba/smb.conf"
         write_file(target, content)

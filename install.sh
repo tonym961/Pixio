@@ -22,12 +22,14 @@ usermod -a -G systemd-journal,adm pixio
 # nginx deve leggere i file: la libreria e la cache sono world-readable, i loop mount pure
 
 say "Directory"
-mkdir -p $SRV/{sources,library,cache,tftp,detect,http/iso,http/isofile,http/boot,http/inject,http/drivers} /etc/pixio/sources /var/lib/pixio/{jobs,uploads} /var/log/pixio
-chown -R pixio:pixio /var/lib/pixio /var/log/pixio $SRV/library $SRV/cache $SRV/http/inject $SRV/http/drivers
+mkdir -p $SRV/{sources,library,cache,tftp,detect,setuplogs,http/iso,http/isofile,http/boot,http/inject,http/drivers} /etc/pixio/sources /var/lib/pixio/{jobs,uploads} /var/log/pixio
+chown -R pixio:pixio /var/lib/pixio /var/log/pixio $SRV/library $SRV/cache $SRV/setuplogs $SRV/http/inject $SRV/http/drivers
 # i file di stato devono restare dell'utente del servizio anche dopo interventi manuali da root
 find /var/lib/pixio -maxdepth 1 -name '*.json' -exec chmod 640 {} + 2>/dev/null || true
 chmod 2775 $SRV/library $SRV/cache $SRV/http/drivers
 chmod 755 $SRV $SRV/http $SRV/http/iso $SRV/http/isofile $SRV/http/boot $SRV/tftp
+# i log del setup li scrivono i PC via SMB (share [pxelog], force user = pixio): fuori dall'albero servito da nginx
+chmod 750 $SRV/setuplogs
 chmod 700 /etc/pixio/sources
 chown pixio:pixio /etc/pixio; chmod 750 /etc/pixio
 touch /etc/pixio/config.json; chown pixio:pixio /etc/pixio/config.json; chmod 640 /etc/pixio/config.json

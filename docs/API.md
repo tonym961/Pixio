@@ -676,3 +676,75 @@ La pagina Driver mostra gli avvisi sulla scheda della cartella, nello stile degl
 (`"iaStorVD.inf (in RAID/RAPIDSTORAGE/Drivers) dichiara un file che non c'è nella sua cartella: manca
 RstMwService.exe. drvload carica il driver solo se trova accanto all'.inf tutti i file che dichiara..."`), e nel
 pannello dei file le pillole `manca <nome>` e `già nel WinPE: <nome>` sulla riga dell'`.inf`.
+
+## 22. I log del programma di installazione arrivano da soli su Pixio
+Motivo: il 10 settembre 2026 un OptiPlex avviato in PXE si è fermato con "installazione non riuscita" e
+l'unica traccia disponibile era una fotografia dello schermo. I log che spiegano il guasto
+(`setupact.log`, `setuperr.log`) stanno dentro il WinPE del PC, che al riavvio sparisce: se non vengono
+copiati prima, l'informazione è persa. Da qui in avanti è il PC stesso a depositarli su Pixio, e si leggono
+dalla GUI.
+
+### Dove finiscono
+`/srv/pixio/setuplogs/<cartella>/`, esportata da Samba come share **`pxelog`** in scrittura (utente
+`windows.smb_user`, la stessa password della share `pxe`). La cartella sta **fuori** da `/srv/pixio/http`:
+quell'albero è servito in sola lettura da nginx e dalla share `[pxe]`, e un client in installazione non
+deve poter scrivere dove gli altri client leggono. La crea l'helper (`pixio-helper apply samba` chiama
+`ensure_setuplogs_dir()`) con proprietario `pixio:pixio` e permessi `0750`; la share ha
+`force user = pixio`, così i file arrivano già dell'utente del servizio e la GUI può leggerli ed
+eliminarli senza passare dall'helper.
+
+Il nome della cartella lo decide il **server** quando genera `install.cmd`:
+`<AAAAMMGG>-<hhmmss>-<ip del client>-<slug>` (`winpe.log_folder()`). Il WinPE non ha un orologio
+attendibile e `%DATE%` cambia formato con la lingua: comporre il nome in `cmd` sarebbe fragile.
+Ordinabile per nome = ordinabile per momento dell'avvio.
+
+### Cosa deposita il PC
+`install.cmd` (generato da `pixio/services/winpe.py`) chiama il sottoprogramma `:pixio_log`:
+- quando `setup.exe` è terminato (`:fine_setup`), qualunque sia l'esito;
+- quando la share è collegata ma manca `setup.exe` (`:senzasetup`), per avere almeno il riepilogo.
+
+Contenuto della cartella:
+- `riepilogo.txt` — righe `chiave: valore` scritte metà dal server (immagine, slug, ora dell'avvio, IP e MAC
+  del client, nome del PC) e metà dal PC (`esito setup.exe` = `%ERRORLEVEL%`, se il file di risposta era
+  attivo, indirizzo ottenuto);
+- `rete.txt` (`ipconfig /all`) e `disco.txt` (`diskpart`: `list disk`, `list volume`);
+- `autounattend.xml` e `install.cmd` **davvero usati**, copiati da `X:\Windows\System32`;
+- `panther-winpe/`, `winpe-panther/`, `panther-C|D|E/`, `windows-C|D|E/` — i `*.log`, `*.xml` e `*.txt`
+  di `%SYSTEMDRIVE%\$WINDOWS.~BT\Sources\Panther` e `\Windows\Panther`, sul WinPE e sui dischi.
+
+Regole a cui lo script deve obbedire, sempre:
+- **non blocca l'installazione**: la copia parte a setup finito, `net use` ha tre tentativi e basta,
+  `xcopy` gira con `/c` (va avanti sui file in uso) e ogni comando ha lo sfogo su `nul`;
+- **non termina mai**: ogni ramo torna al chiamante con `goto :eof` e si finisce comunque nel prompt di
+  Pixio. Se lo script uscisse, Windows PE riavvierebbe il PC;
+- **dice come è andata**: "fatto: i log sono su Pixio" oppure "non riesco a collegare \\\\ip\\pxelog".
+Limite noto: se l'installazione riesce, `setup.exe` riavvia il PC e lo script non riprende il controllo;
+si raccolgono i log dei tentativi che **finiscono male**, che sono quelli che interessano.
+
+### Impostazioni
+`windows.setup_logs_enabled` (predefinito `true`, interruttore in Impostazioni → Windows),
+`windows.setup_logs_share_name` (predefinito `pxelog`) e `windows.setup_logs_keep` (predefinito 50:
+le cartelle più vecchie oltre questo numero le elimina il thread di manutenzione, `setuplogs.prune()`).
+La raccolta richiede `windows.smb_export_enabled`: l'helper esporta `[pxelog]` solo insieme a `[pxe]`.
+
+### API
+- `GET /api/setuplogs` → `{logs: [...], enabled, share, dir}`. Ogni voce:
+  `{name, received (epoch), files, size, image, slug, client, mac, pc, started, esito, ok, errors, error_file, has_summary}`.
+  `errors` sono le ultime righe con `, Error` / `, Warning` di `setuperr.log` (o di `setupact.log`): è la
+  riga che si legge nell'elenco, quella che di solito contiene il codice del guasto (es. `0x80042565`).
+- `GET /api/setuplogs/<cartella>[?file=<percorso relativo>]` → la stessa voce più `file_list`
+  (`[{name, size, mtime, text}]`), `file`, `content` (coda del file, al massimo 256 KB, UTF-8 o UTF-16) e
+  `truncated`.
+- `DELETE /api/setuplogs/<cartella>` → elimina una cartella. `DELETE /api/setuplogs` → le elimina tutte
+  (`{ok, deleted}`).
+
+Tutto quello che sta lì dentro l'ha scritto un client, quindi non ci si fida di niente: il nome della
+cartella deve corrispondere a `NAME_RE`, il percorso del file a `REL_RE`, entrambi vengono risolti con
+`realpath` e confrontati con la radice, i collegamenti simbolici non vengono seguiti e i file si leggono
+solo in coda e con un tetto.
+
+### GUI
+La pagina **Log** ha due schede: "In diretta" (i log del server, invariata) e "Installazioni", con
+l'elenco di quello che i PC hanno depositato — momento, PC, immagine, esito, la riga di errore e quanti
+file — il pannello laterale che apre il contenuto di ogni singolo file (con l'elenco a tendina per
+passare da `setupact.log` a `autounattend.xml`) e i pulsanti per eliminare una cartella o svuotare tutto.

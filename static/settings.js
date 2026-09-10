@@ -260,6 +260,7 @@
 
         <div class="card"><h3>Windows</h3>
           ${toggleRow('Installazione Windows via rete (share SMB <span class="mono">pxe</span>)', 'Il setup di Windows (WinPE) deve leggere <span class="mono">install.wim</span> da un percorso SMB: con questa opzione Pixio ri-esporta in sola lettura le ISO Windows montate (utente Samba dedicato <span class="mono">pxe</span>, password generata automaticamente). Disattivato: WinPE parte ma il setup non trova i file.', 'win.smb_export_enabled', win.smb_export_enabled === true)}
+          ${toggleRow('Raccolta dei log di installazione', 'Quando il programma di installazione termina, il PC copia da solo i propri log nella share <span class="mono">pxelog</span> (in scrittura, separata da quella delle immagini). Si leggono nella pagina Log, scheda <b>Installazioni</b>: un\'installazione fallita si legge da qui invece che da una fotografia dello schermo. Richiede l\'opzione qui sopra.', 'win.setup_logs_enabled', win.setup_logs_enabled !== false, win.smb_export_enabled !== true)}
         </div>
 
         ${httpsCardHtml()}
@@ -420,7 +421,7 @@
     const payload = {
       network,
       library: { samba_share_enabled: fieldOn('lib.samba_share_enabled'), samba_share_name: shareName, web_upload_enabled: fieldOn('lib.web_upload_enabled') },
-      windows: { smb_export_enabled: fieldOn('win.smb_export_enabled') },
+      windows: { smb_export_enabled: fieldOn('win.smb_export_enabled'), setup_logs_enabled: fieldOn('win.setup_logs_enabled') },
       scan: { auto: fieldOn('scan.auto'), interval_min: interval },
       cache: cacheReq,
       web: webReq,

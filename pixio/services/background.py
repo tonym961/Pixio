@@ -92,7 +92,7 @@ def _autocache_tick():
 
 
 def _loop():
-    from . import sources, clients, uploads
+    from . import sources, clients, uploads, setuplogs
     _startup()
     last_mount = time.monotonic()
     last_scan = time.monotonic()
@@ -116,6 +116,8 @@ def _loop():
         if now - last_cleanup >= CLEANUP_EVERY:
             last_cleanup = now
             _safe("pulizia upload", uploads.cleanup)
+            # i log che i PC depositano da soli non hanno un limite naturale: qui si tiene solo lo storico recente
+            _safe("pulizia log delle installazioni", setuplogs.prune)
         try:
             scan_cfg = S.load().get("scan", {})
         except Exception:  # noqa: BLE001

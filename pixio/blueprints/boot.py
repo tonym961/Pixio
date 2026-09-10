@@ -154,5 +154,7 @@ def boot_inject(slug, name):
     if name == "winpeshl.ini":
         return _text(winpe.winpeshl_ini())
     if name == "install.cmd":
-        return _text(winpe.install_cmd(slug))
+        # chi lo sta scaricando e' il PC che sta per installare: con il suo indirizzo e l'ora di adesso
+        # lo script sa gia' come chiamare la cartella in cui depositera' i log (docs/API.md, sezione 22)
+        return _text(winpe.install_cmd(slug, client_ip=request.remote_addr or ""))
     return _text("file non previsto"), 404

@@ -155,6 +155,10 @@ def validate(incoming, current):
         w = {}
         if "smb_export_enabled" in win_in:
             w["smb_export_enabled"] = _bool(win_in["smb_export_enabled"], "smb_export_enabled")
+        if "setup_logs_enabled" in win_in:
+            w["setup_logs_enabled"] = _bool(win_in["setup_logs_enabled"], "setup_logs_enabled")
+        if "setup_logs_keep" in win_in:
+            w["setup_logs_keep"] = _int(win_in["setup_logs_keep"], "Log delle installazioni da tenere", 1, 1000)
         clean["windows"] = w
     scan_in = incoming.get("scan")
     if isinstance(scan_in, dict):

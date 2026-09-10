@@ -34,6 +34,9 @@ HTTP_BOOT_DIR = os.path.join(HTTP_DIR, "boot")            # /pxe/boot/ wimboot, 
 HTTP_INJECT_DIR = os.path.join(HTTP_DIR, "inject")        # /pxe/inject/<slug>/ file iniettati (winpeshl.ini, ...)
 DRIVERS_DIR = os.path.join(HTTP_DIR, "drivers")             # libreria driver (share \\ip\\drivers + upload web), servita come /pxe/drivers/
 DETECT_DIR = os.path.join(SRV_DIR, "detect")                # mount temporanei per il rilevamento
+# Log del programma di installazione depositati dai PC (share SMB in scrittura). Sta FUORI da HTTP_DIR:
+# quell'albero e' servito in sola lettura da nginx e dalla share [pxe], e i client non devono poterci scrivere.
+SETUPLOGS_DIR = os.path.join(SRV_DIR, "setuplogs")          # /srv/pixio/setuplogs/<cartella>/ (share \\ip\pxelog)
 
 CODE_DIR = "/opt/pixio"
 RECIPES_FILE = os.path.join(CODE_DIR, "data", "recipes.json")
@@ -90,6 +93,11 @@ DEFAULT_CONFIG = {
         "smb_export_enabled": False,   # ri-esporta le ISO Windows montate per il setup (OFF di default)
         "smb_user": "pxe",             # utente Samba dedicato (i guest SMB sono bloccati da WinPE)
         "smb_password": "",            # generata quando si attiva l'opzione
+        # Raccolta dei log del programma di installazione: il WinPE li copia da solo in una share
+        # a parte, in scrittura (docs/API.md, sezione 22). Senza, un guasto si legge solo dallo schermo.
+        "setup_logs_enabled": True,
+        "setup_logs_share_name": "pxelog",
+        "setup_logs_keep": 50,         # cartelle da conservare: le piu' vecchie vengono eliminate
     },
     "scan": {"auto": True, "interval_min": 10},
     "cache": {                       # copia locale automatica delle ISO che stanno su share remote

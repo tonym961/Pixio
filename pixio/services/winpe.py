@@ -9,9 +9,27 @@ voce di catalogo (docs/API.md, sezione 15). Senza ISO il comportamento resta que
 Perche' la share SMB e non un download: il programma di installazione di Windows legge install.wim (4 GB) un pezzo
 per volta mentre installa, e sa farlo solo da un supporto locale o da una cartella di rete. Con la share non si
 scarica niente prima di iniziare; scaricare l'immagine intera vorrebbe dire aspettare a ogni installazione.
+
+Raccolta dei log (docs/API.md, sezione 22): quando setup.exe finisce, install.cmd copia da solo i log del
+programma di installazione nella share [pxelog], l'unica in cui i client possono scrivere. Cosi' un guasto si
+legge dalla pagina Log della GUI invece che da una fotografia dello schermo. Il nome della cartella lo decide
+il server quando genera lo script (data, ora, IP del client, immagine): il WinPE non ha un orologio affidabile
+e comporre nomi in cmd e' fragile. La copia non deve mai fermare l'installazione: se la share non risponde lo
+script lo scrive a schermo e va avanti.
 """
+import datetime
+import re
+
 from .. import settings as S
 from . import drivers
+
+# Cartelle da cui si prendono i log. La prima e' quella vera del setup avviato da WinPE
+# (%SYSTEMDRIVE% e' X:), le altre servono quando il setup ha gia' copiato i file sul disco.
+LOG_SOURCES = [("X:\\$WINDOWS.~BT\\Sources\\Panther", "panther-winpe"),
+               ("X:\\Windows\\Panther", "winpe-panther")]
+LOG_DISKS = ("C", "D", "E")
+LOG_DRIVE = "P:"          # S: e' gia' la share di installazione
+LOG_PATTERNS = ("*.log", "*.xml", "*.txt")
 
 
 def flags(cfg=None, iso=None):
@@ -23,7 +41,121 @@ def flags(cfg=None, iso=None):
     smb = bool(cfg["windows"].get("smb_export_enabled"))
     inj = drivers.winpe_inject_files(iso)
     return {"smb_export": smb, "inject": smb or bool(inj), "driver_files": inj,
-            "setup_folders": drivers.setup_load_folders(iso) if smb else []}
+            "setup_folders": drivers.setup_load_folders(iso) if smb else [],
+            # la raccolta dei log passa dalla share [pxelog], che l'helper esporta solo insieme alla [pxe]
+            "setup_logs": smb and bool(cfg["windows"].get("setup_logs_enabled", True))}
+
+
+# ---------------------------------------------------------------- raccolta dei log del setup
+_CMD_UNSAFE = re.compile(r"[%&<>|^\r\n\x00\"]")
+
+
+def cmd_safe(text, maxlen=120):
+    """Testo utilizzabile dentro un "echo" di cmd: via i caratteri che cmd interpreterebbe.
+
+    Un nome di ISO arriva da chi ha creato il file e puo' contenere & o %: finirebbero per
+    troncare la riga o eseguire altro. Qui non si perde niente di importante, sono nomi."""
+    return _CMD_UNSAFE.sub(" ", str(text or "")).strip()[:maxlen]
+
+
+def log_folder(slug, client_ip="", when=None):
+    """Nome della cartella in cui il PC deposita i log: <data>-<ora>-<ip>-<immagine>.
+
+    Lo decide il server perche' il WinPE non ha un orologio attendibile (e %DATE% cambia formato
+    con la lingua). Ordinabile per nome = ordinabile per momento dell'avvio."""
+    when = when or datetime.datetime.now()
+    ip = re.sub(r"[^0-9.]", "", str(client_ip or ""))[:15]
+    coda = f"{ip}-{slug}" if ip else str(slug)
+    coda = re.sub(r"[^A-Za-z0-9._-]", "-", coda)[:64]
+    return f"{when:%Y%m%d-%H%M%S}-{coda}"
+
+
+def _mac_for_ip(client_ip):
+    """MAC del client visto con quell'IP (dai client PXE gia' noti), o "" se non lo sappiamo."""
+    if not client_ip:
+        return "", ""
+    try:
+        from . import clients
+        for c in clients.list_clients():
+            if c.get("ip") == client_ip:
+                return c.get("mac") or "", c.get("name") or ""
+    except Exception:  # noqa: BLE001 - il nome del PC e' un di piu': non deve far fallire il boot
+        pass
+    return "", ""
+
+
+def _riepilogo(dest_var, coppie):
+    """Righe cmd che scrivono riepilogo.txt (una "chiave: valore" per riga). La prima tronca il file."""
+    out = []
+    for i, (k, v) in enumerate(coppie):
+        red = ">" if i == 0 else ">>"
+        out.append(f'{red}"{dest_var}\\riepilogo.txt" echo {cmd_safe(k, 40)}: {cmd_safe(v) or "-"}')
+    return out
+
+
+def raccolta_log(slug, ip, cred, cartella_log, meta):
+    """Sottoprogramma cmd che copia i log del setup nella share [pxelog].
+
+    Regole: non deve mai bloccare (tre tentativi e basta), non deve mai far uscire lo script
+    (ogni ramo torna al chiamante) e non deve nascondere l'esito, perche' chi guarda lo schermo
+    deve sapere se i log sono arrivati o no."""
+    share = f"\\\\{ip}\\{meta['share']}"
+    dest = f"{LOG_DRIVE}\\{cartella_log}"
+    L = [
+        ":pixio_log",
+        "rem --- Log del programma di installazione verso Pixio (docs/API.md, sezione 22).",
+        "echo.",
+        "echo Copio i log dell'installazione su Pixio...",
+        "set PIXIO_TRY=0",
+        ":pixio_log_retry",
+        "set /a PIXIO_TRY+=1",
+        f"net use {LOG_DRIVE} {share} {cred} /persistent:no >nul 2>&1",
+        "if not errorlevel 1 goto pixio_log_ok",
+        "if %PIXIO_TRY% GEQ 3 goto pixio_log_ko",
+        f"ping -n 2 {ip} >nul",
+        "goto pixio_log_retry",
+        ":pixio_log_ok",
+        f'set PIXIO_DEST={dest}',
+        'md "%PIXIO_DEST%" >nul 2>&1',
+    ]
+    L += _riepilogo("%PIXIO_DEST%", meta["righe"])
+    L += [
+        # l'esito di setup.exe e' il primo dato che serve: 0 = ha fatto il suo lavoro
+        '>>"%PIXIO_DEST%\\riepilogo.txt" echo esito setup.exe: %PIXIO_ESITO%',
+        '>>"%PIXIO_DEST%\\riepilogo.txt" echo personalizzazioni: %PIXIO_UA%',
+        '>>"%PIXIO_DEST%\\riepilogo.txt" echo indirizzo del PC:%PIXIO_IP%',
+        # lo stato della rete e quello dei dischi spiegano da soli meta' dei guasti
+        'ipconfig /all > "%PIXIO_DEST%\\rete.txt" 2>&1',
+        ">X:\\Windows\\Temp\\pixio-dp.txt echo list disk",
+        ">>X:\\Windows\\Temp\\pixio-dp.txt echo list volume",
+        'diskpart /s X:\\Windows\\Temp\\pixio-dp.txt > "%PIXIO_DEST%\\disco.txt" 2>&1',
+        # il file di risposta davvero usato e lo script davvero eseguito: senza, l'analisi si fa a memoria
+        'if exist X:\\Windows\\System32\\autounattend.xml copy /y X:\\Windows\\System32\\autounattend.xml "%PIXIO_DEST%\\autounattend.xml" >nul 2>&1',
+        'if exist X:\\Windows\\System32\\install.cmd copy /y X:\\Windows\\System32\\install.cmd "%PIXIO_DEST%\\install.cmd" >nul 2>&1',
+    ]
+    for path, name in LOG_SOURCES:
+        L.append(f'call :pixio_copia "{path}" {name}')
+    # quando il setup ha gia' copiato i file sul disco i log proseguono li': le lettere possibili sono poche
+    L.append(f'for %%u in ({" ".join(LOG_DISKS)}) do call :pixio_copia "%%u:\\$WINDOWS.~BT\\Sources\\Panther" panther-%%u')
+    L.append(f'for %%u in ({" ".join(LOG_DISKS)}) do call :pixio_copia "%%u:\\Windows\\Panther" windows-%%u')
+    L += [
+        "echo    fatto: i log sono su Pixio.",
+        f"echo    Pixio, pagina Log, scheda Installazioni: {cartella_log}",
+        f"net use {LOG_DRIVE} /delete /y >nul 2>&1",
+        "goto :eof",
+        ":pixio_log_ko",
+        f"echo    non riesco a collegare {share}: i log restano solo su questo PC.",
+        "echo    (X:\\$WINDOWS.~BT\\Sources\\Panther\\setupact.log)",
+        "goto :eof",
+        # copia di una cartella di log: %1 = cartella di origine, %2 = nome della sottocartella di destinazione
+        ":pixio_copia",
+        'if not exist "%~1" goto :eof',
+    ]
+    for pat in LOG_PATTERNS:
+        # /c: va avanti anche se un file e' in uso dal setup; /q e >nul: niente elenchi a schermo
+        L.append(f'xcopy "%~1\\{pat}" "%PIXIO_DEST%\\%~2\\" /s /c /i /y /q >nul 2>&1')
+    L.append("goto :eof")
+    return L
 
 
 def iso_for(slug):
@@ -41,17 +173,36 @@ def winpeshl_ini():
     return "[LaunchApps]\r\n\"%SYSTEMDRIVE%\\Windows\\System32\\install.cmd\"\r\n"
 
 
-def install_cmd(slug, cfg=None, iso=None):
+def install_cmd(slug, cfg=None, iso=None, client_ip="", when=None):
     """Script eseguito dentro il WinPE: carica i driver, controlla la rete, mappa la share e lancia il setup.
-    I messaggi devono dire cosa non va: senza, un guasto sembra solo un'attesa infinita."""
+    I messaggi devono dire cosa non va: senza, un guasto sembra solo un'attesa infinita.
+
+    client_ip / when: chi sta chiedendo lo script e quando (li passa il blueprint boot.py). Servono solo a
+    dare un nome alla cartella dei log e a scriverci dentro chi era il PC: senza, lo script funziona uguale."""
     cfg = cfg or S.load()
-    f = flags(cfg, iso if iso is not None else iso_for(slug))
+    voce = iso if iso is not None else iso_for(slug)
+    f = flags(cfg, voce)
     ip = cfg["network"]["server_ip"]
     wuser = cfg["windows"].get("smb_user") or "pxe"
     wpass = cfg["windows"].get("smb_password") or ""
     # le virgolette proteggono le password con caratteri che cmd interpreterebbe (&, ^, |)
     cred = f'"{wpass}" /user:{wuser}'
+    when = when or datetime.datetime.now()
+    cartella_log = log_folder(slug, client_ip, when)
+    mac, nome_pc = _mac_for_ip(client_ip)
+    meta = {"share": cfg["windows"].get("setup_logs_share_name") or "pxelog",
+            "righe": [("Pixio", "log del programma di installazione di Windows"),
+                      ("immagine", (voce or {}).get("name") or slug),
+                      ("slug", slug),
+                      ("avvio", f"{when:%d/%m/%Y %H:%M:%S} (ora del server Pixio)"),
+                      ("server", ip),
+                      ("client", client_ip or "sconosciuto"),
+                      ("mac", mac or "sconosciuto"),
+                      ("pc", nome_pc or "")]}
     L = ["@echo off", "title Pixio - avvio Windows", "echo.", "echo Pixio: preparazione di Windows PE...", "echo."]
+    if f["setup_logs"]:
+        # l'esito serve nel riepilogo anche se il setup non parte proprio: senza valore la riga direbbe "%PIXIO_ESITO%"
+        L.append("set PIXIO_ESITO=non avviato")
     infs = [name for _, name, _ in f["driver_files"] if name.lower().endswith(".inf")]
     if infs:
         L.append("echo Carico i driver forniti da Pixio:")
@@ -105,6 +256,7 @@ def install_cmd(slug, cfg=None, iso=None):
             "echo.",
             f"echo Avvio il programma di installazione da \\\\{ip}\\pxe\\iso\\{slug}",
             f"S:\\iso\\{slug}\\setup.exe %PIXIO_UA%",
+            "set PIXIO_ESITO=%ERRORLEVEL%",
             "goto fine_setup",
             # ------------------------------------------------------------------
             # Diagnosi: un solo schermo con la causa vera, cosi' basta fotografarlo.
@@ -149,6 +301,11 @@ def install_cmd(slug, cfg=None, iso=None):
             "echo Contenuto di S:\\iso :",
             "dir S:\\iso",
             "echo.",
+        ]
+        # la share risponde: il riepilogo (con l'elenco dei dischi) arriva su Pixio anche in questo caso
+        if f["setup_logs"]:
+            L += ["set PIXIO_ESITO=setup.exe non trovato sulla share", "call :pixio_log"]
+        L += [
             "cmd.exe",
             "goto prompt",
         ]
@@ -162,7 +319,11 @@ def install_cmd(slug, cfg=None, iso=None):
     L += [
         ":fine_setup",
         "echo.",
-        "echo Il programma di installazione e' terminato.",
+        "echo Il programma di installazione e' terminato (codice %PIXIO_ESITO%).",
+    ]
+    if f["setup_logs"]:
+        L.append("call :pixio_log")
+    L += [
         "echo Chiudendo questa finestra il PC si riavvia.",
         "cmd.exe",
         "goto prompt",
@@ -190,4 +351,7 @@ def install_cmd(slug, cfg=None, iso=None):
         ":end",
         "goto prompt",
     ]
+    # sottoprogrammi in coda: ci si arriva solo con "call", mai per caduta (sopra si finisce sempre in :prompt)
+    if f["setup_logs"]:
+        L += raccolta_log(slug, ip, cred, cartella_log, meta)
     return "\r\n".join(L) + "\r\n"
